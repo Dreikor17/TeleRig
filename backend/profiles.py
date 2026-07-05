@@ -83,6 +83,13 @@ class Capabilities:
     fm_dcs: bool = True         # the FM panel exposes DCS (Yaesu) — False on Icom (CI-V has no DTCS)
     ext_ops: bool = False       # extra Yaesu operating controls: WIDTH/CONTOUR/APF/CW/TXW/scan
     icom_cw: bool = False       # Icom CW/filter group: APF/break-in/pitch/keyer-speed/filter-shape
+    # Coarse presence flags for old/limited rigs (IC-728): default True so every existing radio
+    # is unaffected. A minimal radio turns these off to hide whole panels it can't drive.
+    ptt: bool = True            # transmit path (PTT button + TX-audio/mic). False = RX/control only.
+    tab_rx: bool = True         # the RX control tab (filter/levels/preamp/att)
+    tab_tx: bool = True         # the TX control tab (comp/vox/mon/tuner/split/RIT)
+    tab_dsp: bool = True        # the DSP control tab
+    memory: bool = False        # Radio-tab MEMORY recall group (CI-V 08/0A). Off unless a rig uses it.
 
 
 @dataclass
@@ -146,6 +153,12 @@ class RadioProfile:
     pc_keying_off_cat: str = ""
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
+    # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
+    # freq/mode/VFO/memory and nothing else — no TX-keying, meters, levels, functions, menu,
+    # RIT, tone or scope command exists. civ_legacy=True makes the handler (a) drop any frame
+    # whose command byte is > 0x0E on the wire, (b) use a minimal connect/poll (just 03/04), and
+    # (c) send mode-only 06 (no filter byte, except CW narrow). See docs/ADDING-A-RADIO.md.
+    civ_legacy: bool = False
     has_scope: bool = True        # False = no spectrum/waterfall over the control link
     has_network: bool = True      # False = COM-only (no RS-BA1/LAN) -> hide the LAN option
     default_baud: int = 115200    # default serial baud for the connection bar
@@ -451,5 +464,77 @@ FT891 = RadioProfile(
     ],
 )
 
-PROFILES = {p.id: p for p in (IC9700, IC7300MK2, FT991A, FT891)}
+# Icom IC-728 — HF (160-10 m) all-band-ish transceiver, ~1990. The SIMPLEST radio here:
+# CI-V is the classic command set 0x00-0x0E only (freq/mode/VFO/memory). There is NO CI-V
+# transmit/keying, NO meter read, NO level/function/menu/RIT/tone/scope command — so the app
+# physically cannot key or meter it, and the transmit-safety contract is N/A (nothing to key).
+# COM-only through a CT-17 CI-V level converter; default 1200 baud (300/1200/9600 by an internal
+# diode matrix — must match). No LAN, no band scope -> the app shows the audio (AF) FFT scope from
+# a host sound card, same path as the FT-891. AM-TX and FM need the optional UI-7 unit; base is
+# SSB/CW. CW-N = mode 03 + width 02 (needs the FL-100/101 crystal filter fitted). Address 38h
+# (IC-729 = 3Ah + 6 m). civ_addr / mod_* required by the dataclass; mod_* unused (no LAN).
+IC728 = RadioProfile(
+    id="ic728", name="IC-728", civ_addr=0x38,
+    make="Icom", protocol="civ",
+    modes=["LSB", "USB", "CW", "CW-N", "AM", "FM"],
+    bands=[
+        Band("160", 1_800_000,  2_000_000,  1_900_000),
+        Band("80",  3_500_000,  4_000_000,  3_700_000),
+        Band("40",  7_000_000,  7_300_000,  7_100_000),
+        Band("30", 10_100_000, 10_150_000, 10_120_000),
+        Band("20", 14_000_000, 14_350_000, 14_200_000),
+        Band("17", 18_068_000, 18_168_000, 18_130_000),
+        Band("15", 21_000_000, 21_450_000, 21_300_000),
+        Band("12", 24_890_000, 24_990_000, 24_950_000),
+        Band("10", 28_000_000, 29_700_000, 28_400_000),
+    ],
+    # No CI-V filter-slot selection — one bandwidth per mode (hint for the scope span box).
+    # CW-N assumes the FL-100 (500 Hz); an FL-101 would be 250 Hz.
+    filter_bw={
+        "LSB": {1: 2400}, "USB": {1: 2400}, "CW": {1: 2400}, "CW-N": {1: 500},
+        "AM": {1: 6000}, "FM": {1: 12000},
+    },
+    mod_dataoff=(0x00, 0x00), lan_mod_level=(0x00, 0x00),   # unused: no LAN MOD routing
+    default_freq=14_100_000,                                # power-on default 14.100 MHz USB
+    steps=[(10, "10 Hz"), (20, "20 Hz"), (50, "50 Hz"), (100, "100 Hz"),
+           (1_000, "1 kHz"), (10_000, "10 kHz"), (100_000, "100 kHz"), (1_000_000, "1 MHz")],
+    default_step=1_000,
+    civ_legacy=True,                                        # only CI-V 0x00-0x0E exist
+    has_scope=False, has_network=False, default_baud=1200,
+    has_preamp=False, has_att=False, has_tuner=False,       # no CI-V command for any of these
+    capabilities=Capabilities(
+        preamp=False, att=False, tuner=False, dual_watch=False,
+        vfo_select=True, vfo_swap=False,        # 07 00/01 select VFO A/B; no CI-V A=B / exchange
+        split=False, rit=False, duplex=False,   # no 0F / 21 / 0C-0D command on this radio
+        rx_dsp=[], tx_funcs=[], tbw=False, meters=[],   # no 16 / 14 / 15 command -> no DSP/levels/meters
+        cw_tx=False, menus=False,               # no CI-V keying, no 1A menu
+        narrow=False, fm_tone=False, fm_dcs=False, ext_ops=False, icom_cw=False,
+        ptt=False,                              # no CI-V transmit path at all
+        tab_rx=False, tab_tx=False, tab_dsp=False,   # nothing in those tabs is CI-V-reachable
+        # OPERATING (scan/fast) group is already hidden for non-ext_ops (Icom) rigs by syncExtPanel
+        memory=True,                            # memory recall 08 / mem->VFO 0A (IC-735-class: yes)
+    ),
+    connect_help=[
+        {"title": "Interface (CT-17 or a CI-V USB cable)", "items": [
+            "Connect a CT-17 CI-V level converter (or a CI-V-to-USB cable) from the radio's",
+            "REMOTE (CI-V) jack on the rear panel to a COM/USB serial port, and pick it above.",
+            "This radio is COM-only — there is no network/LAN option.",
+        ]},
+        {"title": "CI-V address & baud", "items": [
+            "Set the CI-V address to 38h (IC-728). The IC-729 uses 3Ah.",
+            "Baud is fixed inside the radio by a diode matrix (300 / 1200 / 9600); factory default",
+            "is 1200 bps. Set the Baud box above to the SAME value your radio is set to, 8N1.",
+            "CI-V transceive / echo settings don't matter — the app actively polls freq + mode.",
+        ]},
+        {"title": "What this radio can do remotely", "items": [
+            "Frequency, mode, band, VFO A/B and memory recall are controllable over CI-V.",
+            "Metering, AF/RF/squelch, RIT, preamp/ATT and TRANSMIT are front-panel only on this",
+            "radio — there is no CI-V command for them, so the app cannot key or meter it.",
+            "General-coverage receive is 0.5-30 MHz; transmit is the HF ham bands (AM-TX and FM",
+            "need the optional UI-7 unit). Turn on RX audio for the audio spectrum + CW decode.",
+        ]},
+    ],
+)
+
+PROFILES = {p.id: p for p in (IC9700, IC7300MK2, FT991A, FT891, IC728)}
 DEFAULT_PROFILE_ID = "ic9700"

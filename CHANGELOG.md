@@ -3,6 +3,27 @@
 All notable changes to **Radio WebOp** are documented here. This project adheres
 to [Semantic Versioning](https://semver.org).
 
+## [0.2.24] — 2026-07-05
+
+Adds the **Icom IC-728** — a fifth radio, and the first *control-only* rig.
+
+### Added
+- **Icom IC-728 (HF, CI-V over COM).** A ~1990 HF transceiver reached over CI-V through a CT-17
+  level converter (address `38h`, default 1200 baud, COM-only — no LAN). It speaks only the classic
+  command set, so Radio WebOp gives it an honest, minimal panel: **frequency, mode
+  (LSB/USB/CW/CW-N/AM/FM), band, VFO A/B, and memory recall**, plus the **audio (AF) spectrum +
+  waterfall, RX audio, and CW decode** from a host sound card (like the FT-891).
+- **Memory recall** — a new MEMORY group (channel + **SHOW** + **M→VFO**) driven by CI-V `08`/`0A`,
+  for radios that keep real memory channels.
+
+### Notes
+- The IC-728 has **no CI-V transmit, metering, levels, RIT, or menu** — those are front-panel only
+  on this radio, so the app can't key or meter it. The UI hides everything it can't actually drive
+  (no PTT, meters, RX/TX/DSP/Settings tabs) rather than showing dead controls. The transmit-safety
+  contract is therefore **N/A** — there is no CI-V path to key it.
+- A minimal radio emits state only once on connect (no meter/scope stream); the frequency readout
+  now un-blanks on the connect frame itself, so it appears immediately for every radio.
+
 ## [0.2.23] — 2026-07-02
 
 CW decode window as a texting‑style chat, plus a self‑correcting header version.

@@ -492,6 +492,10 @@ class YaesuRadio:
             self._send("SV;")
         # 0x00/0x01 (select A/B): the FT-991A has no active-VFO selector — no-op.
 
+    # Memory recall is an IC-728 (legacy CI-V) feature; no-op on Yaesu so the shared dispatch is safe.
+    def recall_memory(self, ch: int) -> None: pass
+    def memory_to_vfo(self) -> None: pass
+
     def set_level(self, sub: int, value: int) -> None:
         value = max(0, min(255, int(value)))
         key = None

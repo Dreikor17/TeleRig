@@ -316,6 +316,19 @@ class Radio:
         # Icom CW TX (CI-V 17) needs no extra port — ready as soon as we're connected.
         self.state["cw_tx_ready"] = bool(getattr(self.profile, "cw_send", ""))
 
+        if getattr(self.profile, "civ_legacy", False):
+            # Old rig (IC-728): no scope / functions / levels / meters / RIT / menu commands exist.
+            # Read just frequency + mode, then start the gentle legacy poll. Skips the ~40-frame
+            # modern burst that would otherwise flood a 1200-baud link with commands it ignores.
+            self._write(self._b(0x03))                   # read freq
+            self._write(self._b(0x04))                   # read mode
+            self._poll_dt = 0.2                          # ~5 Hz; plenty for a control-only radio
+            self._poll_stop.clear()
+            self._poll_thread = threading.Thread(target=self._poll, daemon=True, name="civ-poll")
+            self._poll_thread.start()
+            self._emit_state()
+            return
+
         # enable the scope output (needs BOTH on/off and data-output on)
         self.set_scope_mode(self.state["scope_center"])
         self.set_span(self.state["span"])
@@ -411,8 +424,15 @@ class Radio:
         self._emit_state()
 
     def _write(self, frame: bytes) -> None:
-        if self._tp:
-            self._tp.write(frame)
+        if not self._tp:
+            return
+        # Legacy rigs (IC-728) only understand the classic command set 0x00-0x0E. Drop any frame
+        # whose command byte is above that on the wire — one lever that neutralises PTT (1C),
+        # meters (15), levels (14), functions (16), RIT (21), tuner/CW (1C/17), tone (1B), menu
+        # (1A) and scope (27) without a guard in every method. frame = FE FE <to> <from> <cmd> ...
+        if getattr(self.profile, "civ_legacy", False) and len(frame) >= 5 and frame[4] > 0x0E:
+            return
+        self._tp.write(frame)
 
     # -- inbound stream ------------------------------------------------------
     def _on_bytes(self, data: bytes) -> None:
@@ -447,11 +467,22 @@ class Radio:
                 return
             p = self._payload(s, d)
             if p:
-                self.state["mode"] = p[0]
-                self.state["mode_name"] = civ.MODES.get(p[0], "?")
-                if len(p) > 1 and p[1] in civ.FILTERS:
-                    self.state["filter"] = p[1]
-                    self.state["filter_name"] = civ.FILTERS[p[1]]
+                code = p[0]
+                self.state["mode"] = code
+                if getattr(self.profile, "civ_legacy", False):
+                    # 06/04 2nd byte is a filter WIDTH (02 = narrow), not a FIL1/2/3 slot. Show
+                    # CW-N for narrow CW; keep one logical filter (no slot selector on this radio).
+                    name = civ.MODES.get(code, "?")
+                    if code == 0x03 and len(p) > 1 and p[1] == 0x02:
+                        name = "CW-N"
+                    self.state["mode_name"] = name
+                    self.state["filter"] = 1
+                    self.state["filter_name"] = "FIL1"
+                else:
+                    self.state["mode_name"] = civ.MODES.get(code, "?")
+                    if len(p) > 1 and p[1] in civ.FILTERS:
+                        self.state["filter"] = p[1]
+                        self.state["filter_name"] = civ.FILTERS[p[1]]
                 changed = True
         elif c == 0x14:                                  # level read
             key = LEVEL_KEYS.get(s)
@@ -546,6 +577,16 @@ class Radio:
     def _poll(self) -> None:
         tick = 0
         dt = self._poll_dt                               # ~25 Hz serial / ~12 Hz LAN
+        legacy = getattr(self.profile, "civ_legacy", False)
+        if legacy:
+            # Old rig (IC-728): no meter/panel commands. Just keep freq + mode live so the readout
+            # tracks the front-panel dial. Gentle cadence — never hammer a 1200-baud CI-V link.
+            self._poll_stop.wait(0.5)
+            while not self._poll_stop.is_set():
+                self._write(self._b(0x03))               # read freq
+                self._write(self._b(0x04))               # read mode
+                self._poll_stop.wait(max(0.2, dt))
+            return
         panel_n = max(1, round(1.2 / dt))                # freq/mode/active-band cadence (~1.2 s)
         full_n = max(1, round(6.0 / dt))                 # full-panel re-sync (~6 s)
         if _WINMM:
@@ -615,14 +656,37 @@ class Radio:
     def tune(self, delta_hz: int) -> None:
         self.set_freq(self.state["freq"] + int(delta_hz))
 
-    def set_mode(self, mode_code: int, filt: Optional[int] = None) -> None:
-        filt = filt or self.state["filter"]
+    def set_mode(self, mode_code, filt: Optional[int] = None) -> None:
+        if getattr(self.profile, "civ_legacy", False):
+            self._set_mode_legacy(mode_code)
+            return
         self.state["mode"] = mode_code
         self.state["mode_name"] = civ.MODES.get(mode_code, "?")
+        filt = filt or self.state["filter"]
         self.state["filter"] = filt
         self.state["filter_name"] = civ.FILTERS.get(filt, "FIL1")
         self._recalc_filter_bw()
         self._write(self._b(0x06, None, bytes([mode_code, filt])))
+        self._emit_state()
+
+    def _set_mode_legacy(self, mode) -> None:
+        """IC-728-class 06: mode byte only (no filter slot). CW narrow = 03 + width 02; every
+        other mode is a single byte. `mode` may be an int CI-V code or a name string — the server
+        passes 'CW-N' through unresolved because it has no CI-V code of its own."""
+        if isinstance(mode, str):
+            name = mode
+            code = 0x03 if name == "CW-N" else civ.MODE_CODES.get(name, 0x01)
+        else:
+            code = int(mode)
+            name = civ.MODES.get(code, "?")
+        width = 0x02 if name == "CW-N" else None
+        self.state["mode"] = code
+        self.state["mode_name"] = name
+        self.state["filter"] = 1
+        self.state["filter_name"] = "FIL1"
+        self._recalc_filter_bw()
+        payload = bytes([code, width]) if width is not None else bytes([code])
+        self._write(self._b(0x06, None, payload))
         self._emit_state()
 
     def set_filter(self, filt: int) -> None:
@@ -630,6 +694,17 @@ class Radio:
 
     def select_vfo(self, code: int) -> None:
         self._write(self._b(0x07, code))
+
+    # -- memory recall (CI-V 08 / 0A) — RX-side, no transmit. Used by old rigs (IC-728) that keep
+    #    real memory channels; the freq/mode poll follows whatever the radio then displays.
+    def recall_memory(self, ch: int) -> None:
+        """Select memory channel `ch` (CI-V 08 <BCD ch>). Enters memory mode showing that channel."""
+        ch = max(1, min(99, int(ch)))
+        self._write(self._b(0x08, None, bytes([((ch // 10) << 4) | (ch % 10)])))
+
+    def memory_to_vfo(self) -> None:
+        """Copy the current memory channel into the VFO (CI-V 0A)."""
+        self._write(self._b(0x0A))
 
     def select_band(self, band: str) -> None:
         """Select MAIN or SUB as the operating band (IC-9700 dual watch). The radio

@@ -7,6 +7,15 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
+### v0.2.24 — Icom IC-728 (control-only HF rig)
+- Added the **IC-728** (fifth radio): CI-V over COM via a CT-17 (addr `38h`, 1200 baud). The first
+  radio whose CI-V is the classic `00`-`0E` set only, so it gets a **minimal, honest panel** —
+  frequency / mode (LSB/USB/CW/CW-N/AM/FM) / band / VFO A-B / **memory recall** (`08`/`0A`) + AF
+  scope + RX audio + CW decode. **No CI-V transmit/meter/level/RIT/menu** exists on this radio, so
+  the app can't key or meter it and hides every control it can't drive (transmit-safety = N/A). A new
+  `civ_legacy` profile flag drives a minimal connect/poll + a write-layer allowlist (drops any CI-V
+  command `> 0x0E`) so the modern handler never floods a 1200-baud link with commands it lacks.
+
 ### v0.2.23 — CW chat as a texting UI
 - The decoded‑CW window now reads like a messaging thread: **received in grey bubbles (left),
   transmitted in blue bubbles (right)**, time‑stamped, with the live in‑progress decode shown in

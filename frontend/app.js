@@ -100,7 +100,11 @@
   function updateState(s) {
     const justConnected = !state.connected && s.connected;
     state = s;
-    if (justConnected) onMenuReconnect();           // drop stale menu cache + refresh open groups
+    // A fresh connection un-blanks the readout here (not just in doConnect's .then): a minimal
+    // radio (IC-728) emits state only ONCE on connect — no meter/scope stream to re-trigger a
+    // render — so if this frame raced ahead of the connect handler, the guard below would drop
+    // it and the freq would never appear. Clearing blanked on the connected frame itself is race-free.
+    if (justConnected) { blanked = false; onMenuReconnect(); }   // drop stale menu cache + refresh open groups
     // dual-watch band readout (MAIN/SUB); single-rx radios show MAIN only
     $("rowSub").style.display = s.dual_watch ? "" : "none";
     if (blanked) {                                  // radio just changed: keep VFOs zeroed until a fresh connect
@@ -467,6 +471,8 @@
     else if (act === "mode") send({ action: "set_mode", mode: b.dataset.mode });
     else if (act === "filter") send({ action: "set_filter", filter: +b.dataset.filter });
     else if (act === "vfo") send({ action: "vfo", code: +b.dataset.code });
+    else if (act === "mem_recall") { const ch = Math.max(1, Math.min(99, +($("memCh") || {}).value || 1)); send({ action: "mem_recall", ch }); }
+    else if (act === "mem_to_vfo") send({ action: "mem_to_vfo" });
     else if (act === "scope_mode") send({ action: "scope_mode", center: b.dataset.center === "1" });
   });
 
@@ -914,6 +920,34 @@
     if (p.has_network === false && $("transport").value === "lan") {
       $("transport").value = "sim";
     }
+    // transmit-less rigs (IC-728: no CI-V key): hide the PTT button + the TX-audio (mic) path
+    const canPtt = capHas("ptt", true);
+    { const pb = $("pttBtn"); if (pb) pb.style.display = canPtt ? "" : "none"; }
+    { const mb = $("micBtn"); if (mb) mb.style.display = canPtt ? "" : "none"; }
+    { const md = $("micDev"); if (md && md.closest(".sl")) md.closest(".sl").style.display = canPtt ? "" : "none"; }
+    { const mid = $("micInDev"); if (mid && mid.closest(".sl")) mid.closest(".sl").style.display = canPtt ? "" : "none"; }
+    { const mm = document.querySelector(".scopepane .mic-meter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
+    // meter block: hide entirely when the rig exposes no meters over the control link (S-bar included)
+    { const mtr = document.querySelector(".scopepane .meter");
+      if (mtr) mtr.style.display = (Array.isArray(cap.meters) && cap.meters.length === 0) ? "none" : ""; }
+    // control-panel tabs: hide the ones the rig can't drive + the Settings tab when it has no menu
+    const tabOn = { rx: capHas("tab_rx", true), tx: capHas("tab_tx", true),
+                    dsp: capHas("tab_dsp", true), setup: !!(p.menu && p.menu.length) };
+    document.querySelectorAll(".controls .tab").forEach(t => {
+      const name = t.getAttribute("data-t");
+      if (name in tabOn) t.style.display = tabOn[name] ? "" : "none";
+    });
+    // if the currently-active tab just got hidden, fall back to the Radio tab
+    const activeTab = document.querySelector(".controls .tab.on");
+    if (activeTab && activeTab.style.display === "none") {
+      const rt = document.querySelector('.controls .tab[data-t="radio"]');
+      if (rt) rt.click();
+    }
+    // Radio-tab MEMORY recall group (the OPERATING group is already gated by syncExtPanel/ext_ops)
+    { const mg = $("memGrp"); if (mg) mg.hidden = !capHas("memory", false); }
+    // VFO A=B / SWAP: hide when the rig has no CI-V equalize/exchange (old CI-V only selects A/B)
+    document.querySelectorAll('[data-act="vfo"][data-code="160"], [data-act="vfo"][data-code="176"]')
+      .forEach(b => { b.style.display = capHas("vfo_swap", true) ? "" : "none"; });
     updateConnFields();
     renderMenu(p);
     syncExtPanel(state);         // show/hide the WIDTH/CONTOUR/APF/CW/ops groups for this radio+mode

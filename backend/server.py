@@ -370,6 +370,10 @@ def _handle_cmd(cmd: dict) -> None:
             radio.set_filter(int(cmd["filter"]))
         elif action == "vfo":
             radio.select_vfo(int(cmd["code"]))
+        elif action == "mem_recall":
+            radio.recall_memory(int(cmd["ch"]))
+        elif action == "mem_to_vfo":
+            radio.memory_to_vfo()
         elif action == "set_level":
             sub = LEVEL_TARGETS.get(cmd["target"])
             if sub is not None:

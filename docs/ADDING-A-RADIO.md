@@ -114,6 +114,16 @@ FT‑991A has no CAT active‑VFO selector → `vfo_select=False`).
    a wrong width is silently ignored by the radio. The shared `backend/menu_engine.py` handles
    encode/decode (Yaesu `EX` today; the Icom CI‑V `1A 05` encoder is implemented too — see ic9700_menu.py / ic7300mk2_menu.py).
 3. **Same protocol** as an existing radio → done; the handler + menu engine are shared.
+   - **Old/limited CI-V rigs** (e.g. the IC-728, ~1990) speak only the classic command set
+     `0x00-0x0E` — freq/mode/VFO/memory and nothing else: no CI-V transmit, meters, levels,
+     functions, RIT, menu or scope command exists. Set `civ_legacy=True` on the profile. The Icom
+     handler then (a) drops any frame whose command byte is `> 0x0E` on the wire — one lever that
+     neutralises PTT/meters/levels/functions/RIT/tuner/CW/tone/menu/scope so no method needs a
+     per-call guard, (b) uses a minimal connect + gentle poll (just `03`/`04`, so a 1200-baud link
+     isn't flooded), and (c) sends mode-only `06` (no filter slot; CW narrow = `03 02`). Turn the
+     matching `Capabilities` off (`ptt`, `tab_rx/tx/dsp`, `meters=[]`, `rx_dsp=[]`, `menus`, …) so
+     the UI hides every control the radio can't drive rather than shipping dead buttons. The
+     transmit-safety contract is **N/A** — with no CI-V key, the app physically cannot transmit.
 4. **New protocol/make** → a new handler class exposing the server's method surface (incl.
    `get_menu`/`set_menu`/`read_menu_group`) **and the full safety contract above**, plus a
    menu‑engine encoder for that protocol.
