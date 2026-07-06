@@ -471,12 +471,13 @@ FT891 = RadioProfile(
 # COM-only through a CT-17 CI-V level converter; default 1200 baud (300/1200/9600 by an internal
 # diode matrix — must match). No LAN, no band scope -> the app shows the audio (AF) FFT scope from
 # a host sound card, same path as the FT-891. AM-TX and FM need the optional UI-7 unit; base is
-# SSB/CW. CW-N = mode 03 + width 02 (needs the FL-100/101 crystal filter fitted). Address 38h
+# SSB/CW. CW-NAR (CW-Narrow, from the front-panel [CW/N] switch) = mode 03 + width 02 (needs the
+# FL-100/101 crystal filter fitted) — NOT CW-reverse, which this radio doesn't have. Address 38h
 # (IC-729 = 3Ah + 6 m). civ_addr / mod_* required by the dataclass; mod_* unused (no LAN).
 IC728 = RadioProfile(
     id="ic728", name="IC-728", civ_addr=0x38,
     make="Icom", protocol="civ",
-    modes=["LSB", "USB", "CW", "CW-N", "AM", "FM"],
+    modes=["LSB", "USB", "CW", "CW-NAR", "AM", "FM"],
     bands=[
         Band("160", 1_800_000,  2_000_000,  1_900_000),
         Band("80",  3_500_000,  4_000_000,  3_700_000),
@@ -489,9 +490,9 @@ IC728 = RadioProfile(
         Band("10", 28_000_000, 29_700_000, 28_400_000),
     ],
     # No CI-V filter-slot selection — one bandwidth per mode (hint for the scope span box).
-    # CW-N assumes the FL-100 (500 Hz); an FL-101 would be 250 Hz.
+    # CW-NAR assumes the FL-100 (500 Hz); an FL-101 would be 250 Hz.
     filter_bw={
-        "LSB": {1: 2400}, "USB": {1: 2400}, "CW": {1: 2400}, "CW-N": {1: 500},
+        "LSB": {1: 2400}, "USB": {1: 2400}, "CW": {1: 2400}, "CW-NAR": {1: 500},
         "AM": {1: 6000}, "FM": {1: 12000},
     },
     mod_dataoff=(0x00, 0x00), lan_mod_level=(0x00, 0x00),   # unused: no LAN MOD routing

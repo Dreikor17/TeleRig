@@ -11,7 +11,7 @@ Adds the **Icom IC-728** — a fifth radio, and the first *control-only* rig.
 - **Icom IC-728 (HF, CI-V over COM).** A ~1990 HF transceiver reached over CI-V through a CT-17
   level converter (address `38h`, default 1200 baud, COM-only — no LAN). It speaks only the classic
   command set, so Radio WebOp gives it an honest, minimal panel: **frequency, mode
-  (LSB/USB/CW/CW-N/AM/FM), band, VFO A/B, and memory recall**, plus the **audio (AF) spectrum +
+  (LSB/USB/CW/CW-NAR/AM/FM), band, VFO A/B, and memory recall**, plus the **audio (AF) spectrum +
   waterfall, RX audio, and CW decode** from a host sound card (like the FT-891).
 - **Memory recall** — a new MEMORY group (channel + **SHOW** + **M→VFO**) driven by CI-V `08`/`0A`,
   for radios that keep real memory channels.

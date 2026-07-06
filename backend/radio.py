@@ -471,10 +471,10 @@ class Radio:
                 self.state["mode"] = code
                 if getattr(self.profile, "civ_legacy", False):
                     # 06/04 2nd byte is a filter WIDTH (02 = narrow), not a FIL1/2/3 slot. Show
-                    # CW-N for narrow CW; keep one logical filter (no slot selector on this radio).
+                    # CW-NAR (CW-Narrow) for narrow CW; keep one logical filter (no slot selector).
                     name = civ.MODES.get(code, "?")
                     if code == 0x03 and len(p) > 1 and p[1] == 0x02:
-                        name = "CW-N"
+                        name = "CW-NAR"
                     self.state["mode_name"] = name
                     self.state["filter"] = 1
                     self.state["filter_name"] = "FIL1"
@@ -672,14 +672,14 @@ class Radio:
     def _set_mode_legacy(self, mode) -> None:
         """IC-728-class 06: mode byte only (no filter slot). CW narrow = 03 + width 02; every
         other mode is a single byte. `mode` may be an int CI-V code or a name string — the server
-        passes 'CW-N' through unresolved because it has no CI-V code of its own."""
+        passes 'CW-NAR' through unresolved because it has no CI-V code of its own."""
         if isinstance(mode, str):
             name = mode
-            code = 0x03 if name == "CW-N" else civ.MODE_CODES.get(name, 0x01)
+            code = 0x03 if name == "CW-NAR" else civ.MODE_CODES.get(name, 0x01)
         else:
             code = int(mode)
             name = civ.MODES.get(code, "?")
-        width = 0x02 if name == "CW-N" else None
+        width = 0x02 if name == "CW-NAR" else None
         self.state["mode"] = code
         self.state["mode_name"] = name
         self.state["filter"] = 1
