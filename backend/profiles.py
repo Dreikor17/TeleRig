@@ -151,6 +151,11 @@ class RadioProfile:
     # PC-KEYING menu number/width (FT-991A menu 060 -> "EX0600;"; FT-891 menu 07-12 -> "EX07120;").
     # "" = the radio has no such menu / nothing to disarm.
     pc_keying_off_cat: str = ""
+    # Yaesu ATAS (Active Tuning Antenna System) support: the CAT read command for the
+    # TUNER SELECT menu item (FT-991A = "EX143;"; value 3 = ATAS). "" = no ATAS support.
+    # When the radio reports ATAS selected, the UI shows manual antenna up/down controls
+    # (mic UP/DN emulation) next to PTT. See docs/ADDING-A-RADIO.md.
+    atas_read: str = ""
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
     # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
@@ -379,6 +384,7 @@ FT991A = RadioProfile(
     # menu 033 CAT RTS=DISABLE + menu 060 PC KEYING=DTR and opens the sibling port DTR-low.
     # RTS keying on the CAT port is forbidden (collides with CAT RTS -> breaks PTT).
     cw_send="line", cw_line="dtr",
+    atas_read="EX143;",             # TUNER SELECT (0 OFF/1 INT/2 EXT/3 ATAS/4 LAMP) -> ATAS = 3
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],

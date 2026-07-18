@@ -7,6 +7,12 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
+### v0.2.25 — FT-991A ATAS manual tuning
+- When TUNER SELECT = **ATAS** (read over CAT via `EX143`), **ATAS ▲/▼** controls appear next to PTT
+  to step the motorized antenna (mic UP/DN emulation) while transmitting, with the meter auto‑switched
+  to **SWR** — mirroring the radio's hold‑PTT‑and‑step manual‑tune procedure. The step buttons act
+  only while keyed and never transmit on their own. (Auto‑tune stays on the TUNE button = `AC002`.)
+
 ### v0.2.24 — Icom IC-728 (control-only HF rig)
 - Added the **IC-728** (fifth radio): CI-V over COM via a CT-17 (addr `38h`, 1200 baud). The first
   radio whose CI-V is the classic `00`-`0E` set only, so it gets a **minimal, honest panel** —

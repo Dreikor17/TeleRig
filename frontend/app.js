@@ -139,6 +139,11 @@
     $("attBtn").classList.toggle("on", (s.att || 0) > 0);
     $("lockBtn").classList.toggle("on", !!s.lock);
     { const tb = $("tunerBtn"); if (tb) tb.classList.toggle("on", (s.tuner || 0) > 0); }
+    // ATAS manual-tune controls next to PTT: shown only when TUNER SELECT = ATAS (value 3)
+    { const at = $("atasTune"); if (at) at.hidden = (s.tuner_select !== 3);
+      const ah = $("atasHint"); if (ah) ah.textContent = s.ptt ? "tuning · watch SWR" : "key PTT · watch SWR";
+      const tuning = s.tuner_select === 3 && !!s.ptt;
+      at && at.querySelectorAll(".atas-btn").forEach(b => b.classList.toggle("armed", tuning)); }
 
     // connection
     const on = !!s.connected;
@@ -473,6 +478,10 @@
     else if (act === "vfo") send({ action: "vfo", code: +b.dataset.code });
     else if (act === "mem_recall") { const ch = Math.max(1, Math.min(99, +($("memCh") || {}).value || 1)); send({ action: "mem_recall", ch }); }
     else if (act === "mem_to_vfo") send({ action: "mem_to_vfo" });
+    else if (act === "atas_step") {                    // ATAS motor step (only acts while keyed)
+      send({ action: "atas_step", dir: +b.dataset.dir });
+      if ((state.meter || "S") !== "SWR") send({ action: "set_meter", meter: "SWR" });   // watch SWR while tuning
+    }
     else if (act === "scope_mode") send({ action: "scope_mode", center: b.dataset.center === "1" });
   });
 

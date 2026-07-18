@@ -87,6 +87,15 @@
 
       <button class="key ptt ptt-big" id="pttBtn" data-act="ptt">PTT</button>
 
+      <!-- ATAS manual antenna tuning — shown only when TUNER SELECT = ATAS. Steps the
+           motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter. -->
+      <div class="atas-tune" id="atasTune" hidden>
+        <span class="atas-lbl" title="Active-Tuning Antenna System (ATAS-120A) manual tuning">ATAS</span>
+        <button class="key atas-btn" data-act="atas_step" data-dir="1" title="Extend the ATAS element — hold PTT and step to minimum SWR">&#9650;</button>
+        <button class="key atas-btn" data-act="atas_step" data-dir="-1" title="Retract the ATAS element — hold PTT and step to minimum SWR">&#9660;</button>
+        <span class="atas-hint" id="atasHint">key PTT · watch SWR</span>
+      </div>
+
       <div class="grp audio-grp">
         <div class="grp-title">AUDIO <span class="lan-only" id="audioAvail"></span></div>
         <div class="row">

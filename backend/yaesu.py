@@ -130,8 +130,11 @@ class YaesuRadio:
         self.state["transport"] = transport.name
         self.state["audio"] = getattr(transport, "supports_audio", False)
         # prime the readout + the whole settings panel so the UI shows the
-        # radio's REAL state on connect, not defaults.
-        for cmd in ("ID;", "IF;", "FA;", "MD0;", "SM0;") + self._SETTINGS:
+        # radio's REAL state on connect, not defaults. Append the ATAS TUNER SELECT
+        # read (if the radio supports it) so the UI knows when to show ATAS tuning.
+        ar = getattr(self.profile, "atas_read", "")
+        self._panel_cmds = self._SETTINGS + ((ar,) if ar else ())
+        for cmd in ("ID;", "IF;", "FA;", "MD0;", "SM0;") + self._panel_cmds:
             self._send(cmd)
         if getattr(self.profile, "tot_cat", ""):            # safety: hardware TX time-out backstop
             self._send(self.profile.tot_cat)
@@ -246,7 +249,18 @@ class YaesuRadio:
     def _parse(self, msg: str) -> None:  # noqa: C901 - flat prefix dispatch, kept readable
         m = msg
         if m.startswith("EX") and len(m) >= 6 and m[2:5].isdigit():
-            self._handle_ex_reply(m)     # SET-menu reply -> separate menu channel, not state
+            # TUNER SELECT (ATAS) rides the state channel too, so the UI can show the ATAS
+            # up/down controls only when ATAS is the selected tuner. `m` has no trailing ';'
+            # here (stripped in _on_bytes), so reply = <atas_read prefix><value>, value = index.
+            ar = getattr(self.profile, "atas_read", "")
+            if ar:
+                prefix = ar.rstrip(";")                      # "EX143"
+                if m.startswith(prefix):
+                    vs = m[len(prefix):].rstrip(";")
+                    if vs.isdigit() and int(vs) != self.state.get("tuner_select"):
+                        self.state["tuner_select"] = int(vs)
+                        self._emit_state()
+            self._handle_ex_reply(m)     # SET-menu reply -> separate menu channel
             return
         changed = True
         meter_changed = False            # SM0 / RM ride the lightweight meter channel
@@ -426,10 +440,11 @@ class YaesuRadio:
     def _poll_panel_rr(self) -> None:
         """Send ONE panel setting per call, round-robin through _SETTINGS, so the full panel
         re-reads gradually without a burst that would stall the meter."""
-        n = len(self._SETTINGS)
+        cmds = getattr(self, "_panel_cmds", None) or self._SETTINGS
+        n = len(cmds)
         i = getattr(self, "_panel_i", 0) % n
         self._panel_i = i + 1
-        cmd = self._SETTINGS[i]
+        cmd = cmds[i]
         if cmd == "NA0;" and self.state.get("mode_name") == "C4FM":
             return                                   # FT-991A hangs on NA0; while in C4FM
         self._send(cmd)
@@ -730,6 +745,16 @@ class YaesuRadio:
         self.state["tuner"] = 1
         self._send("AC002;")
         self._emit_state()
+
+    def atas_step(self, direction: int) -> None:
+        """Manually step the ATAS antenna motor (UP;/DN; = mic UP/DOWN emulation), the way
+        'hold PTT + press UP/DWN on the mic' tunes the ATAS. ONLY acts while the operator is
+        transmitting — otherwise UP;/DN; would shift the VFO — so this never keys TX itself and
+        can't move anything unless the operator has already keyed PTT. The operator watches SWR
+        (the UI switches the meter to SWR) and steps to the minimum, exactly as on the radio."""
+        if not self.state.get("ptt") or not self.state.get("connected"):
+            return
+        self._send("UP;" if int(direction) > 0 else "DN;")
 
     def set_ptt(self, tx: bool) -> None:
         # Operator-driven from the UI (same as the Icom set_ptt). TX1; keys, TX0;

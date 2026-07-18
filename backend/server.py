@@ -398,6 +398,8 @@ def _handle_cmd(cmd: dict) -> None:
             radio.set_tuner(bool(cmd["on"]))
         elif action == "tune_atu":
             radio.tune_atu()
+        elif action == "atas_step":
+            radio.atas_step(int(cmd["dir"]))
         elif action == "rx_func":
             radio.set_rx_func(str(cmd["name"]), bool(cmd["on"]))
         elif action == "agc":

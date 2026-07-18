@@ -178,6 +178,8 @@ def fresh_state(p) -> dict:
         "key_speed": 20,     # keyer WPM 4-60
         "key_pitch": 40,     # CW pitch code 0-75 (300-1050 Hz; 40 = 700 Hz)
         "scan": 0, "fast": 0,
+        "tuner_select": -1,   # Yaesu TUNER SELECT (-1 unknown, 3 = ATAS); drives the ATAS up/down UI
+
         # Icom CW/filter controls (0-255 levels + toggles)
         "cw_pitch": 128, "keyer_speed": 128, "filter_shape": 0,
         "has_scope": getattr(p, "has_scope", True),
@@ -887,6 +889,7 @@ class Radio:
     def set_quick_split(self) -> None: pass
     def set_scan(self, direction: int) -> None: pass
     def set_fast(self, on: bool) -> None: pass
+    def atas_step(self, direction: int) -> None: pass   # Yaesu ATAS motor step; N/A on Icom
 
     def set_band(self, band: str) -> None:
         f = self.profile.band_default(band)

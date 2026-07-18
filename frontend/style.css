@@ -500,6 +500,14 @@ select,input,.baud{
 .toprow .bands{flex:1.5 1 0;min-width:0;margin:0}
 .ptt-big{flex:0 0 132px;font-size:16px;font-weight:800;letter-spacing:1px;border-radius:10px}
 .toprow .audio-grp{flex:1 1 0;min-width:0;margin:0}
+/* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
+.atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
+  min-width:76px;padding:6px 8px;background:var(--surface);border:1px solid var(--border);border-radius:10px}
+.atas-tune[hidden]{display:none}   /* author display:flex would otherwise beat the UA [hidden] rule */
+.atas-lbl{font-size:11px;font-weight:700;letter-spacing:1px;color:var(--accent-2);text-align:center}
+.atas-btn{padding:4px 0;font-size:15px;line-height:1}
+.atas-btn.armed{border-color:var(--red);box-shadow:0 0 8px var(--red)}
+.atas-hint{font-size:9px;color:var(--txt-dim);text-align:center;line-height:1.2}
 @media (max-width:899px){
   .toprow{flex-wrap:wrap}
   .toprow .bands{flex:1 1 100%}

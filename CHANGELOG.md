@@ -3,6 +3,26 @@
 All notable changes to **Radio WebOp** are documented here. This project adheres
 to [Semantic Versioning](https://semver.org).
 
+## [0.2.25] — 2026-07-05
+
+FT-991A **ATAS** (motorized antenna) manual tuning.
+
+### Added
+- **ATAS manual tuning** — when the FT-991A's **TUNER SELECT** menu is set to **ATAS** (read live
+  over CAT as `EX143`), an **ATAS ▲/▼** control appears next to the **PTT** button. It mirrors the
+  radio's own manual‑tune procedure: **hold PTT to transmit, then step ▲/▼** to drive the ATAS motor
+  while you watch the SWR — the meter switches to **SWR** automatically so you can tune to the
+  minimum. The step buttons only act while you're transmitting (they emulate the mic UP/DOWN), so
+  they can never move the antenna — or shift the VFO — unless you've keyed PTT yourself.
+
+### Notes
+- **Auto‑tune:** the **TUNE** button issues the radio's *Antenna Tuner Control* "tuning start"
+  (`AC002`). That drives the internal ATU; whether it also starts an ATAS auto‑tune depends on the
+  radio's firmware (CAT `AC` is the internal‑tuner control). If TUNE doesn't auto‑tune your ATAS,
+  use the new manual ▲/▼ — that path is what the radio itself uses for ATAS tuning.
+- The app never keys the transmitter on its own — you press PTT, you press the step buttons; there is
+  no app‑driven tuning sweep.
+
 ## [0.2.24] — 2026-07-05
 
 Adds the **Icom IC-728** — a fifth radio, and the first *control-only* rig.
