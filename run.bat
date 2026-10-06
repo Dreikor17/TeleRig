@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================
-REM  Radio WebOp launcher (Windows)
+REM  TeleRig launcher (Windows)
 REM  Uses the local .venv created by install.bat. If that is
 REM  missing, it falls back to system Python. Closing this
 REM  window stops the server.

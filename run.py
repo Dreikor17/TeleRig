@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the Radio WebOp server. Usage: python run.py [--host H] [--port P]"""
+"""Launch the TeleRig server. Usage: python run.py [--host H] [--port P]"""
 import argparse
 import os
 import sys
@@ -15,17 +15,18 @@ import uvicorn
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Radio WebOp server")
+    ap = argparse.ArgumentParser(description="TeleRig server")
     ap.add_argument("--host", default="0.0.0.0",
                     help="bind address (default 0.0.0.0 = all interfaces: LAN, VPN, etc.)")
     ap.add_argument("--port", type=int, default=8700)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--reload", action="store_true")
-    ap.add_argument("--ssl-certfile", default=os.environ.get("RADIO_WEBOP_SSL_CERT"),
+    ap.add_argument("--ssl-certfile", default=os.environ.get("TELERIG_SSL_CERT") or os.environ.get("RADIO_WEBOP_SSL_CERT"),
                     help="TLS certificate (PEM) — serve HTTPS directly on --port "
-                         "(also reads RADIO_WEBOP_SSL_CERT). Pair with --ssl-keyfile.")
-    ap.add_argument("--ssl-keyfile", default=os.environ.get("RADIO_WEBOP_SSL_KEY"),
-                    help="TLS private key (PEM) for --ssl-certfile (also reads RADIO_WEBOP_SSL_KEY).")
+                         "(also reads TELERIG_SSL_CERT, or the older RADIO_WEBOP_SSL_CERT). Pair with --ssl-keyfile.")
+    ap.add_argument("--ssl-keyfile", default=os.environ.get("TELERIG_SSL_KEY") or os.environ.get("RADIO_WEBOP_SSL_KEY"),
+                    help="TLS private key (PEM) for --ssl-certfile (also reads TELERIG_SSL_KEY, or the older "
+                         "RADIO_WEBOP_SSL_KEY).")
     args = ap.parse_args()
 
     # Serve HTTPS directly only if BOTH cert and key are given; otherwise plain HTTP.
@@ -42,7 +43,7 @@ def main() -> None:
             webbrowser.open(local)
         except Exception:
             pass
-    print(f"Radio WebOp -> {local}")
+    print(f"TeleRig -> {local}")
     if args.host in ("0.0.0.0", "::"):
         print(f"  Also reachable on all interfaces (LAN / VPN / port-forward) at port {args.port}"
               f" over {scheme}.")

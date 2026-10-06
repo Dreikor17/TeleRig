@@ -1,9 +1,11 @@
-# Radio WebOp
+# TeleRig
+
+*Formerly **Radio WebOp**.*
 
 A browser-based control panel for **Icom CI-V** and **Yaesu CAT** transceivers,
 with a live spectrum scope + waterfall. One app, multiple radios — pick your model
 from a dropdown and the bands, modes, steps and protocol details all follow.
-Currently ships profiles for the **IC-9700**, **IC-7300MK2**, **Yaesu FT-991A**
+Currently ships profiles for the **IC-9700**, **IC-7300MK2**, **IC-728**, **Yaesu FT-991A**
 and **FT-891**; adding a radio is just a new profile.
 
 It includes a built-in **simulator**, so the whole interface and waterfall run
@@ -11,7 +13,7 @@ with no radio attached. Connect over **USB** (CI-V or CAT) or **LAN** (Icom
 RS-BA1) when you're ready.
 
 > This repo was previously two apps (`icom-webop` for the IC-9700 and
-> `ic7300mk2-webop`). They're now merged here as **Radio WebOp**.
+> `ic7300mk2-webop`). They were merged into **Radio WebOp**, since renamed **TeleRig**.
 
 ## Features
 
@@ -58,7 +60,7 @@ RS-BA1) when you're ready.
 
 1. Double-click **`install.bat`** — it checks for **Python** (installs 3.12 via `winget`
    if you don't have it), creates a local environment, installs everything, and adds a
-   **"Radio WebOp" desktop shortcut**. Re-run it anytime to **update**.
+   **"TeleRig" desktop shortcut**. Re-run it anytime to **update**.
 2. Double-click the **desktop shortcut** (or **`run.bat`**) to start it — your browser
    opens at <http://localhost:8700>.
 
@@ -89,7 +91,7 @@ Pick your **radio model**, choose a transport (Simulator / a COM port / LAN), an
   python run.py --ssl-certfile cert.pem --ssl-keyfile key.pem
   ```
 
-  (or set `RADIO_WEBOP_SSL_CERT` / `RADIO_WEBOP_SSL_KEY`). Then open the `https://`
+  (or set `TELERIG_SSL_CERT` / `TELERIG_SSL_KEY`; the older `RADIO_WEBOP_SSL_*` names still work). Then open the `https://`
   address. The WebSocket follows the page scheme automatically (`ws://` / `wss://`).
   Note: HTTPS sent to a plain-HTTP instance is rejected as an invalid request — match
   the scheme to how the server is running.

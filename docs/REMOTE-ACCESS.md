@@ -5,7 +5,7 @@
 > is needed for the mic. The steps below are the manual equivalent + the security details.
 
 
-Radio WebOp has **no login**. Anyone who can reach the port can control the radio,
+TeleRig has **no login**. Anyone who can reach the port can control the radio,
 including TX. So the security boundary must be the *network*, not the app. The
 recommended path is **Tailscale Serve**: it puts the app behind a tailnet-only
 HTTPS reverse proxy with an automatic `*.ts.net` certificate, which also satisfies
@@ -84,7 +84,7 @@ MagicDNS connection — when you're *not* using Serve — is almost always one o
    access, allow it:
 
    ```
-   netsh advfirewall firewall add rule name="Radio WebOp 8700" ^
+   netsh advfirewall firewall add rule name="TeleRig 8700" ^
      dir=in action=allow protocol=TCP localport=8700
    ```
 

@@ -1,7 +1,20 @@
 # Changelog
 
-All notable changes to **Radio WebOp** are documented here. This project adheres
-to [Semantic Versioning](https://semver.org).
+All notable changes to **TeleRig** (formerly **Radio WebOp**) are documented here. This project
+adheres to [Semantic Versioning](https://semver.org).
+
+## [Unreleased]
+
+### Changed
+- **Renamed to TeleRig** (formerly Radio WebOp): app name, page titles, the desktop shortcut and the
+  GitHub repository (`Dreikor17/TeleRig`; the old `radio-webop` URL redirects).
+- **Your settings carry over automatically.** On first run the config folder `~/.radio-webop` is
+  copied to `~/.telerig` (the old folder is left in place). `TELERIG_CONFIG`, `TELERIG_SSL_CERT`
+  and `TELERIG_SSL_KEY` replace the `RADIO_WEBOP_*` environment variables, which still work.
+  Browser settings (theme, band plan, saved connections) move from the old `radiowebop.*` keys.
+- The sign-in cookie is renamed, so on a password-protected install you sign in once more after
+  updating. Re-running `install.bat` replaces the old "Radio WebOp" desktop shortcut for this
+  install with a "TeleRig" one.
 
 ## [0.2.25] — 2026-07-05
 

@@ -1,6 +1,6 @@
 # Adding a radio — and the transmit‑safety contract
 
-Radio WebOp is **profile‑driven**: each model is a `RadioProfile` in
+TeleRig is **profile‑driven**: each model is a `RadioProfile` in
 `backend/profiles.py`, driven by a protocol handler (`Radio` = Icom CI‑V,
 `YaesuRadio` = Yaesu CAT). Adding a model of an existing make is usually just a new
 profile; a new make/protocol is a new handler class exposing the same method surface the

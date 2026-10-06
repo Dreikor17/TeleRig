@@ -1,11 +1,11 @@
 <#
-  Radio WebOp - install / update (Windows)
+  TeleRig - install / update (Windows)
 
   One script, safe to re-run:
     1. Finds a suitable Python (3.9+); installs Python 3.12 via winget if none is found.
     2. Updates the source from GitHub (git pull) when this is a clean git checkout.
     3. Creates a local virtual environment (.venv) and installs/upgrades dependencies.
-    4. Verifies the app imports, then makes a "Radio WebOp" desktop shortcut.
+    4. Verifies the app imports, then makes a "TeleRig" desktop shortcut.
 
   Normally launched by install.bat (double-click). Options:
     -NoShortcut   don't create/refresh the desktop shortcut
@@ -29,7 +29,7 @@ function Warn($m) { Write-Host "    [!]  $m"  -ForegroundColor Yellow }
 function Fail($m) { Write-Host ""; Write-Host "    [X]  $m" -ForegroundColor Red; Write-Host ""; exit 1 }
 
 Write-Host ""
-Write-Host "  Radio WebOp - install / update" -ForegroundColor White
+Write-Host "  TeleRig - install / update" -ForegroundColor White
 Write-Host "  ------------------------------" -ForegroundColor DarkGray
 
 # ---- 1. Python -------------------------------------------------------------
@@ -154,21 +154,31 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ($ver -join "`n") -ForegroundColor DarkGray
     Fail "The app failed to import after install."
 }
-Ok "Radio WebOp $(($ver | Select-Object -Last 1).ToString().Trim()) is ready"
+Ok "TeleRig $(($ver | Select-Object -Last 1).ToString().Trim()) is ready"
 
 # ---- 5. Desktop shortcut ---------------------------------------------------
 if (-not $NoShortcut) {
     try {
         $desktop = [Environment]::GetFolderPath('Desktop')
-        $lnkPath = Join-Path $desktop 'Radio WebOp.lnk'
+        $lnkPath = Join-Path $desktop 'TeleRig.lnk'
         $ws = New-Object -ComObject WScript.Shell
         $lnk = $ws.CreateShortcut($lnkPath)
         $lnk.TargetPath = Join-Path $Root 'run.bat'
         $lnk.WorkingDirectory = $Root
-        $lnk.Description = 'Launch Radio WebOp'
+        $lnk.Description = 'Launch TeleRig'
         $lnk.IconLocation = "$venvPy,0"
         $lnk.Save()
-        Ok "Desktop shortcut 'Radio WebOp' created"
+        Ok "Desktop shortcut 'TeleRig' created"
+        # Renamed from Radio WebOp: drop the old shortcut, but only if it launches THIS install
+        # (a separate older copy keeps its own shortcut).
+        $oldLnk = Join-Path $desktop 'Radio WebOp.lnk'
+        if (Test-Path $oldLnk) {
+            $old = $ws.CreateShortcut($oldLnk)
+            if ($old.WorkingDirectory -eq $Root -or $old.TargetPath -eq (Join-Path $Root 'run.bat')) {
+                Remove-Item $oldLnk -Force
+                Ok "Removed the old 'Radio WebOp' shortcut"
+            }
+        }
     } catch {
         Warn "Could not create the desktop shortcut: $($_.Exception.Message)"
     }
@@ -176,6 +186,6 @@ if (-not $NoShortcut) {
 
 Write-Host ""
 Write-Host "  All set." -ForegroundColor Green
-Write-Host "  Start it with the 'Radio WebOp' desktop shortcut, or double-click run.bat." -ForegroundColor White
+Write-Host "  Start it with the 'TeleRig' desktop shortcut, or double-click run.bat." -ForegroundColor White
 Write-Host "  It opens http://localhost:8700 in your browser. Re-run install.bat anytime to update." -ForegroundColor Gray
 Write-Host ""

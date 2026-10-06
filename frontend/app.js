@@ -1,6 +1,15 @@
-/* Radio WebOp — UI controller */
+/* TeleRig — UI controller */
 (function () {
   "use strict";
+  // Renamed from Radio WebOp: carry browser settings saved under the old "radiowebop." keys
+  // across once, so the theme, band-plan toggle and per-radio connections survive the rename.
+  try {
+    for (const k of ["theme", "bandplan", "conns", "conn"]) {
+      const nk = "telerig." + k, ok = "radiowebop." + k;
+      if (localStorage.getItem(nk) === null && localStorage.getItem(ok) !== null)
+        localStorage.setItem(nk, localStorage.getItem(ok));
+    }
+  } catch (_) {}
   const $ = (id) => document.getElementById(id);
 
   const scope = new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"));
@@ -662,12 +671,12 @@
   function applyTheme(day) {
     document.body.classList.toggle("day", day);
     if (themeBtn) themeBtn.textContent = day ? "☀️" : "🌙";
-    try { localStorage.setItem("radiowebop.theme", day ? "day" : "night"); } catch (_) {}
+    try { localStorage.setItem("telerig.theme", day ? "day" : "night"); } catch (_) {}
   }
   if (themeBtn) themeBtn.addEventListener("click", () => applyTheme(!document.body.classList.contains("day")));
   (function () {
     let t = "night";
-    try { t = localStorage.getItem("radiowebop.theme") || "night"; } catch (_) {}
+    try { t = localStorage.getItem("telerig.theme") || "night"; } catch (_) {}
     applyTheme(t === "day");
   })();
 
@@ -698,11 +707,11 @@
       if (!on && tip) tip.hidden = true;
       scope.drawOverlay();
       updateLegend();
-      try { localStorage.setItem("radiowebop.bandplan", on ? "1" : "0"); } catch (_) {}
+      try { localStorage.setItem("telerig.bandplan", on ? "1" : "0"); } catch (_) {}
     }
     btn.addEventListener("click", () => apply(!scope.showBandplan));
     let saved = "1";                                // band plan ON by default
-    try { saved = localStorage.getItem("radiowebop.bandplan") || "1"; } catch (_) {}
+    try { saved = localStorage.getItem("telerig.bandplan") || "1"; } catch (_) {}
     apply(saved === "1");
     setInterval(updateLegend, 600);               // refresh the color key as you tune / change span
 
@@ -1059,7 +1068,7 @@
   });
 
   // ---- per-radio connection memory (transport + settings, and COM audio devices) ----
-  const CONNS_KEY = "radiowebop.conns";
+  const CONNS_KEY = "telerig.conns";
   let CONNS = { last: null, radios: {} };
   let wantRxDev = null, wantMicDev = null, wantMicInDev = null;   // device IDs to restore once the lists populate
   (function loadConns() {
@@ -1067,7 +1076,7 @@
     if (!CONNS.radios) CONNS.radios = {};
     if (!Object.keys(CONNS.radios).length) {        // migrate the old single-config key
       try {
-        const old = JSON.parse(localStorage.getItem("radiowebop.conn") || localStorage.getItem("icomwebop.conn") || "null");
+        const old = JSON.parse(localStorage.getItem("telerig.conn") || localStorage.getItem("icomwebop.conn") || "null");
         if (old && old.radio) { CONNS.radios[old.radio] = { transport: old.transport, host: old.host, user: old.user, pass: old.pass, baud: old.baud }; CONNS.last = old.radio; }
       } catch (_) {}
     }

@@ -1,6 +1,6 @@
 # Roadmap
 
-Radio WebOp is a browser control panel for ham transceivers (Icom CI-V + Yaesu CAT).
+TeleRig (formerly Radio WebOp) is a browser control panel for ham transceivers (Icom CI-V + Yaesu CAT).
 Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — transports
 (CAT/serial, RS-BA1 LAN, audio, scope), a **capability map** the UI adapts to, and a
 **SET-menu table** — so adding a radio is mostly data (see `docs/ADDING-A-RADIO.md`).
@@ -194,7 +194,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **More radios** — IC-705, IC-7610, IC-905, IC-7300, etc. (each is just a profile).
 - **Authentication** for safe remote use (today there is no login — restrict by
   interface / firewall / VPN). *Built-in HTTPS shipped* — serve TLS directly with
-  `run.py --ssl-certfile/--ssl-keyfile` (or `RADIO_WEBOP_SSL_CERT/_KEY`).
+  `run.py --ssl-certfile/--ssl-keyfile` (or `TELERIG_SSL_CERT/_KEY`).
 - **Remote power-on** from networked standby where the radio supports it.
 - Audio: selectable **codec / sample-rate**, lower-latency options.
 

@@ -1,4 +1,4 @@
-"""App-layer access control — the ONLY thing protecting the transmitter once Radio WebOp is
+"""App-layer access control — the ONLY thing protecting the transmitter once TeleRig is
 reachable off the host PC.
 
 - One shared password (scrypt-hashed) gates every REMOTE session; the operator at the host
@@ -9,7 +9,9 @@ reachable off the host PC.
   enforced even with NO password set — it's the one defense that works without a login.
 
 Fail closed: an unparseable/ambiguous client IP is treated as remote; an unrecognized Host
-is rejected. Config lives in ~/.radio-webop/config.json (override with RADIO_WEBOP_CONFIG).
+is rejected. Config lives in ~/.telerig/config.json (override with TELERIG_CONFIG). Renamed from
+Radio WebOp: the old RADIO_WEBOP_CONFIG override is still honoured, and the first run copies an
+existing ~/.radio-webop folder across so saved settings and sessions carry over.
 """
 from __future__ import annotations
 
@@ -20,15 +22,29 @@ import ipaddress
 import json
 import os
 import secrets
+import shutil
 import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
-CONFIG_PATH = Path(os.environ.get("RADIO_WEBOP_CONFIG")
-                   or (Path.home() / ".radio-webop" / "config.json"))
+
+def _config_path() -> Path:
+    env = os.environ.get("TELERIG_CONFIG") or os.environ.get("RADIO_WEBOP_CONFIG")  # old name honoured
+    if env:
+        return Path(env)
+    new_dir, old_dir = Path.home() / ".telerig", Path.home() / ".radio-webop"
+    if not new_dir.exists() and old_dir.is_dir():
+        try:
+            shutil.copytree(old_dir, new_dir)      # copy, not move: an older install keeps its own
+        except Exception:
+            return old_dir / "config.json"         # couldn't migrate -> keep using the old file
+    return new_dir / "config.json"
+
+
+CONFIG_PATH = _config_path()
 SESSION_TTL = 30 * 24 * 3600          # signed-cookie lifetime (seconds)
-COOKIE_NAME = "rw_session"
+COOKIE_NAME = "tr_session"
 
 _cfg: Optional[dict] = None
 

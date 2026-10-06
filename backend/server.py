@@ -1,5 +1,5 @@
 """
-Radio WebOp server.
+TeleRig server.
 
 ASGI app (Starlette on uvicorn):
   GET  /              -> the radio UI
@@ -56,7 +56,7 @@ radio = Radio()
 
 
 # -- update check (latest GitHub release) ------------------------------------
-_REPO = "Dreikor17/radio-webop"
+_REPO = "Dreikor17/TeleRig"
 _VER_TTL = 3600.0                          # re-check at most hourly
 _latest = {"tag": None, "url": None, "ts": 0.0}
 _latest_lock = threading.Lock()
@@ -81,7 +81,7 @@ def _fetch_latest_release() -> None:
     try:
         req = urllib.request.Request(
             f"https://api.github.com/repos/{_REPO}/releases/latest",
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "radio-webop"})
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "TeleRig"})
         with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         tag, url = data.get("tag_name"), data.get("html_url")
