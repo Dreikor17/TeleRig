@@ -49,6 +49,19 @@ def main() -> None:
     elif args.ssl_certfile or args.ssl_keyfile:
         print("  NOTE: --ssl-certfile and --ssl-keyfile must be given together; serving plain HTTP.")
 
+    # Resolve the config folder (one-time ~/.radio-webop -> ~/.telerig copy) and check the stores
+    # before serving. A corrupt store never stops the start: the server comes up LOCKED (503 with
+    # the fix on every page), so the user sees what to do instead of a traceback.
+    from backend import accounts
+    from backend.store import StoreCorrupt
+    config_dir, locked = None, None
+    try:
+        config_dir = accounts.ensure_initialized()
+    except StoreCorrupt as e:
+        locked = e
+    except Exception as e:                      # e.g. the config folder is unreadable
+        locked = e
+
     scheme = "https" if ssl_kw else "http"
     local = f"{scheme}://localhost:{args.port}"
     if not args.no_browser and not args.reload:
@@ -57,6 +70,14 @@ def main() -> None:
         except Exception:
             pass
     print(f"TeleRig -> {local}")
+    if config_dir is not None:
+        _say(f"  Config: {config_dir}")
+    if locked is not None:
+        cmd = "run.bat --reset-admin" if sys.platform == "win32" else "python3 run.py --reset-admin"
+        where = getattr(locked, "path", None) or "the config folder"
+        _say(f"  LOCKED: {where} cannot be read ({getattr(locked, 'detail', '') or locked}).")
+        _say(f"  Nothing was changed. Fix that file or move it aside (or run {cmd}); the server")
+        _say("  starts locked (every page shows this) and unlocks by itself once the file is readable.")
     if args.host in ("0.0.0.0", "::"):
         print(f"  Also reachable on all interfaces (LAN / VPN / port-forward) at port {args.port}"
               f" over {scheme}.")
@@ -73,6 +94,14 @@ def main() -> None:
                 reload=args.reload, log_level="info",
                 ws_ping_interval=10, ws_ping_timeout=10, ws_max_size=1048576,
                 proxy_headers=False, **ssl_kw)
+
+
+def _say(msg: str) -> None:
+    """A banner line that never crashes the start (a console that cannot encode a path)."""
+    try:
+        print(msg, flush=True)
+    except Exception:
+        print(msg.encode("ascii", "replace").decode("ascii"), flush=True)
 
 
 def _env_flag(name: str) -> bool:

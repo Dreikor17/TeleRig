@@ -173,17 +173,22 @@ _STRIP_ENV = ("RADIO_WEBOP_CONFIG", "TELERIG_CONFIG", "TELERIG_SIM_ONLY", "TELER
               "TELERIG_SSL_CERT", "TELERIG_SSL_KEY", "RADIO_WEBOP_SSL_CERT", "RADIO_WEBOP_SSL_KEY")
 
 
-def scratch_env(tmp: Any, *, sim_only: bool = True, no_autoconnect: bool = True) -> dict:
+def scratch_env(tmp: Any, *, sim_only: bool = True, no_autoconnect: bool = True,
+                config_env: bool = True) -> dict:
     """Environment for any child that may import the backend: TELERIG_CONFIG=<tmp>/config.json,
     HOME/USERPROFILE=<tmp>/home, RADIO_WEBOP_CONFIG and TLS variables removed. Validates before
-    creating anything; creates only <tmp>/home."""
+    creating anything; creates only <tmp>/home. config_env=False leaves TELERIG_CONFIG out too, so
+    the child resolves ~/.telerig under the SCRATCH home (for the lazy-config-folder tests)."""
     tmp = Path(tmp)
     cfg = check_config_path(tmp / "config.json")
     home = check_scratch_home(tmp / "home")
     home.mkdir(parents=True, exist_ok=True)
     env = {k: v for k, v in os.environ.items() if k not in _STRIP_ENV}
-    env["TELERIG_CONFIG"] = str(cfg)
+    if config_env:
+        env["TELERIG_CONFIG"] = str(cfg)
     env["HOME"] = env["USERPROFILE"] = str(home)
+    for k in ("HOMEDRIVE", "HOMEPATH"):              # Windows fallbacks for expanduser: never the real home
+        env.pop(k, None)
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
     if sim_only:
@@ -194,10 +199,11 @@ def scratch_env(tmp: Any, *, sim_only: bool = True, no_autoconnect: bool = True)
 
 
 def run_child(args: list, tmp: Any, *, input: Optional[str] = None, timeout: float = 60.0,
-              sim_only: bool = True, no_autoconnect: bool = True) -> subprocess.CompletedProcess:
+              sim_only: bool = True, no_autoconnect: bool = True,
+              config_env: bool = True) -> subprocess.CompletedProcess:
     """Run [sys.executable, *args] from the repo root with scratch_env(tmp) (e.g. run.py CLI
     calls, `-m backend.x_test`, `-c <code>`). Never starts a server: use Server for that."""
-    env = scratch_env(tmp, sim_only=sim_only, no_autoconnect=no_autoconnect)
+    env = scratch_env(tmp, sim_only=sim_only, no_autoconnect=no_autoconnect, config_env=config_env)
     return subprocess.run([sys.executable, *[str(a) for a in args]], cwd=str(REPO), env=env,
                           input=input, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout)
@@ -326,15 +332,22 @@ class Client:
             conn.close()
 
     def ws(self, path: str = "/ws", *, origin: Any = _DEFAULT, cookies: bool = True,
-           headers: Optional[dict] = None, open_timeout: float = 5.0) -> "WS":
+           headers: Optional[dict] = None, open_timeout: float = 5.0,
+           host_header: Optional[str] = None) -> "WS":
         """websockets.sync.client.connect with this client's Origin and cookies. A handshake the
-        server refuses with an HTTP status raises WSRejected(status)."""
+        server refuses with an HTTP status raises WSRejected(status). host_header sends that Host
+        value (e.g. "[::1]:P") while the TCP connection still goes to 127.0.0.1:<port>."""
         hdrs = dict(headers or {})
         if cookies and self.jar:
             hdrs["Cookie"] = self.cookie_header()
         o = self.origin if origin is _DEFAULT else origin
-        conn = ws_connect(f"ws://{self.host}:{self.port}{path}", origin=o, headers=hdrs,
-                          open_timeout=open_timeout)
+        sock = None
+        authority = f"{self.host}:{self.port}"
+        if host_header is not None:
+            authority = host_header
+            sock = socket.create_connection(("127.0.0.1", self.port), timeout=open_timeout)
+        conn = ws_connect(f"ws://{authority}{path}", origin=o, headers=hdrs,
+                          open_timeout=open_timeout, sock=sock)
         return WS(conn, self)
 
 
@@ -362,13 +375,18 @@ def close_info(exc: BaseException) -> tuple:
 
 
 def ws_connect(uri: str, *, origin: Optional[str], headers: Optional[dict] = None,
-               open_timeout: float = 5.0):
+               open_timeout: float = 5.0, sock: Optional[socket.socket] = None):
+    """sock: an already-connected socket (it overrides the URI's host/port; the URI still sets
+    the Host header)."""
     from websockets.exceptions import InvalidStatus
     from websockets.sync.client import connect
+    kw = {"sock": sock} if sock is not None else {"proxy": None}
     try:
         return connect(uri, origin=origin, additional_headers=headers or None,
-                       open_timeout=open_timeout, proxy=None)
+                       open_timeout=open_timeout, **kw)
     except InvalidStatus as e:
+        if sock is not None:
+            sock.close()
         raise WSRejected(e.response.status_code) from None
 
 

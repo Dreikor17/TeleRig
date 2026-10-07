@@ -14,10 +14,12 @@ Scope sweeps are pushed as a single self-contained binary frame:
 from __future__ import annotations
 
 import asyncio
+import html as _html
 import json
 import mimetypes
 import os
 import struct
+import sys
 import threading
 import time
 import urllib.request
@@ -28,7 +30,7 @@ import urllib.request
 mimetypes.add_type("text/javascript", ".mjs")
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional, Set
+from typing import Optional
 
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -37,11 +39,13 @@ from starlette.responses import (FileResponse, HTMLResponse, JSONResponse,
                                  PlainTextResponse, RedirectResponse)
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocket
 
-from . import __version__, auth, civ, hostaudio, profiles, tailscale
+from . import __version__, accounts, auth, civ, hostaudio, policy, profiles, settings, tailscale
+from .hub import AUDIO_RATE, Hub  # noqa: F401  (AUDIO_RATE re-exported: hostaudio.RATE must match it)
 from .lan import LanTransport
 from .radio import Radio
+from .store import StoreBusy, StoreCorrupt, StoreError, console
 from .transport import SerialTransport, SimTransport, YaesuSimTransport, available_ports
 from .yaesu import YaesuRadio
 
@@ -104,66 +108,8 @@ def _maybe_check_update() -> None:
         threading.Thread(target=_fetch_latest_release, daemon=True, name="ver-check").start()
 
 
-class Hub:
-    """Bridges radio threads -> websocket clients via the asyncio loop."""
-
-    def __init__(self) -> None:
-        self.clients: Set[asyncio.Queue] = set()
-        self.loop: Optional[asyncio.AbstractEventLoop] = None
-
-    def add(self) -> asyncio.Queue:
-        q: asyncio.Queue = asyncio.Queue(maxsize=64)   # room for scope + audio
-        self.clients.add(q)
-        return q
-
-    def remove(self, q: asyncio.Queue) -> None:
-        self.clients.discard(q)
-
-    def _push(self, item) -> None:
-        if not self.loop:
-            return
-        def deliver():
-            for q in list(self.clients):
-                if q.full():
-                    try:
-                        q.get_nowait()       # drop oldest, keep stream live
-                    except asyncio.QueueEmpty:
-                        pass
-                try:
-                    q.put_nowait(item)
-                except asyncio.QueueFull:
-                    pass
-        self.loop.call_soon_threadsafe(deliver)
-
-    def broadcast_state(self, state: dict) -> None:
-        self._push(("text", json.dumps({"type": "state", **state})))
-
-    def broadcast_scope(self, sweep: civ.ScopeSweep) -> None:
-        self._push(("bytes", _pack_scope(sweep, radio.state)))
-
-    def broadcast_audio(self, pcm: bytes) -> None:
-        # 'A' tag + channels + sample-rate header, then 16-bit LE mono PCM
-        self._push(("bytes", struct.pack("<BBH", 0x41, 1, AUDIO_RATE) + pcm))
-
-    def broadcast_menu(self, values: dict) -> None:
-        # SET-menu values ride a SEPARATE channel so the 154-item table never bloats the
-        # high-rate state frames.
-        self._push(("text", json.dumps({"type": "menu", "values": values})))
-
-    def broadcast_host_audio(self, **kw) -> None:
-        # host sound-card audio status/errors (separate from radio state)
-        self._push(("text", json.dumps({"type": "host_audio", **kw})))
-
-    def broadcast_meter(self, meter: str, val: int, smeter: int, smeter_s: str) -> None:
-        # the meter changes ~every poll; keep it OFF the heavy full-state frame so it can
-        # fan out fast on its own lightweight channel (like scope / menu).
-        self._push(("text", json.dumps({"type": "meter", "meter": meter, "meter_val": val,
-                                        "smeter": smeter, "smeter_s": smeter_s})))
-
-
-AUDIO_RATE = 16000
-
-hub = Hub()
+hub = Hub()                    # connection registry + fan-out (backend/hub.py)
+hub.scope_packer = lambda sweep: _pack_scope(sweep, radio.state)   # reads the CURRENT radio
 # Host sound-card audio: for a serial/USB radio reached remotely, the radio's RX/TX audio is
 # on the HOST's sound card (not the browser's). Capture it server-side and stream over the WS.
 host_audio = hostaudio.HostAudio(hub.broadcast_audio)
@@ -338,59 +284,133 @@ async def api_audio_devices(request):
 
 
 # -- WebSocket ---------------------------------------------------------------
+WS_TEXT_MAX = 8192                     # bytes; larger text frames are refused (`denied too_large`)
+DENY_INTERVAL = 0.5                    # at most 2 denial frames per second per connection
+
+
 async def ws_endpoint(ws: WebSocket):
-    # The HTTP middleware doesn't see WS upgrades — gate here. Origin/Host blocks cross-site
-    # WS hijacking + DNS-rebinding; the session cookie gates remote clients (loopback exempt).
-    host = ws.headers.get("host")
-    if not auth.host_ok(host) or not auth.origin_ok(ws.headers.get("origin"), host):
-        await ws.close(code=1008); return
-    if auth.auth_enabled() and not auth.local_exempt(_client_ip(ws)) \
-            and not auth.valid_session(ws.cookies.get(auth.COOKIE_NAME)):
-        await ws.close(code=1008); return
+    # The HTTP middleware doesn't see WS upgrades — gate here. Accept FIRST so the close code
+    # reaches the browser (a close before accept becomes an HTTP 403 and the page sees 1006).
     await ws.accept()
-    q = hub.add()
-    await ws.send_text(json.dumps({"type": "state", **radio.state}))
-
-    async def sender():
-        try:
-            while True:
-                kind, payload = await q.get()
-                if kind == "text":
-                    await ws.send_text(payload)
-                else:
-                    await ws.send_bytes(payload)
-        except (WebSocketDisconnect, RuntimeError):
-            pass
-
-    send_task = asyncio.create_task(sender())
+    try:
+        if _check_locked() is not None:
+            return await _ws_refuse(ws, 4403, "server_locked")
+        host = ws.headers.get("host")
+        if not auth.host_ok(host) or not auth.origin_ok(ws.headers.get("origin"), ws.scope):
+            return await _ws_refuse(ws, 4403, "bad_origin")
+        # v1 shared-password session (loopback exempt unless behind a proxy); A3 replaces it.
+        if auth.auth_enabled() and not auth.local_exempt(_client_ip(ws)) \
+                and not auth.valid_session(ws.cookies.get(auth.COOKIE_NAME)):
+            return await _ws_refuse(ws, 4401, "unauthenticated")
+    except StoreCorrupt as e:
+        _enter_locked(e)
+        return await _ws_refuse(ws, 4403, "server_locked")
+    conn = hub.add(ws, ip=_client_ip(ws))
+    hub.send_to(conn, hub.state_frame(radio.state), control=False)   # first frame: current state
+    hub.start_sender(conn)
     try:
         while True:
             msg = await ws.receive()
             if msg["type"] == "websocket.disconnect":
                 break
+            conn.last_rx = time.monotonic()
             if msg.get("text") is not None:
-                _handle_cmd(json.loads(msg["text"]))
+                _on_text(conn, msg["text"])          # never raises
             elif msg.get("bytes") is not None:
-                if host_audio.tx_device is not None:
-                    host_audio.write(msg["bytes"])   # serial radio: mic -> host TX sound card
-                else:
-                    radio.write_audio(msg["bytes"])  # LAN: mic PCM -> the radio's modulator
-    except WebSocketDisconnect:
+                _on_bytes(conn, msg["bytes"])
+    except Exception:                                # WebSocketDisconnect, closed by a kick, ...
         pass
     finally:
-        send_task.cancel()
-        hub.remove(q)
-        host_audio.stop_tx()                 # this client's mic feed ends -> stop playing to the radio
-        if not hub.clients:                  # nobody left listening -> stop capturing the host RX card
-            host_audio.stop_rx()
+        # Each step on its own, so one failure never skips an unkey (AR-17).
         # safety: PTT is a single shared radio state with one keyer, so the
         # disconnecting client may be the one transmitting. Unkey on ANY client
         # drop while keyed — not just the last one — since the client-side unkey
-        # can be lost when the socket is already closing.
-        if radio.state.get("ptt"):
-            radio.set_ptt(False)
-        if radio.state.get("cw_tx"):                  # stop an in-progress CW message too
-            radio.stop_cw()
+        # can be lost when the socket is already closing. (A4: owner-scoped, §2.13.)
+        try:
+            if radio.state.get("ptt"):
+                radio.set_ptt(False)
+        except Exception:
+            pass
+        try:
+            if radio.state.get("cw_tx"):              # stop an in-progress CW message too
+                radio.stop_cw()
+        except Exception:
+            pass
+        try:
+            host_audio.stop_tx()             # this client's mic feed ends -> stop playing to the radio
+        except Exception:
+            pass
+        try:
+            hub.remove(conn)
+            if not hub.conns:                # nobody left listening -> stop capturing the host RX card
+                host_audio.stop_rx()
+        except Exception:
+            pass
+        if conn.sender is not None:
+            conn.sender.cancel()
+
+
+async def _ws_refuse(ws: WebSocket, code: int, reason: str) -> None:
+    """Close an accepted socket with an application code (the client may already be gone)."""
+    try:
+        await ws.close(code=code, reason=reason)
+    except Exception:
+        pass
+
+
+def _deny(conn, action, reason: str) -> None:
+    """`denied` to this connection only, on the control queue; at most 2/s per connection."""
+    now = time.monotonic()
+    if now - conn.denied_at < DENY_INTERVAL:
+        return
+    conn.denied_at = now
+    a = action if isinstance(action, str) else "*"
+    hub.send_to(conn, {"type": "denied", "action": a[:64], "reason": reason})
+
+
+def _on_text(conn, text: str) -> None:
+    """One client text frame: size cap, JSON parsed inside try, dict + string-action check, then
+    the policy table (§2.12). Never raises, so a bad frame can never kill the socket."""
+    try:
+        if len(text) > WS_TEXT_MAX or len(text.encode("utf-8", "surrogatepass")) > WS_TEXT_MAX:
+            _deny(conn, "*", "too_large")
+            return
+        try:
+            cmd = json.loads(text)
+        except Exception:
+            return
+        if not isinstance(cmd, dict) or not isinstance(cmd.get("action"), str):
+            return
+        a = cmd["action"]
+        rule = policy.WS_POLICY.get(a)
+        if rule is None:                             # unknown, or REMOVED (host_rx / host_tx)
+            _deny(conn, a, "unknown_action")
+            return
+        _dispatch(conn, policy.evaluate(rule, conn, cmd))
+    except Exception as e:                           # pragma: no cover - defensive
+        console(f"TeleRig: WS message handling failed: {e!r}")
+
+
+def _dispatch(conn, v) -> None:
+    if v.kind == "deny":
+        _deny(conn, v.action, v.reason or "invalid")
+    elif v.kind == "ignore":
+        return
+    elif v.kind == "plain":
+        _handle_cmd(v.cmd)
+    else:                                            # busy/new/claim/release/stop arrive in A4
+        _deny(conn, v.action, "invalid")
+
+
+def _on_bytes(conn, data: bytes) -> None:
+    """Binary frame = browser mic PCM (v1 path; A4 gates it to the TX owner, §2.14)."""
+    try:
+        if host_audio.tx_device is not None:
+            host_audio.write(data)                   # serial radio: mic -> host TX sound card
+        else:
+            radio.write_audio(data)                  # LAN: mic PCM -> the radio's modulator
+    except Exception:
+        pass
 
 
 def _handle_cmd(cmd: dict) -> None:
@@ -518,27 +538,148 @@ def _handle_cmd(cmd: dict) -> None:
             radio.read_menu_group(str(cmd["group"]))
         elif action == "menu_write":
             radio.set_menu(int(cmd["num"]), cmd["value"])
-        elif action == "host_rx":            # capture a host sound card -> stream to the browser
-            try:
-                host_audio.start_rx(cmd["device"]) if cmd.get("on") else host_audio.stop_rx()
-            except Exception as exc:
-                host_audio.stop_rx(); hub.broadcast_host_audio(error="Radio RX audio — " + str(exc))
-        elif action == "host_tx":            # play browser-mic PCM -> a host sound card (the radio)
-            try:
-                host_audio.start_tx(cmd["device"]) if cmd.get("on") else host_audio.stop_tx()
-            except Exception as exc:
-                host_audio.stop_tx(); hub.broadcast_host_audio(error="Radio TX audio — " + str(exc))
     except (KeyError, ValueError, TypeError):
         pass
 
 
+# -- locked mode (I6, §2.4) ----------------------------------------------------
+# An unparsable config.json (A3: also a corrupt auth.json) locks the server: every HTTP request
+# gets 503, every WebSocket is closed with 4403 server_locked, nothing is defaulted or written.
+# Fixing the file unlocks it without a restart (the watchdog re-checks).
+_locked: Optional[StoreCorrupt] = None
+
+
+def _recovery_cmd() -> str:
+    return "run.bat --reset-admin" if sys.platform == "win32" else "python3 run.py --reset-admin"
+
+
+def _locked_message(e: StoreCorrupt) -> str:
+    return (f"TeleRig is locked: {e.path} cannot be read ({e.detail or 'corrupt'}). Nothing has been "
+            f"changed. On the host PC, fix that file or move it aside (or run {_recovery_cmd()}); "
+            "TeleRig unlocks within a few seconds, no restart needed.")
+
+
+def _store_problem() -> Optional[StoreCorrupt]:
+    try:
+        settings.view()
+    except StoreCorrupt as e:
+        return e
+    return None
+
+
+def _release_tx_for_lock() -> None:
+    """Entering locked mode releases app-keyed TX (A4: arb.force_release("server_locked"))."""
+    try:
+        if radio.state.get("ptt"):
+            radio.set_ptt(False)
+    except Exception:
+        pass
+    try:
+        if radio.state.get("cw_tx"):
+            radio.stop_cw()
+    except Exception:
+        pass
+
+
+def _enter_locked(e: StoreCorrupt) -> None:
+    global _locked
+    entering = _locked is None
+    _locked = e
+    if not entering:
+        return
+    console("\n  " + _locked_message(e) + "\n")
+    _release_tx_for_lock()
+    try:
+        host_audio.stop()
+    except Exception:
+        pass
+    hub.kick_all(4403, "server_locked")
+
+
+def _leave_locked() -> None:
+    global _locked
+    try:
+        accounts.ensure_initialized()
+    except StoreCorrupt as e:
+        _locked = e
+        return
+    console(f"  TeleRig: {_locked.path if _locked else 'config'} is readable again; unlocked.")
+    _locked = None
+
+
+def _check_locked() -> Optional[StoreCorrupt]:
+    """The current locked state (re-reads the stores, subject to their stat/hash intervals);
+    enters or leaves locked mode on a transition."""
+    e = _store_problem()
+    if e is not None:
+        _enter_locked(e)
+    elif _locked is not None:
+        _leave_locked()
+    return _locked
+
+
+def _locked_response(request, e: StoreCorrupt):
+    msg = _locked_message(e)
+    hdrs = {"Cache-Control": "no-store"}
+    if request.url.path.startswith("/api/"):
+        return JSONResponse({"ok": False, "error": "server_locked", "message": msg},
+                            status_code=503, headers=hdrs)
+    page = ("<!doctype html><html><head><meta charset=utf-8><title>TeleRig locked</title>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'></head>"
+            "<body style='font-family:system-ui,sans-serif;max-width:40em;margin:3em auto;padding:0 16px'>"
+            f"<h1>TeleRig is locked</h1><p>{_html.escape(msg)}</p></body></html>")
+    return HTMLResponse(page, status_code=503, headers=hdrs)
+
+
+# -- watchdog (A2: store reload + locked re-check; A3/A4 add identity and TX duties) ----------
+WATCHDOG_TICK = 0.5
+_watchdog_task: Optional[asyncio.Task] = None
+_shutting_down = False
+
+
+async def _watchdog() -> None:
+    while True:
+        await asyncio.sleep(WATCHDOG_TICK)
+        try:
+            _check_locked()          # reloads config.json even with no traffic (I7 groundwork)
+        except Exception as exc:     # log and keep ticking
+            console(f"TeleRig: watchdog tick failed: {exc!r}")
+
+
+def _watchdog_done(task: asyncio.Task) -> None:
+    if _shutting_down or task.cancelled():
+        return
+    console(f"TeleRig: watchdog stopped ({task.exception()!r}); restarting")
+    _start_watchdog()
+
+
+def _start_watchdog() -> None:
+    global _watchdog_task
+    _watchdog_task = asyncio.ensure_future(_watchdog())
+    _watchdog_task.add_done_callback(_watchdog_done)
+
+
 @asynccontextmanager
 async def _lifespan(app):
+    global _shutting_down
     # capture the serving loop so radio threads can schedule WS sends onto it.
     # (lifespan, not on_startup= — Starlette removed the on_startup/on_shutdown kwargs.)
     hub.loop = asyncio.get_running_loop()
+    # I2: every WS action literal in this file has a policy row (or is REMOVED), else no start.
+    policy.assert_complete(Path(__file__).read_text(encoding="utf-8"))
+    try:
+        accounts.ensure_initialized()      # lazy config folder + store checks (no I/O at import)
+    except StoreCorrupt as e:
+        _enter_locked(e)                   # start anyway, locked: 503 + the fix, never a traceback
     _maybe_check_update()                  # warm the update-check cache at startup
-    yield
+    _shutting_down = False
+    _start_watchdog()
+    try:
+        yield
+    finally:
+        _shutting_down = True
+        if _watchdog_task is not None:
+            _watchdog_task.cancel()
 
 
 # -- access control: shared-password auth + Origin/Host (CSWSH + DNS-rebinding) ----------
@@ -573,22 +714,36 @@ def _rate_limited(ip: str) -> bool:
 
 
 class Gate(BaseHTTPMiddleware):
-    """Origin/Host allowlist on every request (CSWSH + DNS-rebinding), plus the shared-password
-    session gate on all routes except loopback + the login endpoints."""
+    """Locked mode first, then the Host allowlist (DNS-rebinding) and the exact Origin rule on
+    every non-GET/HEAD request (CSWSH; a missing Origin is refused, I15), plus the shared-password
+    session gate on all routes except loopback + the login endpoints (v1; A3 replaces it)."""
     async def dispatch(self, request, call_next):
-        host = request.headers.get("host")
-        if not auth.host_ok(host):
-            return PlainTextResponse("Bad Host header.", status_code=403)
-        if request.method not in ("GET", "HEAD"):           # block cross-site state changes
-            if not auth.origin_ok(request.headers.get("origin"), host):
-                return PlainTextResponse("Cross-site request blocked.", status_code=403)
-        if auth.auth_enabled() and not auth.local_exempt(_client_ip(request)) \
-                and request.url.path not in _AUTH_EXEMPT:
-            if not auth.valid_session(request.cookies.get(auth.COOKIE_NAME)):
-                if request.url.path.startswith("/api/"):
-                    return JSONResponse({"error": "auth required"}, status_code=401)
-                return RedirectResponse("/login", status_code=303)
-        return await call_next(request)
+        try:
+            lk = _check_locked()
+            if lk is not None:
+                return _locked_response(request, lk)
+            host = request.headers.get("host")
+            if not auth.host_ok(host):
+                return PlainTextResponse("Bad Host header.", status_code=403)
+            if request.method not in ("GET", "HEAD"):           # block cross-site state changes
+                origin = request.headers.get("origin")
+                if not auth.origin_ok(origin, request.scope):
+                    return PlainTextResponse(auth.origin_denied_text(origin, request.scope),
+                                             status_code=403)
+            if auth.auth_enabled() and not auth.local_exempt(_client_ip(request)) \
+                    and request.url.path not in _AUTH_EXEMPT:
+                if not auth.valid_session(request.cookies.get(auth.COOKIE_NAME)):
+                    if request.url.path.startswith("/api/"):
+                        return JSONResponse({"error": "auth required"}, status_code=401)
+                    return RedirectResponse("/login", status_code=303)
+            return await call_next(request)
+        except StoreCorrupt as e:
+            _enter_locked(e)
+            return _locked_response(request, e)
+        except StoreBusy:
+            return JSONResponse({"ok": False, "error": "store_busy"}, status_code=503)
+        except StoreError:
+            return JSONResponse({"ok": False, "error": "store_error"}, status_code=500)
 
 
 def _set_session_cookie(resp, request) -> None:
@@ -600,12 +755,22 @@ async def login_page(request):
     return FileResponse(str(FRONTEND / "login.html"))
 
 
+async def _json_body(request) -> dict:
+    """The JSON object body, or {} for a bodiless/unparsable/non-object body (v1 routes only;
+    A3 adds read_json with the 413/400 rules, §2.9)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 async def api_login(request):
     ip = _client_ip(request)
     if _rate_limited(ip):
         return JSONResponse({"ok": False, "error": "too many attempts — wait a few minutes"}, status_code=429)
     _login_hits.setdefault(ip, []).append(time.monotonic())
-    body = await request.json()
+    body = await _json_body(request)
     if auth.verify_password(str(body.get("password", ""))):
         _login_hits[ip] = []
         resp = JSONResponse({"ok": True})
@@ -630,7 +795,7 @@ async def api_set_password(request):
     # Setting / clearing the shared password is the host operator's job — local only.
     if not auth.is_local(_client_ip(request)):
         return JSONResponse({"ok": False, "error": "set the password on the host PC"}, status_code=403)
-    body = await request.json()
+    body = await _json_body(request)
     if body.get("clear"):
         auth.clear_password()
         return JSONResponse({"ok": True, "enabled": False})
@@ -664,7 +829,7 @@ async def api_tailscale_serve(request):
     st = tailscale.status(port)
     if st.get("magicdns"):
         auth.add_allowed_host(st["magicdns"])       # so the Origin/Host gate accepts the *.ts.net name
-    auth.set_behind_proxy(True)
+    auth.set_behind_proxy(True, "tailscale")         # (A5: written only after a confirmed success)
     if code != 0:
         return JSONResponse({"ok": False, "error": (err or out or "tailscale serve failed").strip(),
                              "tailscale": st}, status_code=400)

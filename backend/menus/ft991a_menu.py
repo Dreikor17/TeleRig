@@ -107,7 +107,7 @@ FT991A_MENU = [
     # --- Memory / Scan / TX general ---
     MenuItem(34, "MEM GROUP", "Memory/Scan", kind="enum", digits=1, options=_DISEN),
     MenuItem(35, "QUICK SPLIT FREQ", "Memory/Scan", kind="signed-int", digits=3, min=-20, max=20, unit="kHz"),
-    MenuItem(36, "TX TOT", "General TX", kind="int", digits=2, min=0, max=30, unit="min", note="0 = OFF; app sets 2 min on connect"),
+    MenuItem(36, "TX TOT", "General TX", kind="int", digits=2, min=0, max=30, unit="min", critical=True, tx_tot=True, note="0 = OFF; app sets 2 min on connect"),
     MenuItem(37, "MIC SCAN", "Memory/Scan", kind="enum", digits=1, options=_DISEN),
     MenuItem(38, "MIC SCAN RESUME", "Memory/Scan", kind="enum", digits=1, options=["PAUSE", "TIME"]),
     MenuItem(39, "REF FREQ ADJ", "General", kind="signed-int", digits=3, min=-25, max=25),
@@ -119,7 +119,7 @@ FT991A_MENU = [
     _slope(44, "AM HCUT SLOPE", "AM"),
     MenuItem(45, "AM MIC SELECT", "AM", kind="enum", digits=1, options=_MIC_SEL),
     _level(46, "AM OUT LEVEL", "AM"),
-    MenuItem(47, "AM PTT SELECT", "AM", kind="enum", digits=1, options=_PTT_SEL, critical=True),
+    MenuItem(47, "AM PTT SELECT", "AM", kind="enum", digits=1, options=_PTT_SEL, critical=True, tx_route=True),
     MenuItem(48, "AM PORT SELECT", "AM", kind="enum", digits=1, options=["DATA", "USB"], critical=True),
     _level(49, "AM DATA GAIN", "AM"),
     # --- CW mode ---
@@ -145,13 +145,13 @@ FT991A_MENU = [
     _hcut(68, "DATA HCUT FREQ", "DATA"),
     _slope(69, "DATA HCUT SLOPE", "DATA"),
     MenuItem(70, "DATA IN SELECT", "DATA", kind="enum", digits=1, options=_MIC_SEL),
-    MenuItem(71, "DATA PTT SELECT", "DATA", kind="enum", digits=1, options=_PTT_SEL, critical=True),
+    MenuItem(71, "DATA PTT SELECT", "DATA", kind="enum", digits=1, options=_PTT_SEL, critical=True, tx_route=True),
     MenuItem(72, "DATA PORT SELECT", "DATA", kind="enum", digits=1, options=["(reserved)", "DATA", "USB"], critical=True, note="index 0 reserved"),
     _level(73, "DATA OUT LEVEL", "DATA"),
     # --- FM mode ---
     MenuItem(74, "FM MIC SELECT", "FM", kind="enum", digits=1, options=_MIC_SEL),
     _level(75, "FM OUT LEVEL", "FM"),
-    MenuItem(76, "FM PKT PTT SELECT", "FM", kind="enum", digits=1, options=_PTT_SEL, critical=True),
+    MenuItem(76, "FM PKT PTT SELECT", "FM", kind="enum", digits=1, options=_PTT_SEL, critical=True, tx_route=True),
     MenuItem(77, "FM PKT PORT SELECT", "FM", kind="enum", digits=1, options=["(reserved)", "DATA", "USB"], critical=True, note="index 0 reserved"),
     _level(78, "FM PKT TX GAIN", "FM"),
     MenuItem(79, "FM PKT MODE", "FM", kind="enum", digits=1, options=["1200", "9600"]),
@@ -189,7 +189,7 @@ FT991A_MENU = [
     _slope(107, "SSB HCUT SLOPE", "SSB"),
     MenuItem(108, "SSB MIC SELECT", "SSB", kind="enum", digits=1, options=_MIC_SEL),
     _level(109, "SSB OUT LEVEL", "SSB"),
-    MenuItem(110, "SSB PTT SELECT", "SSB", kind="enum", digits=1, options=_PTT_SEL, critical=True),
+    MenuItem(110, "SSB PTT SELECT", "SSB", kind="enum", digits=1, options=_PTT_SEL, critical=True, tx_route=True),
     MenuItem(111, "SSB PORT SELECT", "SSB", kind="enum", digits=1, options=["DATA", "USB"], critical=True),
     MenuItem(112, "SSB TX BPF", "SSB", kind="enum", digits=1, options=["50-3000", "100-2900", "200-2800", "300-2700", "400-2600"], unit="Hz"),
     # --- Contour / APF / Notch ---

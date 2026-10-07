@@ -51,7 +51,7 @@ IC9700_MENU = [
           ["5 min", "10 min", "15 min", "While Scanning", "While Powered ON"]),
     # --- TX ---
     _enum(41, "Time-Out Timer", "TX", ["OFF", "3 min", "5 min", "10 min", "20 min", "30 min"],
-          critical=True, note="app sets this to 3 min on connect (TX safety backstop)"),
+          critical=True, tx_tot=True, note="app sets this to 3 min on connect (TX safety backstop)"),
     _toggle(42, "PTT Lock", "TX"),
     _enum(38, "TX Delay 144M", "TX", ["OFF", "10 ms", "15 ms", "20 ms", "25 ms", "30 ms"]),
     _enum(39, "TX Delay 430M", "TX", ["OFF", "10 ms", "15 ms", "20 ms", "25 ms", "30 ms"]),

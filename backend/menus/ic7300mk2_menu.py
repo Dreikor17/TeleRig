@@ -57,7 +57,7 @@ IC7300MK2_MENU = [
     _enum(30, "TX Delay (50M)", "Function", _TXDELAY),
     _enum(31, "TX Delay (70M)", "Function", _TXDELAY),
     _enum(32, "Time-Out Timer (CI-V)", "Function", ["OFF", "3 min", "5 min", "10 min", "20 min", "30 min"],
-          critical=True, note="TX safety backstop"),
+          critical=True, tx_tot=True, note="TX safety backstop"),
     _toggle(33, "Quick SPLIT", "Function"),
     _toggle(36, "SPLIT LOCK", "Function"),
     # --- Tone Control RX ---
@@ -130,9 +130,9 @@ IC7300MK2_MENU = [
     _toggle(93, "CI-V USB (B) Echo Back", "Connectors"),
     _enum(94, "USB (B) Function", "Connectors", ["RTTY Decode", "CI-V"]),
     _toggle(95, "SEND Relay Output", "Connectors", critical=True),
-    _enum(96, "USB SEND", "Connectors", _USBSEND, critical=True),
-    _enum(97, "USB Keying (CW)", "Connectors", _USBSEND, critical=True),
-    _enum(98, "USB Keying (RTTY)", "Connectors", _USBSEND, critical=True),
+    _enum(96, "USB SEND", "Connectors", _USBSEND, critical=True, tx_route=True),
+    _enum(97, "USB Keying (CW)", "Connectors", _USBSEND, critical=True, tx_route=True),
+    _enum(98, "USB Keying (RTTY)", "Connectors", _USBSEND, critical=True, tx_route=True),
     _enum(99, "PTT Port Function", "Connectors", ["PTT Input", "PTT Input + SEND Output"], critical=True),
     # --- Network (valid after restart) ---
     _toggle(100, "DHCP", "Network", critical=True, note="valid after restart"),

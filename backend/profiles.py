@@ -111,6 +111,8 @@ class MenuItem:
     readonly: bool = False
     critical: bool = False     # connection/transmit-sensitive -> UI confirms before write
     note: str = ""
+    tx_tot: bool = False       # the radio's TX time-out timer (writing OFF needs admin + confirm)
+    tx_route: bool = False     # PTT/keying routing (options name RTS/DTR lines; idle + confirm)
 
 
 @dataclass

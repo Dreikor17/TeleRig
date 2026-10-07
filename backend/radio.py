@@ -225,6 +225,10 @@ class Radio:
         return civ.build(cmd, sub, data, radio_addr=self.profile.civ_addr)
 
     # -- SET menus (Icom CI-V 1A 05 <data-number>) ---------------------------
+    def menu_item(self, num):
+        """The connected profile's MenuItem for this menu number, or None."""
+        return self._menu_index.get(int(num))
+
     def get_menu(self, num) -> None:
         it = self._menu_index.get(int(num))
         if it is not None:

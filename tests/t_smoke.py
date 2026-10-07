@@ -133,12 +133,9 @@ def v1_interim_forwarded_loopback_is_not_local(ctx):
         eq(anon.get("/api/radios", headers=hdr).status, 401, f"forwarded {hdr}")
         r = anon.post("/api/set_password", {"clear": True}, headers=hdr)
         eq(r.status, 401, f"set_password through a proxy {hdr}")
-    try:
-        anon.ws(headers={"X-Forwarded-For": "203.0.113.5"}).close()
-    except harness.WSRejected as e:
-        eq(e.status, 403, "WS through a proxy")
-    else:
-        raise harness.TestFailure("WS through a proxy was accepted without a session")
+    # A2: the WebSocket is accepted first and then closed, so the browser gets the code (4401).
+    with anon.ws(headers={"X-Forwarded-For": "203.0.113.5"}) as ws:
+        eq(ws.wait_closed(), (4401, "unauthenticated"), "WS through a proxy without a session")
 
 
 _CHILD = r"""

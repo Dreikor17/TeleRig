@@ -833,6 +833,10 @@ class YaesuRadio:
             self._emit_state()
 
     # -- SET menus (Yaesu EX) ------------------------------------------------
+    def menu_item(self, num):
+        """The connected profile's MenuItem for this menu number, or None."""
+        return self._menu_index.get(int(num))
+
     def get_menu(self, num) -> None:
         it = self._menu_index.get(int(num))
         if it is not None:
