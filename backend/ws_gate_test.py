@@ -197,5 +197,49 @@ C("revalidation: expired / bad token / revoked / old gen / deleted user are clos
                   (25, 4401, "session_revoked"), (26, 4401, "session_revoked")])
 server.accounts.parse_token, server.accounts.is_revoked, server.hub.conns = real
 
+# -- the auth.json reload hook (A3 review round 1) --------------------------------------------------------
+# A logout that does not fit the full revocation list bumps the SIGNING-OUT user's gen
+# (accounts.revoke). The hook must treat that as the user's own sign-out: close only that user's
+# sockets as signed_out, and keep every rate-limit key (another user's K2 lock must survive). An
+# ordinary gen change (password change, admin action) still closes session_revoked and clears the
+# user's keys (§2.4).
+user_kicks, sudo_drops = [], []
+real_hook = (server.hub.kick_user, server.accounts.revocation_bump, server.auth.sudo_drop_user)
+server.hub.kick_user = lambda user, code, reason: user_kicks.append((user, code, reason))
+server.auth.sudo_drop_user = lambda user: sudo_drops.append(user)
+SRC = "127.0.0.1"                                           # a loopback relay: K2 applies, K1 does not
+server.limiter.clear_all()
+for _ in range(10):
+    server.limiter.fail("ADMIN", SRC)
+for _ in range(3):
+    server.limiter.fail("V1", SRC)
+C("setup: ADMIN's K2 key is locked", server.limiter.check("ADMIN", SRC) > 0, True)
+
+
+def store_dict(gens):
+    return {"secret": "a" * 64, "meta": {"limiter_reset": 0, "revoked": {}},
+            "users": {n: {"gen": g} for n, g in gens.items()}}
+
+
+old = store_dict({"ADMIN": 5, "OP1": 6, "V1": 7})
+server.accounts.revocation_bump = lambda user, gen: (user, gen) == ("V1", 8)
+server._on_accounts_change(old, store_dict({"ADMIN": 5, "OP1": 6, "V1": 8}))
+C("revocation bump of V1: only V1's sockets close, as signed_out", user_kicks, [("V1", 4401, "signed_out")])
+C("... V1's sudo windows dropped", sudo_drops, ["V1"])
+C("... ADMIN's K2 lock survives", server.limiter.check("ADMIN", SRC) > 0, True)
+C("... V1's own failure count is kept too (no unlock by signing out)",
+  len(server.limiter._k2.get(("V1", SRC), ())), 3)
+user_kicks.clear()
+server.accounts.revocation_bump = lambda user, gen: False
+server._on_accounts_change(old, store_dict({"ADMIN": 5, "OP1": 9, "V1": 7}))
+C("an ordinary gen change of OP1: session_revoked", user_kicks, [("OP1", 4401, "session_revoked")])
+C("... ADMIN's K2 lock still survives (not OP1's key)", server.limiter.check("ADMIN", SRC) > 0, True)
+user_kicks.clear()
+server._on_accounts_change(old, store_dict({"ADMIN": 10, "OP1": 6, "V1": 7}))
+C("an ordinary gen change of ADMIN (e.g. a password reset) clears ADMIN's keys (spec 2.4)",
+  (user_kicks, server.limiter.check("ADMIN", SRC)), ([("ADMIN", 4401, "session_revoked")], 0.0))
+server.hub.kick_user, server.accounts.revocation_bump, server.auth.sudo_drop_user = real_hook
+server.limiter.clear_all()
+
 print("\nALL PASS" if _ok else "\nSOME FAILED")
 raise SystemExit(0 if _ok else 1)

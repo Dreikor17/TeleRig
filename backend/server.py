@@ -788,11 +788,19 @@ def _on_accounts_change(old: dict, new: dict) -> None:
     or a hand edit (the watchdog reloads every 0.5 s, so a CLI change bites within ~1 s, I7).
     A changed or removed user loses its sockets (4401 session_revoked), its limiter keys and its
     sudo windows; a newly revoked token loses its sockets (4401 signed_out); a new limiter_reset
-    (or a fresh store) clears every lockout."""
+    (or a fresh store) clears every lockout.
+
+    One exception: a logout that did not fit the revocation list bumps the signing-out user's gen
+    instead (accounts.revoke). That is the user's own sign-out, not an account change: the user's
+    sockets close as `signed_out` and the rate-limit keys are kept."""
     ch = accounts.diff(old, new)
+    new_users = (new or {}).get("users") or {}
     for user in ch.users:
-        hub.kick_user(user, 4401, "session_revoked")
-        limiter.clear_user(user)
+        if accounts.revocation_bump(user, (new_users.get(user) or {}).get("gen")):
+            hub.kick_user(user, 4401, "signed_out")
+        else:
+            hub.kick_user(user, 4401, "session_revoked")
+            limiter.clear_user(user)
         auth.sudo_drop_user(user)
     for fp in ch.revoked:
         hub.kick_fp(fp, 4401, "signed_out")

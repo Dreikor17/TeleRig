@@ -258,36 +258,136 @@ C("set_password: the old token is invalid", auth.identify(scope(ck(admin_tok))),
 C("set_password: the new password verifies", accounts.verify(u.hash, "Brand#New-2026")[0], True)
 
 # ---- revocation (T53 unit) -------------------------------------------------------------------------
-tok3, exp3 = accounts.make_token("ADMIN", accounts.get("ADMIN").gen)
+def gen_of(n):
+    return accounts.get(n).gen
+
+
+def gens():
+    return {n: x.gen for n, x in accounts.users().items()}
+
+
+def logout(tok):
+    """What POST /api/logout does with the signed-in principal's token."""
+    t = accounts.parse_token(tok)
+    return accounts.revoke(accounts.token_fp(tok), t.exp, t.user, t.gen)
+
+
+def works(tok):
+    p = auth.identify(scope(ck(tok)))
+    return p.user if p else None
+
+
+tok3, exp3 = accounts.make_token("ADMIN", gen_of("ADMIN"))
 fp3 = accounts.token_fp(tok3)
-C("before logout: the token works", auth.identify(scope(ck(tok3))).user, "ADMIN")
-accounts.revoke(fp3, exp3)
+C("before logout: the token works", works(tok3), "ADMIN")
+C("logout lists the token", logout(tok3), "listed")
 C("revoked fingerprint", accounts.is_revoked(fp3), True)
 C("identify rejects a revoked token", auth.identify(scope(ck(tok3))), None)
-C("revoke refuses a bad fingerprint", raises(lambda: accounts.revoke("zz", 1), accounts.AccountError), True)
+C("revoke refuses a bad fingerprint", raises(lambda: accounts.revoke("zz", 1, "ADMIN", 1), accounts.AccountError), True)
+C("revoke refuses a non-canonical user",
+  raises(lambda: accounts.revoke("a" * 16, exp3, "admin", gen_of("ADMIN")), accounts.AccountError), True)
+stale_tok, _ = accounts.make_token("V1", gen_of("V1"))
+accounts.bump_gen("V1")
+before, g_before = accounts.meta()["revoked"], gens()
+C("a token that is already dead (older gen) is not listed", logout(stale_tok), "dead")
+C("... the list and every gen are unchanged", (accounts.meta()["revoked"] == before, gens() == g_before), (True, True))
 
-
-def fill(dd):
+# -- overflow (finding A3-R1-P0): only the signing-out user ever pays --------------------------------
+def fill(dd, keep_expired=True):
+    """Saturate the list with entries nobody in this process knows the owner of (as after ~2000
+    logouts by some account, or a restart)."""
     rv = dd["meta"]["revoked"]
     now = int(time.time())
-    for i in range(accounts.REVOKED_MAX - len(rv) - 1):
-        rv[f"{i:016x}"] = now + 1000 + i
-    rv["ffffffffffff0000"] = now - 5                          # already expired: pruned on the next write
+    for i in range(accounts.REVOKED_MAX - len(rv) - (1 if keep_expired else 0)):
+        rv[f"{i:016x}"] = now + 86400 * 20 + i
+    if keep_expired:
+        rv["ffffffffffff0000"] = now - 5                      # already expired: pruned on the next write
+
+
 accounts.store().mutate(fill)
-gens_before = {n: x.gen for n, x in accounts.users().items()}
-tok4, exp4 = accounts.make_token("V1", accounts.get("V1").gen)
-accounts.revoke(accounts.token_fp(tok4), exp4)
+C("the list is saturated (2000 entries, one already expired)", len(accounts.meta()["revoked"]), accounts.REVOKED_MAX)
+tok4, _ = accounts.make_token("V1", gen_of("V1"))
+g0 = gens()
+C("a logout into the slot of an expired entry is listed", logout(tok4), "listed")
 rv = accounts.meta()["revoked"]
-C("revoked list stays <= 2000", len(rv) <= accounts.REVOKED_MAX, True)
 C("expired entries are pruned", "ffffffffffff0000" in rv, False)
-tok5, exp5 = accounts.make_token("V1", accounts.get("V1").gen, now=time.time() + 7)   # another token
-C("a second, different token", accounts.token_fp(tok5) != accounts.token_fp(tok4), True)
-accounts.revoke(accounts.token_fp(tok5), exp5)               # now over the cap -> overflow path
-rv = accounts.meta()["revoked"]
-gens_after = {n: x.gen for n, x in accounts.users().items()}
-C("overflow: the list is capped at 2000", len(rv), accounts.REVOKED_MAX)
-C("overflow: every user's gen is bumped instead (fail safe)",
-  all(gens_after[n] > gens_before[n] for n in gens_before), True)
+C("... the list is full again (2000)", len(rv), accounts.REVOKED_MAX)
+C("... and nobody's gen moved", gens(), g0)
+
+# three live sessions of different users; then consecutive logouts while the list is full
+op_a, _ = accounts.make_token("OP1", gen_of("OP1"))
+op_b, _ = accounts.make_token("OP1", gen_of("OP1"))
+v1_live, _ = accounts.make_token("V1", gen_of("V1"))
+ad_live, _ = accounts.make_token("ADMIN", gen_of("ADMIN"))
+hook_seen = []
+
+
+def hook(old, new):
+    for u in accounts.diff(old, new).users:
+        hook_seen.append((u, accounts.revocation_bump(u, ((new.get("users") or {}).get(u) or {}).get("gen"))))
+
+
+accounts.add_listener(hook)
+g1 = gens()
+C("full list: OP1's logout bumps OP1 instead of listing", logout(op_a), "bumped")
+g2 = gens()
+C("... only OP1's gen moved", {n: g2[n] > g1[n] for n in g1}, {n: n == "OP1" for n in g1})
+C("... the list did not grow and kept every unknown-owner entry",
+  (len(accounts.meta()["revoked"]), set(rv) <= set(accounts.meta()["revoked"])), (accounts.REVOKED_MAX, True))
+C("... the signed-out token is dead", works(op_a), None)
+C("... OP1's other session ended too (sign out everywhere, fail safe)", works(op_b), None)
+C("... V1 and ADMIN sessions are untouched", (works(v1_live), works(ad_live)), ("V1", "ADMIN"))
+C("... the reload hook is told it was a revocation bump (OP1 only)", hook_seen, [("OP1", True)])
+op_c, _ = accounts.make_token("OP1", gen_of("OP1"))
+hook_seen.clear()
+C("second consecutive logout at saturation: bumps OP1 again", logout(op_c), "bumped")
+g3 = gens()
+C("... and no other user (no global bump, no list reset)", {n: g3[n] > g2[n] for n in g2}, {n: n == "OP1" for n in g2})
+C("... the unrelated sessions still work", (works(v1_live), works(ad_live)), ("V1", "ADMIN"))
+C("... hook: OP1 only, as a revocation bump", hook_seen, [("OP1", True)])
+op_d, _ = accounts.make_token("OP1", gen_of("OP1"))
+hook_seen.clear()
+C("third logout, by V1: bumps V1 only", logout(v1_live), "bumped")
+g4 = gens()
+C("... OP1 and ADMIN keep their gens", {n: g4[n] > g3[n] for n in g3}, {n: n == "V1" for n in g3})
+C("... OP1's new session survives V1's logout", works(op_d), "OP1")
+hook_seen.clear()
+accounts.bump_gen("ADMIN")
+C("an ordinary gen bump (sign out everywhere) is NOT reported as a revocation bump", hook_seen, [("ADMIN", False)])
+C("revocation_bump outside a revoke write is False", accounts.revocation_bump("OP1", gen_of("OP1")), False)
+accounts._listeners.remove(hook)
+
+# -- the per-user share and the owner index (in memory) ---------------------------------------------------
+d = use_dir("revoke-share")
+accounts.ensure_initialized(reconcile_mode="skip")
+accounts.create_user("K1ABC", "viewer", "K1abc#Password", must_change=False)
+accounts.create_user("OP2", "operator", "Op2#Password", must_change=False)
+op2_old, _ = accounts.make_token("OP2", gen_of("OP2"))
+C("OP2 logout listed", logout(op2_old), "listed")
+k_tokens = [accounts.make_token("K1ABC", gen_of("K1ABC"))[0] for _ in range(accounts.REVOKED_PER_USER + 1)]
+res = [logout(t) for t in k_tokens[:accounts.REVOKED_PER_USER]]
+C(f"one user's first {accounts.REVOKED_PER_USER} logouts are listed", set(res), {"listed"})
+C("... the list holds them plus OP2's", len(accounts.meta()["revoked"]), accounts.REVOKED_PER_USER + 1)
+gk, go, ga = gen_of("K1ABC"), gen_of("OP2"), gen_of("ADMIN")
+C(f"logout #{accounts.REVOKED_PER_USER + 1} of the same user is a bump instead (one account cannot fill the list)",
+  logout(k_tokens[-1]), "bumped")
+C("... only that user's gen moved", (gen_of("K1ABC") > gk, gen_of("OP2"), gen_of("ADMIN")), (True, go, ga))
+C("... that user's entries are dropped (dead now); OP2's entry stays",
+  sorted(accounts.meta()["revoked"]), [accounts.token_fp(op2_old)])
+C("... and every one of that user's tokens stays dead", [works(t) for t in k_tokens], [None] * len(k_tokens))
+accounts.set_password("OP2", "Op2#Password-2")              # OP2's listed token is dead by gen now
+k_new, _ = accounts.make_token("K1ABC", gen_of("K1ABC"))
+C("the next write prunes listed entries whose user has a newer gen", (logout(k_new), sorted(accounts.meta()["revoked"])),
+  ("listed", [accounts.token_fp(k_new)]))
+accounts._rv_owner.clear()                                  # as after a restart: no owners known
+accounts.store().mutate(lambda dd: fill(dd, keep_expired=False))
+full = dict(accounts.meta()["revoked"])
+ad_tok, _ = accounts.make_token("ADMIN", gen_of("ADMIN"))
+k_live, _ = accounts.make_token("K1ABC", gen_of("K1ABC"))
+ga = gen_of("ADMIN")
+C("after a restart, a full list of unknown owners: ADMIN's logout bumps ADMIN", logout(ad_tok), "bumped")
+C("... nobody else (K1ABC's session works) and every unknown entry is kept",
+  (works(k_live), accounts.meta()["revoked"] == full, gen_of("ADMIN") > ga), ("K1ABC", True, True))
 
 # ---- the change hook diff (reload kicks) --------------------------------------------------------------
 o = {"secret": "a", "meta": {"limiter_reset": 0, "revoked": {"aaaaaaaaaaaaaaaa": 1}},

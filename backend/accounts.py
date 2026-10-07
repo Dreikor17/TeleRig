@@ -12,6 +12,10 @@ Every load is validated; a violation makes the store corrupt (locked mode, never
 Generations (I19): every gen assignment is `gen = meta.gen_seq = meta.gen_seq + 1`; deleting a
 user never lowers gen_seq, so a token is never valid again for a re-created account.
 
+Revocation (§2.7, see revoke()): a logout lists the token's fingerprint until it expires. When
+the list is full, the signing-out user's gen is bumped instead; an overflow never signs out,
+kicks or unlocks any other user.
+
 Standard library only (the `--reset-admin` CLI path imports this before uvicorn). No file I/O at
 import time (I12): the store opens lazily; ensure_initialized() (run.py, the server lifespan) seeds
 or migrates it.
@@ -58,6 +62,7 @@ N_MAX, R_MAX, P_MAX = 1 << 17, 16, 4      # parse bounds for stored hashes
 TOKEN_TTL = 30 * 86400                    # fixed, not sliding
 TOKEN_MAX = 512
 REVOKED_MAX = 2000
+REVOKED_PER_USER = 100                    # entries one user may hold (of those this process listed)
 USER_KEYS_BOOL = ("must_change", "default_pw", "migrated_v1")
 USER_KEYS_TS = ("created", "pw_changed", "last_login")
 
@@ -304,6 +309,8 @@ def _reset_for_tests() -> None:
         _store = None
         _vcache = (None, None)
     _state.update(port=None, reconciled=False)
+    with _rv_mu:
+        _rv_owner.clear()
 
 
 def status() -> str:
@@ -567,25 +574,83 @@ def bump_gen(name: str) -> User:
     return get(c)
 
 
-def revoke(fp: str, exp: int) -> None:
-    """Logout (§2.7): remember this token's fingerprint until it expires. Expired entries are
-    pruned on every write. Above REVOKED_MAX the oldest entries are pruned and, because the store
-    does not know whose tokens those were, EVERY user's gen is bumped instead (fail safe)."""
+_rv_mu = threading.Lock()             # serialises revoke() in this process (and guards _rv_owner)
+_rv_owner: dict = {}                  # fp -> (user, gen) of the entries THIS process listed
+_tl = threading.local()               # .bump = (user, gen) while revoke()'s own write fires the hook
+
+
+def revocation_bump(user: str, gen) -> bool:
+    """True only inside the reload hook fired by a revoke() that bumped `user` to `gen` instead of
+    listing the token. That bump is the user's own sign-out, not an account change: the hook closes
+    the user's sockets as `signed_out` and leaves the rate-limit keys alone."""
+    return gen is not None and getattr(_tl, "bump", None) == (user, gen)
+
+
+def revoke(fp: str, exp: int, user: str, gen: int) -> str:
+    """Logout (§2.7): list this token's fingerprint (fp -> exp) until it expires. `user` and `gen`
+    are the token's (the signed-in principal). Returns "listed", "bumped" or "dead".
+
+    - Every write prunes expired entries, and entries this process listed whose user is gone or
+      has a newer gen (those tokens are dead anyway; gens are never reused, I19).
+    - A token that is already dead (user gone, gen moved on, expired) is not listed: "dead".
+    - When the list is full (REVOKED_MAX), or this user already holds REVOKED_PER_USER of the
+      entries this process listed, the token is not listed. The SIGNING-OUT user's gen is bumped
+      instead (gen = ++gen_seq), which also ends that user's other sessions (fail safe), and that
+      user's listed entries are dropped (all dead now): "bumped".
+
+    So an overflow only ever costs the user who signs out. No other user's gen, sessions, sockets or
+    rate-limit keys are touched, and the list never grows past REVOKED_MAX. The owner index is in
+    memory only: after a restart, older entries have no known owner and simply stay until they
+    expire (they are never a reason to bump anyone)."""
     if not FP_RE.fullmatch(fp or ""):
         raise AccountError("invalid", "bad fingerprint")
+    c = canonical(user)
+    if c is None or c != user or type(gen) is not int or type(exp) is not int:
+        raise AccountError("invalid", "bad user, generation or expiry")
+    out = {"result": "dead"}
 
-    def fn(d):
-        rv = d["meta"]["revoked"]
-        now = time.time()
-        for k in [k for k, v in rv.items() if v <= now]:
-            del rv[k]
-        rv[fp] = int(exp)
-        if len(rv) > REVOKED_MAX:
-            for k in sorted(rv, key=lambda k: rv[k])[:len(rv) - REVOKED_MAX]:
-                del rv[k]
-            for u in d["users"].values():
+    with _rv_mu:
+        owners = dict(_rv_owner)
+
+        def owner(k):
+            return (owners.get(k) or (None, None))[0]
+
+        def fn(d):
+            out["result"] = "dead"
+            _tl.bump = None
+            rv, users = d["meta"]["revoked"], d["users"]
+            now = time.time()
+            for k, v in list(rv.items()):
+                o = owners.get(k)
+                if v <= now or (o is not None and (users.get(o[0]) or {}).get("gen") != o[1]):
+                    del rv[k]
+            u = users.get(c)
+            if u is None or u.get("gen") != gen or exp <= now:
+                return
+            if fp in rv:
+                rv[fp] = max(rv[fp], exp)
+                out["result"] = "listed"
+                return
+            mine = [k for k in rv if owner(k) == c]
+            if len(rv) >= REVOKED_MAX or len(mine) >= REVOKED_PER_USER:
+                for k in mine:
+                    del rv[k]
                 u["gen"] = _next_gen(d)
-    store().mutate(fn)
+                _tl.bump = (c, u["gen"])
+                out["result"] = "bumped"
+                return
+            rv[fp] = exp
+            out["result"] = "listed"
+        try:
+            new = store().mutate(fn)
+        finally:
+            _tl.bump = None
+        if out["result"] == "listed":
+            _rv_owner[fp] = (c, gen)
+        live = (new.get("meta") or {}).get("revoked") or {}
+        for k in [k for k in _rv_owner if k not in live]:
+            del _rv_owner[k]
+    return out["result"]
 
 
 def create_user(name, role: str = "viewer", password: Optional[str] = None, *, must_change: bool = True,

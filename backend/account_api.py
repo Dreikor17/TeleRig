@@ -243,15 +243,17 @@ async def api_login(request):
 async def api_logout(request):
     p = request.state.principal
     try:
-        await run_in_threadpool(accounts.revoke, p.token_fp, p.exp)
+        # "listed", or "bumped" when the revocation list is full (only this user's gen moves)
+        how = await run_in_threadpool(accounts.revoke, p.token_fp, p.exp, p.user, p.gen)
     except Exception as e:                                      # the cookie is cleared regardless
+        how = "failed"
         console(f"TeleRig: could not record the sign-out of {p.user}: {e!r}")
         audit.log("logout_revoke_failed", user=p.user, error=type(e).__name__)
     kick_fp(p.token_fp, 4401, "signed_out")
     auth.sudo_drop(p.token_fp)
     resp = JSONResponse({"ok": True}, headers=NO_STORE)
     clear_session_cookie(resp, request)
-    audit.log("logout", user=p.user, ip=auth.client_ip(request.scope))
+    audit.log("logout", user=p.user, ip=auth.client_ip(request.scope), revocation=how)
     return resp
 
 

@@ -736,6 +736,68 @@ def t53_logout_revokes_the_token(ctx):
     eq(other.get("/api/me").status, 401, "after sign out everywhere")
 
 
+_SATURATE = """
+import time
+def fill(d):
+    rv = d["meta"]["revoked"]
+    now = int(time.time())
+    for i in range(accounts.REVOKED_MAX - len(rv)):
+        rv[f"{i:016x}"] = now + 86400 * 20 + i
+accounts.store().mutate(fill)
+result = len(accounts.meta()["revoked"])
+"""
+
+
+@test("auth")
+def t53b_full_revocation_list_costs_only_the_signer(ctx):
+    """Review A3-R1 (P0): with the revocation list saturated (2000 entries of no known owner, as
+    after ~2000 logouts by one account), consecutive logouts bump only the SIGNING-OUT user's gen.
+    Every other user keeps their gen, sessions and open sockets, and another user's K2 lock (ADMIN
+    guessed through a loopback relay, no K1) is not reset."""
+    tmp = ctx.tmp()
+    srv = ctx.server(tmp)
+    admin = harness.ready_admin(srv)
+    op_pw = harness.mk_user(tmp, "OP1", "operator")
+    v_pw = harness.mk_user(tmp, "V1", "viewer")
+    viewer = srv.client()
+    eq(harness.login(viewer, "V1", v_pw).status, 200, "V1 signs in")
+    relay = xff("127.0.0.9")
+    g = srv.client()
+    for i in range(10):
+        eq(harness.login(g, "ADMIN", f"guess-{i}", headers=relay).status, 401, f"ADMIN guess {i + 1}")
+    eq(harness.login(g, "ADMIN", srv.admin_pw, headers=relay).status, 429, "ADMIN's K2 lock (right password)")
+    eq(harness.accounts_child(tmp, _SATURATE), 2000, "saturated")
+    time.sleep(harness.STORE_PICKUP)
+    before = {n: u["gen"] for n, u in harness.read_auth(tmp)["users"].items()}
+    with viewer.ws() as vws:
+        vws.recv_json(type="hello")
+        c1, c2 = srv.client(), srv.client()
+        eq(harness.login(c1, "OP1", op_pw).status, 200, "OP1 device 1")
+        eq(harness.login(c2, "OP1", op_pw).status, 200, "OP1 device 2")
+        with c1.ws() as ows:
+            ows.recv_json(type="hello")
+            eq(c1.post("/api/logout").status, 200, "first logout with the list full")
+            eq(ows.wait_closed(timeout=3), (4401, "signed_out"), "the signing-out session's socket")
+        eq(c2.get("/api/me").status, 401, "OP1's other device is signed out too (fail safe)")
+        c3 = srv.client()
+        eq(harness.login(c3, "OP1", op_pw).status, 200, "OP1 signs in again")
+        eq(c3.post("/api/logout").status, 200, "second consecutive logout with the list full")
+        eq(harness.login(g, "ADMIN", srv.admin_pw, headers=relay).status, 429, "ADMIN's K2 lock survives")
+        after = {n: u["gen"] for n, u in harness.read_auth(tmp)["users"].items()}
+        eq({n: after[n] != before[n] for n in before}, {n: n == "OP1" for n in before}, "only OP1's gen moved")
+        eq(wait_closed_code(vws, timeout=1.0), None, "V1's open socket survives both logouts")
+    eq(viewer.get("/api/me").status, 200, "V1's session survives")
+    eq(admin.get("/api/me").status, 200, "ADMIN's session survives")
+    eq(len(harness.read_auth(tmp)["meta"]["revoked"]), 2000, "the list never grows past 2000")
+    end = time.monotonic() + 4.0
+    while True:                                                  # the audit writer is asynchronous
+        hows = [e.get("revocation") for e in audit_events(tmp, "logout") if e.get("user") == "OP1"]
+        if len(hows) >= 2 or time.monotonic() > end:
+            break
+        time.sleep(0.1)
+    eq(hows, ["bumped", "bumped"], "both logouts audited as bumps")
+
+
 # -- T56: login never depends on a store write ---------------------------------------------------------
 _HOLD = r"""
 import sys, time
