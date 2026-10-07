@@ -1,9 +1,16 @@
-"""WebSocket action policy (spec §2.12, I2).
+"""Access policy: WebSocket actions (spec §2.12, I2) and HTTP routes (§2.10).
 
-Step A2 skeleton: every action `_handle_cmd` understands has an ALLOW-ALL placeholder row, the
-removed host-audio actions are listed in REMOVED, and unknown actions are denied. Step A3 adds the
-coarse viewer rule; step A4 replaces every placeholder with the real rule (role, strict argument
-types, canonical commands, TX locks) and adds the new actions (tx_hb, tx_stop, rx_audio, mic).
+WebSocket. Every action `_handle_cmd` understands has a placeholder row, the removed host-audio
+actions are listed in REMOVED, and unknown actions are denied. Step A3's COARSE rule: a
+connection whose (effective) role is below operator gets `denied role` for every action except
+tx_hb and the menu reads (F23); everyone else passes. Step A4 replaces every placeholder with the
+real rule (role, strict argument types, canonical commands, TX locks) and adds the new actions
+(tx_hb, tx_stop, rx_audio, mic).
+
+HTTP. Every route endpoint carries `__tr_policy__` (set by @requires); startup refuses to run
+otherwise (assert_routes). @requires re-checks the principal the Gate attached
+(request.state.principal, effective role per F17), the restricted (must-change) state, the sudo
+window and the direct-local requirement.
 
 Completeness (I2): every `action == "<name>"` literal in backend/server.py must have a WS_POLICY
 row or be in REMOVED. The server checks this at startup (assert_complete) and policy_test.py
@@ -11,11 +18,14 @@ checks it offline (T30).
 """
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 ROLES = ("viewer", "operator", "admin")
+ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
+VIEWER_ACTIONS = frozenset({"tx_hb", "menu_read", "menu_read_group"})   # A3 coarse rule exemptions
 
 # Every action _handle_cmd (server.py) handles, in its order.
 RADIO_ACTIONS = (
@@ -91,15 +101,127 @@ def is_fast(cmd: Any) -> bool:
     return False
 
 
+def rank(role: Optional[str]) -> int:
+    """viewer 0 < operator 1 < admin 2; anything else (None, typos) -1: fail closed."""
+    return ROLE_RANK.get(role or "", -1)
+
+
+def coarse_ok(conn: Any, action: str) -> bool:
+    """A3 coarse WS rule: operators and admins may send anything with a row; a viewer (or a
+    connection without a known role) only tx_hb and the menu reads."""
+    if action in VIEWER_ACTIONS:
+        return rank(getattr(conn, "role", None)) >= 0
+    return rank(getattr(conn, "role", None)) >= ROLE_RANK["operator"]
+
+
 def evaluate(rule: Rule, conn: Any, cmd: dict, ctx: Any = None) -> Verdict:
-    """Decide one message. A2: placeholder rows pass the command through unchanged (allow-all);
-    anything else is denied `invalid` until A4 implements it. Never raises."""
+    """Decide one message. A3: placeholder rows pass the command through unchanged when the
+    coarse role rule allows it, else `denied role`; anything else is denied `invalid` until A4
+    implements it. Never raises."""
     try:
         if rule.placeholder:
+            if not coarse_ok(conn, rule.action):
+                return deny(rule.action, "role")
             return Verdict("plain", rule.action, cmd=cmd)
         return deny(rule.action, "invalid")
     except Exception:
         return deny(getattr(rule, "action", "*"), "invalid")
+
+
+def evaluate_fast(conn: Any, cmd: dict) -> Verdict:
+    """The §2.12 fast path for is_fast() frames: strict types (already checked by is_fast), the
+    connection's LAST-KNOWN role, no store read and no rate bucket (I4, AR-17), so a store error
+    or a kick never swallows an unkey. A3: the coarse role rule on the placeholder row; tx_hb,
+    tx_stop and mic have no rows until A4 (`denied unknown_action`). Never raises."""
+    a = cmd.get("action") if isinstance(cmd, dict) else None
+    try:
+        rule = WS_POLICY.get(a)
+        if rule is None:
+            return deny(a if isinstance(a, str) else "*", "unknown_action")
+        return evaluate(rule, conn, cmd)
+    except Exception:
+        return deny(a if isinstance(a, str) else "*", "invalid")
+
+
+# -- HTTP route policy (§2.10) ----------------------------------------------------------------
+@dataclass(frozen=True)
+class RoutePolicy:
+    min_role: Optional[str]          # None = public
+    restricted_ok: bool = False
+    sudo: bool = False
+    local: bool = False
+    public: bool = False
+
+
+def _json(status: int, error: str, message: str, **extra):
+    from starlette.responses import JSONResponse
+    return JSONResponse({"ok": False, "error": error, "message": message, **extra}, status_code=status,
+                        headers={"Cache-Control": "no-store"})
+
+
+def check_route(pol: RoutePolicy, request) -> Optional[Any]:
+    """None when the request satisfies the policy, else the error response."""
+    if pol.public:
+        return None
+    from . import auth
+    p = getattr(request.state, "principal", None)
+    if p is None:
+        return _json(401, "auth_required", "Sign in first.")
+    if p.restricted and not pol.restricted_ok:
+        return _json(403, "password_change_required", "Change your password first.")
+    if rank(p.role) < rank(pol.min_role):
+        return _json(403, "forbidden", "Not permitted for your role.", need=pol.min_role)
+    if pol.local and not auth.direct_local(request.scope):
+        return _json(403, "local_only", "Do this from a browser on the host PC itself "
+                                        f"(http://localhost:{auth.bound_port(request.scope)}).")
+    if pol.sudo and not auth.sudo_active(p):
+        return _json(403, "reauth_required", "Confirm your password to continue.")
+    return None
+
+
+def requires(min_role: Optional[str] = "viewer", *, restricted_ok: bool = False, sudo: bool = False,
+             local: bool = False, public: bool = False) -> Callable:
+    """Decorator for an HTTP endpoint `async def f(request)`: attaches __tr_policy__ and
+    re-checks it on every call (the Gate already did the coarse part)."""
+    if not public and min_role not in ROLES:
+        raise ValueError(f"unknown role {min_role!r}")
+    pol = RoutePolicy(None if public else min_role, restricted_ok, sudo, local, public)
+
+    def deco(fn: Callable) -> Callable:
+        @functools.wraps(fn)
+        async def wrapper(request):
+            err = check_route(pol, request)
+            if err is not None:
+                return err
+            return await fn(request)
+        wrapper.__tr_policy__ = pol
+        return wrapper
+    return deco
+
+
+def mark(obj: Any, min_role: Optional[str] = "viewer", **kw) -> Any:
+    """Attach a policy to something @requires cannot wrap (the WS endpoint, which checks its own
+    principal; the /static mount, which the Gate guards). Returns obj."""
+    obj.__tr_policy__ = RoutePolicy(None if kw.get("public") else min_role, **kw)
+    return obj
+
+
+def route_policy_errors(routes) -> list:
+    """Every Route/WebSocketRoute endpoint and every Mount must carry __tr_policy__ (I2)."""
+    errs = []
+    for r in routes:
+        target = getattr(r, "endpoint", None)
+        if target is None:                       # Mount (no endpoint): the mount object itself
+            target = r
+        if not isinstance(getattr(target, "__tr_policy__", None), RoutePolicy):
+            errs.append(f"route {getattr(r, 'path', r)!r} has no __tr_policy__")
+    return errs
+
+
+def assert_routes(routes) -> None:
+    errs = route_policy_errors(routes)
+    if errs:
+        raise RuntimeError("route policy incomplete:\n  " + "\n  ".join(errs))
 
 
 # -- completeness (I2) ----------------------------------------------------------------------

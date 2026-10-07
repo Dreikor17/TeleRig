@@ -1,12 +1,16 @@
 """
 TeleRig server.
 
-ASGI app (Starlette on uvicorn):
-  GET  /              -> the radio UI
+ASGI app (Starlette on uvicorn). Everyone signs in (per-user accounts, backend/accounts.py);
+every route declares its policy (@requires, backend/policy.py) and the Gate middleware checks
+locked mode, Host, Origin, JSON bodies and the session before any route runs (§2.9).
+  GET  /              -> the radio UI (+ the bootstrap JSON, §3.15)
+  /login, /change-password, /api/login|logout|auth_status|me* -> backend/account_api.py
+  GET  /api/status    -> radio/connection status for this role
   GET  /api/ports     -> available COM ports (+ "sim")
   POST /api/connect   -> {transport:"sim"} or {transport:"serial",port,baud}
   POST /api/disconnect
-  WS   /ws            -> JSON state in/out + binary scope sweeps out
+  WS   /ws            -> hello + JSON state in/out + binary scope sweeps out
 
 Scope sweeps are pushed as a single self-contained binary frame:
   <BBBH IIIIII> header then N amplitude bytes (see _pack_scope).
@@ -32,19 +36,25 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+from urllib.parse import quote
+
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import (FileResponse, HTMLResponse, JSONResponse,
-                                 PlainTextResponse, RedirectResponse)
+from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket
 
-from . import __version__, accounts, auth, civ, hostaudio, policy, profiles, settings, tailscale
+from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio, policy,
+               profiles, settings, tailscale)
+from .account_api import read_json
 from .hub import AUDIO_RATE, Hub  # noqa: F401  (AUDIO_RATE re-exported: hostaudio.RATE must match it)
 from .lan import LanTransport
+from .policy import requires
 from .radio import Radio
+from .ratelimit import limiter
 from .store import StoreBusy, StoreCorrupt, StoreError, console
 from .transport import SerialTransport, SimTransport, YaesuSimTransport, available_ports
 from .yaesu import YaesuRadio
@@ -161,18 +171,112 @@ def _asset_version():
         return "0"
 
 
+def _transport_kind() -> str:
+    """sim | serial | lan | none — from the connected radio's actual transport object."""
+    r = radio
+    if not r.state.get("connected"):
+        return "none"
+    tp = getattr(r, "_tp", None)
+    if isinstance(tp, (SimTransport, YaesuSimTransport)):
+        return "sim"
+    if isinstance(tp, SerialTransport):
+        return "serial"
+    if isinstance(tp, LanTransport):
+        return "lan"
+    return "none"
+
+
+def status_for(p) -> dict:
+    """GET /api/status for this principal (G-6). Step A3 subset; A4 adds the TX arbiter snapshot,
+    the connect transition and the host-audio defaults. Operators and admins also get the full
+    transport label (incl. a LAN IP) and the current radio's transport pin (no credentials)."""
+    s = radio.state
+    rid = s.get("radio") if s.get("connected") else None
+    try:
+        lr = settings.last_radio()
+        pins = settings.host_audio().get(rid or lr or "", {})
+    except StoreCorrupt:
+        lr, pins = None, {}
+    out = {"connected": bool(s.get("connected")), "radio": rid, "last_radio": lr,
+           "transport_kind": _transport_kind(), "connecting": False,
+           "host_audio": {"available": hostaudio.available(), "rx_pinned": pins.get("rx"),
+                          "tx_pinned": pins.get("tx"), "rx_default": None, "tx_default": None},
+           "tx": {"owner": None},
+           "autoconnect_allowed": not no_autoconnect() and not _autoconnect_spent,
+           "sim_only": sim_only()}
+    if p is not None and auth.rank(p.role) >= auth.ROLE_RANK["operator"]:
+        out["transport"] = s.get("transport")
+        try:
+            out["pinned_transport"] = settings.radio_transports().get(rid or lr or "")
+        except StoreCorrupt:
+            out["pinned_transport"] = None
+    return out
+
+
+def notices_for(p) -> list:
+    """Banner keys for this principal (§3.15). A3: migrated_local_only (F17 remote session),
+    migrated_v1_password and lockouts (admins)."""
+    out = []
+    if p is None:
+        return out
+    if p.migrated_remote:
+        out.append("migrated_local_only")
+    if p.role == "admin":
+        try:
+            u = accounts.get(p.user)
+            if u is not None and u.migrated_v1:
+                out.append("migrated_v1_password")
+        except StoreCorrupt:
+            pass
+        if limiter.lockouts()["users"]:
+            out.append("lockouts")
+    return out
+
+
+def _boot_json(p, request) -> str:
+    boot = {"v": 1, "user": p.user, "role": p.role, "perms": auth.perms_for(p.role),
+            "port": auth.bound_port(request.scope), "version": __version__,
+            "source": f"https://github.com/{_REPO}",
+            "autoconnect": not no_autoconnect() and not _autoconnect_spent, "sim_only": sim_only(),
+            "layout": None, "layout_error": False, "layout_bounds": None,     # A5: layout_store
+            "status": status_for(p), "migrated_remote": p.migrated_remote,
+            "radios": [{"id": pid, "name": pr.name,
+                        "tile_caps": {"ptt": bool(pr.capabilities.ptt),
+                                      "meters": not (pr.capabilities.meters == [])}}
+                       for pid, pr in profiles.PROFILES.items()],
+            "notices": notices_for(p)}
+    payload = json.dumps(boot, separators=(",", ":"))
+    return payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+
+
+@requires("viewer")
 async def index(request):
+    p = request.state.principal
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
     v = _asset_version()
     for asset in ("app.js", "waterfall.js", "bandplan.js", "cwtool.js", "style.css"):
         html = html.replace(f"/static/{asset}", f"/static/{asset}?v={v}")
-    return HTMLResponse(html)
+    tag = f'<script id="tr-boot" type="application/json">{_boot_json(p, request)}</script>'
+    if "<!--TR_BOOT-->" in html:
+        html = html.replace("<!--TR_BOOT-->", tag, 1)
+    else:                                            # index.html gets the placeholder in B1/B3
+        html = html.replace("</head>", tag + "\n</head>", 1)
+    role = p.role if p.role in policy.ROLES else "viewer"
+    html = html.replace("<body>", f'<body data-role="{role}">', 1)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
+@requires("viewer")
+async def api_status(request):
+    return JSONResponse(status_for(request.state.principal), headers={"Cache-Control": "no-store"})
+
+
+@requires("viewer")
 async def api_radios(request):
     return JSONResponse({"radios": [p.to_json() for p in profiles.PROFILES.values()]})
 
 
+@requires("viewer")
 async def api_version(request):
     _maybe_check_update()
     with _latest_lock:
@@ -186,6 +290,7 @@ async def api_version(request):
     })
 
 
+@requires("operator")
 async def api_ports(request):
     return JSONResponse({
         "ports": available_ports(),
@@ -220,14 +325,12 @@ def _connect_error(status: int, error: str, message: str) -> JSONResponse:
     return JSONResponse({"ok": False, "error": error, "message": message}, status_code=status)
 
 
+@requires("operator")
 async def api_connect(request):
     global radio
-    try:
-        body = await request.json()
-    except Exception:
-        body = None
+    body = await read_json(request)
     if not isinstance(body, dict):
-        return _connect_error(400, "invalid_json", "The request body must be a JSON object.")
+        return body                                  # 400 invalid_json / 413 too_large
     kind = body.get("transport", "sim")
     # Guards run before ANY side effect (audio stop, radio switch, port open).
     # --sim-only: only the simulator may be connected; serial and LAN are refused (I13).
@@ -270,6 +373,7 @@ async def api_connect(request):
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
 
 
+@requires("operator")
 async def api_disconnect(request):
     global _autoconnect_spent
     _autoconnect_spent = True               # explicit disconnect: page loads no longer auto-connect
@@ -278,6 +382,7 @@ async def api_disconnect(request):
     return JSONResponse({"ok": True})
 
 
+@requires("operator")
 async def api_audio_devices(request):
     """Host (server-side) sound cards, for a serial/USB radio's Radio RX / Radio TX pickers."""
     return JSONResponse(hostaudio.list_devices())
@@ -286,6 +391,16 @@ async def api_audio_devices(request):
 # -- WebSocket ---------------------------------------------------------------
 WS_TEXT_MAX = 8192                     # bytes; larger text frames are refused (`denied too_large`)
 DENY_INTERVAL = 0.5                    # at most 2 denial frames per second per connection
+
+
+HB_INTERVAL, HB_TIMEOUT = 2, 6            # the TX heartbeat contract (§2.13), announced in hello
+
+
+def _hello(conn, p) -> dict:
+    return {"type": "hello", "v": 1, "conn": conn.id, "user": p.user, "role": p.role,
+            "perms": auth.perms_for(p.role), "migrated_remote": p.migrated_remote,
+            "status": status_for(p), "tx": {"owner": None}, "hb_interval": HB_INTERVAL,
+            "hb_timeout": HB_TIMEOUT, "server_version": __version__, "sim_only": sim_only()}
 
 
 async def ws_endpoint(ws: WebSocket):
@@ -298,15 +413,18 @@ async def ws_endpoint(ws: WebSocket):
         host = ws.headers.get("host")
         if not auth.host_ok(host) or not auth.origin_ok(ws.headers.get("origin"), ws.scope):
             return await _ws_refuse(ws, 4403, "bad_origin")
-        # v1 shared-password session (loopback exempt unless behind a proxy); A3 replaces it.
-        if auth.auth_enabled() and not auth.local_exempt(_client_ip(ws)) \
-                and not auth.valid_session(ws.cookies.get(auth.COOKIE_NAME)):
-            return await _ws_refuse(ws, 4401, "unauthenticated")
+        p = auth.identify(ws.scope)                  # per-user session; no loopback branch (I1)
     except StoreCorrupt as e:
         _enter_locked(e)
         return await _ws_refuse(ws, 4403, "server_locked")
-    conn = hub.add(ws, ip=_client_ip(ws))
-    hub.send_to(conn, hub.state_frame(radio.state), control=False)   # first frame: current state
+    if p is None:
+        return await _ws_refuse(ws, 4401, "unauthenticated")
+    if p.restricted:
+        return await _ws_refuse(ws, 4403, "password_change_required")
+    conn = hub.add(ws, user=p.user, role=p.role, gen=p.gen, token=p.token, token_fp=p.token_fp,
+                   ip=auth.client_ip(ws.scope), direct_local=auth.direct_local(ws.scope), exp=p.exp)
+    hub.send_to(conn, _hello(conn, p))                                # first frame (control queue)
+    hub.send_to(conn, hub.state_frame(radio.state), control=False)   # then the current state
     hub.start_sender(conn)
     try:
         while True:
@@ -372,11 +490,15 @@ def _on_text(conn, text: str) -> None:
     """One client text frame: size cap, JSON parsed inside try, dict + string-action check, then
     the policy table (§2.12). Never raises, so a bad frame can never kill the socket.
 
+    Fast path first (policy.is_fast: the unkey/heartbeat frames): decided with the connection's
+    LAST-KNOWN role and no store read, so a store error, a lock or a kick never swallows an unkey
+    (I4, AR-17). Everything else re-reads the user: a deleted user or a changed generation closes
+    the socket 4401 session_revoked, and the effective role is refreshed (F17).
+
     A kicked connection (`conn.closing`: its close frame is already out) and a locked server act on
-    nothing but the fast-path stops (policy.is_fast). A client that ignores the close frame can
-    otherwise keep commanding the radio until the close timeout drops it (about 10 s). The stops
-    still go through, so a kick or a lock never swallows an unkey (AR-17). The receive loop keeps
-    running, so the 4403/4401 close code is not replaced."""
+    nothing but the fast path. A client that ignores the close frame can otherwise keep commanding
+    the radio until the close timeout drops it (about 10 s). The receive loop keeps running, so the
+    4403/4401 close code is not replaced."""
     try:
         if len(text) > WS_TEXT_MAX or len(text.encode("utf-8", "surrogatepass")) > WS_TEXT_MAX:
             _deny(conn, "*", "too_large")            # a no-op on a closing connection
@@ -387,8 +509,20 @@ def _on_text(conn, text: str) -> None:
             return
         if not isinstance(cmd, dict) or not isinstance(cmd.get("action"), str):
             return
-        if (conn.closing or _locked is not None) and not policy.is_fast(cmd):
+        if policy.is_fast(cmd):
+            _dispatch(conn, policy.evaluate_fast(conn, cmd))
+            return
+        if conn.closing or _locked is not None:
             return                                   # kicked or locked: dropped, nothing answered
+        try:
+            u = accounts.get(conn.user)
+        except StoreCorrupt as e:
+            _enter_locked(e)
+            return
+        if u is None or u.gen != conn.gen:
+            hub.kick_conn(conn, 4401, "session_revoked")
+            return
+        conn.role = auth.effective_role(u, conn.direct_local)
         a = cmd["action"]
         rule = policy.WS_POLICY.get(a)
         if rule is None:                             # unknown, or REMOVED (host_rx / host_tx)
@@ -554,9 +688,9 @@ def _handle_cmd(cmd: dict) -> None:
 
 
 # -- locked mode (I6, §2.4) ----------------------------------------------------
-# An unparsable config.json (A3: also a corrupt auth.json) locks the server: every HTTP request
-# gets 503, every WebSocket is closed with 4403 server_locked, nothing is defaulted or written.
-# Fixing the file unlocks it without a restart (the watchdog re-checks).
+# A corrupt auth.json or an unparsable config.json locks the server: every HTTP request gets 503,
+# every WebSocket is closed with 4403 server_locked, nothing is defaulted or written. Fixing the
+# file (or `--reset-admin`) unlocks it without a restart (the watchdog re-checks).
 _locked: Optional[StoreCorrupt] = None
 
 
@@ -571,7 +705,10 @@ def _locked_message(e: StoreCorrupt) -> str:
 
 
 def _store_problem() -> Optional[StoreCorrupt]:
+    """Re-reads both stores (subject to their stat/hash intervals); an accounts reload fires the
+    reload hook (_on_accounts_change), which kicks revoked sessions."""
     try:
+        accounts.view()
         settings.view()
     except StoreCorrupt as e:
         return e
@@ -610,9 +747,12 @@ def _enter_locked(e: StoreCorrupt) -> None:
 def _leave_locked() -> None:
     global _locked
     try:
-        accounts.ensure_initialized()
+        accounts.ensure_initialized(reconcile_mode="thread")   # on the loop: CLI calls in a thread
     except StoreCorrupt as e:
         _locked = e
+        return
+    except Exception as e:                       # e.g. a store write failed: stay locked, retry
+        console(f"TeleRig: still locked: {e!r}")
         return
     console(f"  TeleRig: {_locked.path if _locked else 'config'} is readable again; unlocked.")
     _locked = None
@@ -642,17 +782,97 @@ def _locked_response(request, e: StoreCorrupt):
     return HTMLResponse(page, status_code=503, headers=hdrs)
 
 
-# -- watchdog (A2: store reload + locked re-check; A3/A4 add identity and TX duties) ----------
+# -- account changes (the auth.json reload hook, §2.4) -----------------------------------------
+def _on_accounts_change(old: dict, new: dict) -> None:
+    """Runs after every auth.json content change: our own writes, a `--reset-admin` from the CLI
+    or a hand edit (the watchdog reloads every 0.5 s, so a CLI change bites within ~1 s, I7).
+    A changed or removed user loses its sockets (4401 session_revoked), its limiter keys and its
+    sudo windows; a newly revoked token loses its sockets (4401 signed_out); a new limiter_reset
+    (or a fresh store) clears every lockout."""
+    ch = accounts.diff(old, new)
+    for user in ch.users:
+        hub.kick_user(user, 4401, "session_revoked")
+        limiter.clear_user(user)
+        auth.sudo_drop_user(user)
+    for fp in ch.revoked:
+        hub.kick_fp(fp, 4401, "signed_out")
+        auth.sudo_drop(fp)
+    if ch.limiter_reset or ch.secret:
+        limiter.clear_all()
+    if ch.secret:
+        hub.kick_all(4401, "session_revoked")
+
+
+accounts.add_listener(_on_accounts_change)
+account_api.kick_fp = lambda fp, code, reason: hub.kick_fp(fp, code, reason)
+account_api.kick_user = lambda user, code, reason: hub.kick_user(user, code, reason)
+admin_api.online_count = hub.count_user
+
+
+def _revalidate_conns() -> int:
+    """Every 30 s: re-parse each socket's token. Expired -> 4401 expired; revoked -> 4401
+    signed_out; user gone or generation changed -> 4401 session_revoked. Returns the kicks."""
+    n = 0
+    now = time.time()
+    for c in list(hub.conns.values()):
+        if c.closing or c.user is None:
+            continue
+        reason = None
+        if not c.exp or c.exp <= now:
+            reason = "expired"
+        elif accounts.parse_token(c.token) is None:
+            reason = "session_revoked"
+        elif accounts.is_revoked(c.token_fp):
+            reason = "signed_out"
+        else:
+            u = accounts.get(c.user)
+            if u is None or u.gen != c.gen:
+                reason = "session_revoked"
+        if reason:
+            hub.kick_conn(c, 4401, reason)
+            n += 1
+    return n
+
+
+async def _ensure_accounts() -> None:
+    """auth.json deleted while running: seed it again exactly like a first start (in a thread:
+    scrypt) and show the first-run setup code on the console."""
+    if accounts.status() != "missing":
+        return
+    await run_in_threadpool(accounts.ensure_initialized, None, reconcile_mode="skip")
+    try:
+        info = accounts.banner_info()
+        if info["default_pw"] and info["setup_code"]:
+            console(f"  TeleRig: auth.json was missing and has been created again. First sign-in on "
+                    f"THIS PC: admin / admin with setup code {accounts.format_setup(info['setup_code'])}.")
+    except StoreCorrupt:
+        pass
+
+
+# -- watchdog (store reload + locked re-check + session revalidation; A4 adds the TX duties) ----
 WATCHDOG_TICK = 0.5
+REVALIDATE_EVERY = 30.0
 _watchdog_task: Optional[asyncio.Task] = None
 _shutting_down = False
+_last_reval = 0.0
 
 
 async def _watchdog() -> None:
+    global _last_reval
+    _last_reval = time.monotonic()
     while True:
         await asyncio.sleep(WATCHDOG_TICK)
         try:
-            _check_locked()          # reloads config.json even with no traffic (I7 groundwork)
+            _check_locked()          # reloads auth.json + config.json even with no traffic (I7)
+            if _locked is None:
+                await _ensure_accounts()
+                now = time.monotonic()
+                if now - _last_reval >= REVALIDATE_EVERY:
+                    _last_reval = now
+                    _revalidate_conns()
+                    limiter.sweep()
+        except StoreCorrupt as exc:
+            _enter_locked(exc)
         except Exception as exc:     # log and keep ticking
             console(f"TeleRig: watchdog tick failed: {exc!r}")
 
@@ -661,6 +881,7 @@ def _watchdog_done(task: asyncio.Task) -> None:
     if _shutting_down or task.cancelled():
         return
     console(f"TeleRig: watchdog stopped ({task.exception()!r}); restarting")
+    audit.log("watchdog_restart", error=repr(task.exception())[:200])
     _start_watchdog()
 
 
@@ -676,10 +897,12 @@ async def _lifespan(app):
     # capture the serving loop so radio threads can schedule WS sends onto it.
     # (lifespan, not on_startup= — Starlette removed the on_startup/on_shutdown kwargs.)
     hub.loop = asyncio.get_running_loop()
-    # I2: every WS action literal in this file has a policy row (or is REMOVED), else no start.
+    # I2: every WS action literal in this file has a policy row (or is REMOVED), and every route
+    # declares its policy (__tr_policy__), else no start.
     policy.assert_complete(Path(__file__).read_text(encoding="utf-8"))
+    policy.assert_routes(app.routes)
     try:
-        accounts.ensure_initialized()      # lazy config folder + store checks (no I/O at import)
+        accounts.ensure_initialized(reconcile_mode="thread")   # run.py already did it in-process
     except StoreCorrupt as e:
         _enter_locked(e)                   # start anyway, locked: 503 + the fix, never a traceback
     _maybe_check_update()                  # warm the update-check cache at startup
@@ -691,177 +914,148 @@ async def _lifespan(app):
         _shutting_down = True
         if _watchdog_task is not None:
             _watchdog_task.cancel()
+        audit.flush(1.0)
 
 
-# -- access control: shared-password auth + Origin/Host (CSWSH + DNS-rebinding) ----------
-_AUTH_EXEMPT = {"/login", "/api/login", "/api/auth_status"}
-_login_hits: dict = {}                  # ip -> [recent attempt times] (brute-force brake)
+# -- the HTTP Gate (§2.9) -----------------------------------------------------------------------
+PUBLIC = frozenset({"/login", "/api/login", "/api/auth_status"})
+RESTRICTED_OK = frozenset({"/change-password", "/api/me/password", "/api/logout", "/api/auth_status",
+                           "/login"})
+SECURITY_HEADERS = {
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'self'",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Cross-Origin-Opener-Policy": "same-origin",
+    "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+}
 
 
-# Headers a reverse proxy / tunnel adds (same set as the Phase 1 auth design, §2.8).
-_FWD_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
-                "forwarded", "via", "x-real-ip", "tailscale-user-login", "tailscale-user-name",
-                "cf-connecting-ip", "true-client-ip")
+def add_security_headers(resp, path: str):
+    """I14: on every response; no-store on HTML, redirects and /api/*."""
+    for k, v in SECURITY_HEADERS.items():
+        resp.headers[k] = v
+    ctype = (resp.headers.get("content-type") or "").lower()
+    if path.startswith("/api/") or ctype.startswith("text/html") or 300 <= resp.status_code < 400:
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
-def _client_ip(req) -> str:
-    """The client address for the v1 loopback checks. uvicorn now runs with proxy_headers=False,
-    so req.client is always the TCP peer. A loopback peer that carries a forwarding header is a
-    proxied client: report the right-most X-Forwarded-For entry when it is a non-loopback
-    address, else the non-address "proxied" — never loopback, so it never counts as local."""
-    peer = req.client.host if req.client else ""
-    if auth.is_local(peer) and any(h in req.headers for h in _FWD_HEADERS):
-        xff = [p.strip() for p in req.headers.get("x-forwarded-for", "").split(",") if p.strip()]
-        ip = xff[-1] if xff else ""
-        return ip if ip and not auth.is_local(ip) else "proxied"
-    return peer
+def _is_page_request(request) -> bool:
+    return request.method in ("GET", "HEAD") and not request.url.path.startswith("/api/")
 
 
-def _rate_limited(ip: str) -> bool:
-    now = time.monotonic()
-    hits = [t for t in _login_hits.get(ip, []) if now - t < 300]   # 5-min window
-    _login_hits[ip] = hits
-    return len(hits) >= 10              # >10 attempts / 5 min
+def _has_body(request) -> bool:
+    cl = (request.headers.get("content-length") or "").strip()
+    return (cl.isdigit() and int(cl) > 0) or "transfer-encoding" in request.headers
 
 
 class Gate(BaseHTTPMiddleware):
-    """Locked mode first, then the Host allowlist (DNS-rebinding) and the exact Origin rule on
-    every non-GET/HEAD request (CSWSH; a missing Origin is refused, I15), plus the shared-password
-    session gate on all routes except loopback + the login endpoints (v1; A3 replaces it)."""
+    """Every HTTP request, before any route: locked mode (503) -> Host allowlist (DNS rebinding,
+    F21) -> exact Origin on every non-GET/HEAD (CSWSH, I15) -> JSON content type for API bodies
+    (415) -> identify() -> coarse auth (401/303 to /login, restricted 403/303 to
+    /change-password) -> the route (which re-checks its own @requires policy) -> security headers.
+    A WebSocket upgrade does not pass through here; ws_endpoint does the same checks itself."""
     async def dispatch(self, request, call_next):
+        path = request.url.path
         try:
-            lk = _check_locked()
-            if lk is not None:
-                return _locked_response(request, lk)
-            host = request.headers.get("host")
-            if not auth.host_ok(host):
-                return PlainTextResponse("Bad Host header.", status_code=403)
-            if request.method not in ("GET", "HEAD"):           # block cross-site state changes
-                origin = request.headers.get("origin")
-                if not auth.origin_ok(origin, request.scope):
-                    return PlainTextResponse(auth.origin_denied_text(origin, request.scope),
-                                             status_code=403)
-            if auth.auth_enabled() and not auth.local_exempt(_client_ip(request)) \
-                    and request.url.path not in _AUTH_EXEMPT:
-                if not auth.valid_session(request.cookies.get(auth.COOKIE_NAME)):
-                    if request.url.path.startswith("/api/"):
-                        return JSONResponse({"error": "auth required"}, status_code=401)
-                    return RedirectResponse("/login", status_code=303)
-            return await call_next(request)
+            resp = await self._dispatch(request, call_next, path)
         except StoreCorrupt as e:
             _enter_locked(e)
-            return _locked_response(request, e)
+            resp = _locked_response(request, e)
         except StoreBusy:
-            return JSONResponse({"ok": False, "error": "store_busy"}, status_code=503)
+            resp = JSONResponse({"ok": False, "error": "store_busy"}, status_code=503)
         except StoreError:
-            return JSONResponse({"ok": False, "error": "store_error"}, status_code=500)
+            resp = JSONResponse({"ok": False, "error": "store_error"}, status_code=500)
+        return add_security_headers(resp, path)
+
+    async def _dispatch(self, request, call_next, path):
+        lk = _check_locked()
+        if lk is not None:
+            return _locked_response(request, lk)
+        host = request.headers.get("host")
+        if not auth.host_ok(host):
+            msg = auth.host_denied_text(host, request.scope)
+            if _is_page_request(request):
+                return HTMLResponse("<!doctype html><meta charset=utf-8><title>TeleRig: bad Host</title>"
+                                    "<body style='font-family:system-ui,sans-serif;max-width:40em;"
+                                    f"margin:3em auto;padding:0 16px'><p>{_html.escape(msg)}</p>",
+                                    status_code=403)
+            return PlainTextResponse(msg, status_code=403)
+        if request.method not in ("GET", "HEAD"):           # block cross-site state changes
+            origin = request.headers.get("origin")
+            if not auth.origin_ok(origin, request.scope):
+                return PlainTextResponse(auth.origin_denied_text(origin, request.scope), status_code=403)
+            if path.startswith("/api/") and _has_body(request):
+                ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+                if ctype != "application/json":
+                    return JSONResponse({"ok": False, "error": "json_required"}, status_code=415)
+        p = auth.identify(request.scope)
+        request.state.principal = p
+        if path in PUBLIC:
+            return await call_next(request)
+        if p is None:
+            if path.startswith("/api/"):
+                return JSONResponse({"ok": False, "error": "auth_required"}, status_code=401)
+            target = path + (("?" + request.url.query) if request.url.query else "")
+            return RedirectResponse("/login?next=" + quote(target, safe=""), status_code=303)
+        if p.restricted and path not in RESTRICTED_OK:
+            if path.startswith("/api/") or request.method not in ("GET", "HEAD"):
+                return JSONResponse({"ok": False, "error": "password_change_required"}, status_code=403)
+            return RedirectResponse("/change-password", status_code=303)
+        return await call_next(request)
 
 
-def _set_session_cookie(resp, request) -> None:
-    resp.set_cookie(auth.COOKIE_NAME, auth.make_session(), max_age=auth.SESSION_TTL,
-                    httponly=True, samesite="lax", secure=request.url.scheme == "https", path="/")
-
-
-async def login_page(request):
-    return FileResponse(str(FRONTEND / "login.html"))
-
-
-async def _json_body(request) -> dict:
-    """The JSON object body, or {} for a bodiless/unparsable/non-object body (v1 routes only;
-    A3 adds read_json with the 413/400 rules, §2.9)."""
-    try:
-        body = await request.json()
-    except Exception:
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
-async def api_login(request):
-    ip = _client_ip(request)
-    if _rate_limited(ip):
-        return JSONResponse({"ok": False, "error": "too many attempts — wait a few minutes"}, status_code=429)
-    _login_hits.setdefault(ip, []).append(time.monotonic())
-    body = await _json_body(request)
-    if auth.verify_password(str(body.get("password", ""))):
-        _login_hits[ip] = []
-        resp = JSONResponse({"ok": True})
-        _set_session_cookie(resp, request)
-        return resp
-    return JSONResponse({"ok": False, "error": "wrong password"}, status_code=401)
-
-
-async def api_logout(request):
-    resp = JSONResponse({"ok": True})
-    resp.delete_cookie(auth.COOKIE_NAME, path="/")
-    return resp
-
-
-async def api_auth_status(request):
-    local = auth.is_local(_client_ip(request))
-    return JSONResponse({"enabled": auth.auth_enabled(), "local": local,
-                         "authed": local or auth.valid_session(request.cookies.get(auth.COOKIE_NAME))})
-
-
-async def api_set_password(request):
-    # Setting / clearing the shared password is the host operator's job — local only.
-    if not auth.is_local(_client_ip(request)):
-        return JSONResponse({"ok": False, "error": "set the password on the host PC"}, status_code=403)
-    body = await _json_body(request)
-    if body.get("clear"):
-        auth.clear_password()
-        return JSONResponse({"ok": True, "enabled": False})
-    pw = str(body.get("password", ""))
-    if len(pw) < 6:
-        return JSONResponse({"ok": False, "error": "use at least 6 characters"}, status_code=400)
-    auth.set_password(pw)
-    for h in (body.get("allowed_hosts") or []):
-        auth.add_allowed_host(str(h))
-    resp = JSONResponse({"ok": True, "enabled": True})
-    _set_session_cookie(resp, request)         # keep the operator signed in after setting it
-    return resp
-
-
+# -- Tailscale Serve (interim location; A5 moves these under /api/admin/ with success-only
+#    behind_proxy writes and the bound port) -------------------------------------------------
 def _app_port(request) -> int:
     return request.url.port or 8700
 
 
+@requires("admin")
 async def api_remote_status(request):
     port = _app_port(request)
-    return JSONResponse({"tailscale": tailscale.status(port), "auth_enabled": auth.auth_enabled(),
-                         "behind_proxy": auth.behind_proxy(), "local": auth.is_local(_client_ip(request)),
-                         "port": port})
+    st = await run_in_threadpool(tailscale.status, port)
+    return JSONResponse({"tailscale": st, "auth_enabled": True, "behind_proxy": settings.behind_proxy(),
+                         "local": auth.direct_local(request.scope), "port": port})
 
 
+@requires("admin", sudo=True, local=True)              # F9: admin + fresh sudo + host-local
 async def api_tailscale_serve(request):
-    if not auth.is_local(_client_ip(request)):
-        return JSONResponse({"ok": False, "error": "set this up from the host PC's own browser"}, status_code=403)
     port = _app_port(request)
-    code, out, err = tailscale.serve_on(port)
-    st = tailscale.status(port)
+    code, out, err = await run_in_threadpool(tailscale.serve_on, port)
+    st = await run_in_threadpool(tailscale.status, port)
     if st.get("magicdns"):
-        auth.add_allowed_host(st["magicdns"])       # so the Origin/Host gate accepts the *.ts.net name
-    auth.set_behind_proxy(True, "tailscale")         # (A5: written only after a confirmed success)
+        settings.add_allowed_host(st["magicdns"])   # so the Origin/Host gate accepts the *.ts.net name
+    settings.set_behind_proxy(True, "tailscale")     # (A5: written only after a confirmed success)
     if code != 0:
         return JSONResponse({"ok": False, "error": (err or out or "tailscale serve failed").strip(),
                              "tailscale": st}, status_code=400)
     return JSONResponse({"ok": True, "tailscale": st})
 
 
+@requires("admin")                                     # F9: closing exposure needs no sudo
 async def api_tailscale_serve_off(request):
-    if not auth.is_local(_client_ip(request)):
-        return JSONResponse({"ok": False, "error": "do this from the host PC's own browser"}, status_code=403)
-    tailscale.serve_off()
-    auth.set_behind_proxy(False)
-    return JSONResponse({"ok": True, "tailscale": tailscale.status(_app_port(request))})
+    await run_in_threadpool(tailscale.serve_off)
+    settings.set_behind_proxy(False)
+    return JSONResponse({"ok": True, "tailscale": await run_in_threadpool(tailscale.status, _app_port(request))})
 
+
+policy.mark(ws_endpoint, "viewer")                     # identity checked inside ws_endpoint (§2.11)
+_static = policy.mark(Mount("/static", StaticFiles(directory=str(FRONTEND)), name="static"), "viewer")
 
 routes = [
     Route("/", index),
-    Route("/login", login_page),
-    Route("/api/login", api_login, methods=["POST"]),
-    Route("/api/logout", api_logout, methods=["POST"]),
-    Route("/api/auth_status", api_auth_status),
-    Route("/api/set_password", api_set_password, methods=["POST"]),
+    Route("/login", account_api.login_page),
+    Route("/change-password", account_api.change_password_page),
+    Route("/api/login", account_api.api_login, methods=["POST"]),
+    Route("/api/logout", account_api.api_logout, methods=["POST"]),
+    Route("/api/auth_status", account_api.api_auth_status),
+    Route("/api/me", account_api.api_me),
+    Route("/api/me/password", account_api.api_me_password, methods=["POST"]),
+    Route("/api/me/signout_all", account_api.api_me_signout_all, methods=["POST"]),
+    Route("/api/admin/users", admin_api.api_users),
+    Route("/api/status", api_status),
     Route("/api/remote_status", api_remote_status),
     Route("/api/tailscale_serve", api_tailscale_serve, methods=["POST"]),
     Route("/api/tailscale_serve_off", api_tailscale_serve_off, methods=["POST"]),
@@ -872,7 +1066,7 @@ routes = [
     Route("/api/connect", api_connect, methods=["POST"]),
     Route("/api/disconnect", api_disconnect, methods=["POST"]),
     WebSocketRoute("/ws", ws_endpoint),
-    Mount("/static", StaticFiles(directory=str(FRONTEND)), name="static"),
+    _static,
 ]
 
 app = Starlette(debug=False, routes=routes, middleware=[Middleware(Gate)], lifespan=_lifespan)

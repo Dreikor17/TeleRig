@@ -40,9 +40,11 @@ def _run(args, timeout=12):
 
 
 def status(port: int) -> dict:
-    """{installed, running, magicdns, url, serve_running} — what the setup page renders."""
+    """{installed, running, magicdns, url, serve_running, serve_status_ok} — what the setup page
+    renders. serve_status_ok is True only when `tailscale serve status` itself exited 0, so a
+    caller can tell "Serve is off" from "couldn't ask" (it is reported, never inferred)."""
     out = {"installed": cli_path() is not None, "running": False,
-           "magicdns": "", "url": "", "serve_running": False}
+           "magicdns": "", "url": "", "serve_running": False, "serve_status_ok": False}
     if not out["installed"]:
         return out
     code, so, _ = _run(["status", "--json"])
@@ -57,6 +59,7 @@ def status(port: int) -> dict:
         except Exception:
             pass
     code, so, _ = _run(["serve", "status"])
+    out["serve_status_ok"] = code == 0
     if code == 0 and so and (f"127.0.0.1:{port}" in so or f"localhost:{port}" in so):
         out["serve_running"] = True
     return out

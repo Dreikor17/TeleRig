@@ -756,6 +756,110 @@ class Server:
         self.stop()
 
 
+# -- accounts (A3: written in-process against the SCRATCH store; A5+ may use the admin API) -----
+ADMIN_PW = "Harness#Admin-2026"                    # what ready_admin() sets for ADMIN (scratch only)
+
+
+def read_auth(tmp: Any) -> dict:
+    """The scratch auth.json (never the real one: tmp passed check_config_path via Server/Ctx)."""
+    p = check_config_path(Path(tmp) / "config.json").parent / "auth.json"
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def setup_code(tmp: Any) -> Optional[str]:
+    return (read_auth(tmp).get("meta") or {}).get("setup_code")
+
+
+def user_password(name: str) -> str:
+    """The password mk_user() gives `name` unless told otherwise."""
+    return f"Pw-{name}-2026!"
+
+
+def login(client: "Client", user: str, password: str, *, setup: Optional[str] = None,
+          headers: Optional[dict] = None, nxt: Optional[str] = None) -> Resp:
+    body = {"username": user, "password": password}
+    if setup is not None:
+        body["setup"] = setup
+    if nxt is not None:
+        body["next"] = nxt
+    return client.post("/api/login", body, headers=headers)
+
+
+def admin_login(client: "Client", tmp: Any, *, password: str = "admin", code: Any = _DEFAULT,
+                headers: Optional[dict] = None) -> Resp:
+    """admin/<password> with the setup code read from the scratch auth.json (F1)."""
+    if code is _DEFAULT:
+        code = setup_code(tmp)
+    return login(client, "admin", password, setup=code, headers=headers)
+
+
+def ready_admin(srv: "Server", client: Optional["Client"] = None, password: str = ADMIN_PW) -> "Client":
+    """A client signed in as an UNRESTRICTED ADMIN: the first-run login (admin/admin + setup code,
+    direct-local) followed by the forced password change. Idempotent per server."""
+    c = client or srv.client()
+    if getattr(srv, "admin_pw", None):
+        r = login(c, "admin", srv.admin_pw)
+        check(r.status == 200 and r.json().get("must_change") is False, f"ADMIN login: {r!r}")
+        return c
+    r = admin_login(c, srv.tmp)
+    check(r.status == 200 and r.json().get("must_change") is True, f"first-run ADMIN login: {r!r}")
+    r = c.post("/api/me/password", {"current": "admin", "new": password})
+    check(r.status == 200, f"forced password change: {r!r}")
+    srv.admin_pw = password
+    return c
+
+
+_ACCOUNTS_CHILD = r"""
+import json, os, sys
+sys.path.insert(0, {repo!r}); sys.path.insert(0, {tests!r})
+import harness
+harness.check_config_path(os.environ["TELERIG_CONFIG"])        # scratch store only
+from backend import accounts
+accounts.ensure_initialized(reconcile_mode="skip")
+result = None
+{body}
+print("RESULT " + json.dumps(result))
+"""
+
+
+def accounts_child(tmp: Any, body: str, *, timeout: float = 60.0) -> Any:
+    """Run `body` (Python; sets `result`) in a child with `accounts` imported, against the scratch
+    store of `tmp` (the same one a Server on `tmp` uses: the OS lock coordinates them)."""
+    code = _ACCOUNTS_CHILD.format(repo=str(REPO), tests=str(TESTS), body=body)
+    r = run_child(["-c", code], tmp, timeout=timeout)
+    line = next((ln for ln in (r.stdout or "").splitlines() if ln.startswith("RESULT ")), None)
+    if r.returncode != 0 or line is None:
+        raise HarnessError(f"accounts child failed ({r.returncode}):\n{r.stdout}\n{r.stderr}")
+    return json.loads(line[len("RESULT "):])
+
+
+STORE_PICKUP = 0.7     # a running server re-stats auth.json every 0.5 s: wait this long after a write
+
+
+def mk_user(tmp: Any, name: str, role: str = "operator", password: Optional[str] = None,
+            must_change: bool = False) -> str:
+    """Create a user in the scratch store (A3 helper) and give a running server time to see it.
+    Returns its password."""
+    pw = password or user_password(name)
+    accounts_child(tmp, f"result = accounts.create_user({name!r}, {role!r}, {pw!r}, "
+                        f"must_change={must_change!r}, created_by='harness')[0]")
+    time.sleep(STORE_PICKUP)
+    return pw
+
+
+def del_user(tmp: Any, name: str) -> None:
+    accounts_child(tmp, f"accounts.delete_user({name!r})")
+    time.sleep(STORE_PICKUP)
+
+
+def session_cookie(client: "Client") -> Optional[str]:
+    """This client's tr_session_<P> value."""
+    for c in client.jar:
+        if c.name == f"tr_session_{client.port}":
+            return c.value
+    return None
+
+
 # -- in-process ASGI calls (for child processes that import the backend) ---------------------
 def asgi_request(app: Any, method: str, path: str, *, body: Any = None, headers: Optional[dict] = None,
                  client: tuple = ("127.0.0.1", 50000), server: tuple = ("127.0.0.1", 8790),

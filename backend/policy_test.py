@@ -52,14 +52,62 @@ C("T30 assert_complete raises on a gap", raises(lambda: policy.assert_complete(g
 C("T30 assert_complete passes on server.py", raises(lambda: policy.assert_complete(SRC), Exception), False)
 C("T30 single-quoted literal is seen too", "zz_q" in policy.action_literals("if action == 'zz_q':"), True)
 
-# ---- A2 skeleton semantics ------------------------------------------------------------------
+# ---- A3 coarse rule on the placeholder rows ---------------------------------------------------
+class FakeConn:
+    def __init__(self, role):
+        self.role = role
+
+
 cmd = {"action": "set_freq", "hz": 145000000}
-v = policy.evaluate(policy.WS_POLICY["set_freq"], None, cmd)
-C("A2 placeholder row passes the command through (allow-all)", (v.kind, v.cmd), ("plain", cmd))
-C("A2 every row is a placeholder until A4", all(r.placeholder for r in policy.WS_POLICY.values()), True)
-C("A2 unknown action has no row", policy.WS_POLICY.get("host_rx") is None and policy.WS_POLICY.get("nope") is None, True)
-C("A2 non-placeholder rule is denied (never allow by default)",
-  policy.evaluate(policy.Rule("x"), None, {"action": "x"}).kind, "deny")
+v = policy.evaluate(policy.WS_POLICY["set_freq"], FakeConn("operator"), cmd)
+C("A3 operator: placeholder row passes the command through", (v.kind, v.cmd), ("plain", cmd))
+C("A3 admin: passes", policy.evaluate(policy.WS_POLICY["set_freq"], FakeConn("admin"), cmd).kind, "plain")
+for role in ("viewer", None, "Admin", "root", ""):
+    v = policy.evaluate(policy.WS_POLICY["set_freq"], FakeConn(role), cmd)
+    C(f"A3 coarse rule: role {role!r} set_freq -> denied role", (v.kind, v.reason), ("deny", "role"))
+C("A3 a connection object without a role -> denied role",
+  policy.evaluate(policy.WS_POLICY["set_freq"], None, cmd).reason, "role")
+for a in ("ptt", "cw_tx", "tune_atu", "rx_func", "menu_write", "lock", "set_meter", "cw_stop"):
+    C(f"A3 viewer {a} -> denied role", policy.evaluate(policy.WS_POLICY[a], FakeConn("viewer"), {"action": a}).reason, "role")
+for a in ("menu_read", "menu_read_group"):
+    C(f"A3 viewer {a} passes (F23)", policy.evaluate(policy.WS_POLICY[a], FakeConn("viewer"), {"action": a}).kind, "plain")
+    C(f"A3 role-less {a} -> denied", policy.evaluate(policy.WS_POLICY[a], FakeConn(None), {"action": a}).kind, "deny")
+C("A3 every row is still a placeholder until A4", all(r.placeholder for r in policy.WS_POLICY.values()), True)
+C("A3 unknown action has no row", policy.WS_POLICY.get("host_rx") is None and policy.WS_POLICY.get("nope") is None, True)
+C("A3 non-placeholder rule is denied (never allow by default)",
+  policy.evaluate(policy.Rule("x"), FakeConn("admin"), {"action": "x"}).kind, "deny")
+# the fast path uses the LAST-KNOWN role and no store read
+C("evaluate_fast: operator ptt false -> plain",
+  policy.evaluate_fast(FakeConn("operator"), {"action": "ptt", "tx": False}).kind, "plain")
+C("evaluate_fast: viewer ptt false -> denied role (I11)",
+  policy.evaluate_fast(FakeConn("viewer"), {"action": "ptt", "tx": False}).reason, "role")
+C("evaluate_fast: tx_hb has no row until A4 -> unknown_action",
+  policy.evaluate_fast(FakeConn("operator"), {"action": "tx_hb"}).reason, "unknown_action")
+
+# ---- HTTP route policy (I2: every route declares one; startup aborts otherwise) ------------------
+from backend import server                                     # noqa: E402  (import only: no lifespan)
+C("every route of server.app carries __tr_policy__", policy.route_policy_errors(server.app.routes), [])
+pols = {getattr(r, "path", ""): getattr(getattr(r, "endpoint", r), "__tr_policy__") for r in server.app.routes}
+C("public routes are exactly /login, /api/login, /api/auth_status",
+  sorted(p for p, pol in pols.items() if pol.public), ["/api/auth_status", "/api/login", "/login"])
+C("restricted_ok routes", sorted(p for p, pol in pols.items() if pol.restricted_ok),
+  ["/api/logout", "/api/me/password", "/change-password"])
+C("operator routes", sorted(p for p, pol in pols.items() if pol.min_role == "operator"),
+  ["/api/audio_devices", "/api/connect", "/api/disconnect", "/api/ports"])
+C("admin routes", sorted(p for p, pol in pols.items() if pol.min_role == "admin"),
+  ["/api/admin/users", "/api/remote_status", "/api/tailscale_serve", "/api/tailscale_serve_off"])
+C("Serve ON needs admin + sudo + direct-local (F9)",
+  (pols["/api/tailscale_serve"].sudo, pols["/api/tailscale_serve"].local), (True, True))
+C("/api/set_password is gone", "/api/set_password" in pols, False)
+from starlette.routing import Route  # noqa: E402
+
+
+async def _bare(request):
+    return None
+C("a route without a policy is reported", policy.route_policy_errors([Route("/x", _bare)]) != [], True)
+C("assert_routes raises on a route without a policy",
+  raises(lambda: policy.assert_routes([Route("/x", _bare)]), RuntimeError), True)
+C("requires() refuses an unknown role", raises(lambda: policy.requires("superuser"), ValueError), True)
 
 # ---- fast-path classifier (§2.12): the only frames a kicked/locked connection still acts on ----
 fast = [{"action": "ptt", "tx": False}, {"action": "cw_stop"}, {"action": "tx_hb"}, {"action": "tx_stop"},

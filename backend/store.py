@@ -251,17 +251,26 @@ class JsonStore:
             console(f"TeleRig: store change hook failed for {self.path.name}: {e!r}")
 
     # -- writing ----------------------------------------------------------------------------
-    def mutate(self, fn: Callable[[dict], Optional[dict]], create: bool = False) -> dict:
+    def mutate(self, fn: Callable[[dict], Optional[dict]], create: bool = False, *,
+               timeout: Optional[float] = None, move_corrupt: bool = False) -> dict:
         """Apply fn to a deep copy of the current content and write the result atomically under
         the OS lock. fn may return the new dict or modify its argument and return None.
         create=False: a missing file raises StoreMissing (nothing is written). Returns a copy of
         the new content. Raises StoreCorrupt / StoreBusy / StoreMissing / the validator's or
-        fn's exception / OSError; in every failure case the file and the cache are unchanged."""
+        fn's exception / OSError; in every failure case the file and the cache are unchanged.
+
+        timeout: seconds to wait for the OS lock (default: lock_timeout), e.g. a short wait for a
+        best-effort write. move_corrupt=True (the `--reset-admin` repair, an explicit operator
+        choice): a corrupt file is renamed to `<name>.corrupt-<UTC>` under the same lock and fn
+        then starts from {} (create is implied); `last_backup` names the moved file."""
         with self._wmu:
-            fd = self._acquire(create)
+            fd = self._acquire(create or move_corrupt, timeout)
             fire = None
             try:
                 self._refresh(force=True)                    # reload under the lock
+                if move_corrupt and self._status == "corrupt":
+                    self._move_aside()
+                    create = True
                 with self._mu:
                     if self._status == "corrupt":
                         raise StoreCorrupt(self.path, self._detail)
@@ -296,6 +305,32 @@ class JsonStore:
         if fire is not None and fire[0] != fire[1]:
             self._fire(*fire)
         return result
+
+    last_backup: Optional[Path] = None
+
+    def _move_aside(self) -> None:
+        """Rename the (corrupt) file to <name>.corrupt-<UTC>; caller holds the OS lock. The cache
+        becomes "missing" so the caller's fn starts from {}."""
+        stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        dst = self.path.with_name(f"{self.path.name}.corrupt-{stamp}")
+        n = 1
+        while dst.exists():
+            n += 1
+            dst = self.path.with_name(f"{self.path.name}.corrupt-{stamp}-{n}")
+        for i in range(REPLACE_TRIES):
+            try:
+                os.replace(self.path, dst)
+                break
+            except PermissionError:
+                if i == REPLACE_TRIES - 1:
+                    raise
+                time.sleep(REPLACE_WAIT)
+        self.last_backup = dst
+        with self._mu:
+            self._status, self._detail = "missing", ""
+            self._data, self._sig, self._digest = {}, None, None
+            self._loaded = True
+            self.version += 1
 
     def _write_atomic(self, payload: bytes) -> None:
         d = self.path.parent
@@ -347,10 +382,10 @@ class JsonStore:
             except OSError:
                 pass
 
-    def _acquire(self, create: bool) -> int:
+    def _acquire(self, create: bool, timeout: Optional[float] = None) -> int:
         self._ensure_dir(create)
         fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), self.file_mode)
-        deadline = time.monotonic() + self.lock_timeout
+        deadline = time.monotonic() + (self.lock_timeout if timeout is None else max(0.0, timeout))
         wait = 0.005
         while True:
             try:

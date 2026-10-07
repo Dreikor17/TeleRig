@@ -1,7 +1,8 @@
 """`ws` group (step A2): WebSocket gating and robustness on a real server process.
 
 Every server is harness.Server (run.py --sim-only --no-autoconnect on 127.0.0.1:<free port>, scratch
-config). Only the simulator is ever connected. No TX command is sent.
+config). Only the simulator is ever connected. No TX command is sent. A3: the refused-Origin cases
+are refused before identity is checked; everything else signs in as the scratch ADMIN first.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import json
 import secrets
 import time
 
+import harness
 from harness import check, eq, test
 
 SIM = {"transport": "sim", "radio": "ic9700"}
@@ -39,28 +41,31 @@ def _connected(client) -> bool:
 
 @test("ws")
 def t08_unauthenticated_ws_closes_4401(ctx):
-    """v1 password + behind_proxy:true (the loopback exemption is off), no cookie -> 4401."""
+    """No session cookie -> the socket is accepted, then closed 4401 (A3: everyone signs in; there
+    is no loopback exemption, so plain 127.0.0.1 without a cookie is refused too)."""
     tmp = ctx.tmp()
-    write_config(tmp, {"session_secret": "ab" * 32, "password_hash": v1_hash("hunter22"), "behind_proxy": True})
+    write_config(tmp, {"session_secret": "ab" * 32, "password_hash": v1_hash("hunter22"), "behind_proxy": True,
+                       "behind_proxy_source": "manual"})
     srv = ctx.server(tmp)
     c = srv.client()
     with c.ws() as ws:                                 # accepted first, then closed: the code arrives
-        eq(ws.wait_closed(), (4401, "unauthenticated"), "WS without a session")
+        eq(ws.wait_closed(), (4401, "unauthenticated"), "WS without a session (behind_proxy)")
     eq(c.get("/api/radios").status, 401, "HTTP without a session")
-    # the v1 login still works (now through settings): with its cookie the socket opens
-    eq(srv.client().post("/api/login", {"password": "wrong"}).status, 401, "wrong password")
-    r = c.post("/api/login", {"password": "hunter22"})
-    eq(r.status, 200, f"login {r!r}")
-    with c.ws() as ws:
-        eq(ws.recv_json(type="state").get("connected"), False)
-    cfg = json.loads((tmp / "config.json").read_text(encoding="utf-8"))
-    eq(sorted(cfg), ["behind_proxy", "password_hash", "session_secret"], "config.json rewritten")
+    plain = ctx.server()                               # no proxy flag, no v1 password: still 4401
+    pc = plain.client()
+    with pc.ws() as ws:
+        eq(ws.wait_closed(), (4401, "unauthenticated"), "WS without a session (plain loopback)")
+    with pc.ws(headers={"Cookie": "tr_session_%d=v2.QURNSU4.1.9999999999.AAAA" % plain.port}) as ws:
+        eq(ws.wait_closed(), (4401, "unauthenticated"), "WS with a forged cookie")
+    harness.ready_admin(plain, pc)
+    with pc.ws() as ws:
+        eq(ws.recv_json(type="state").get("connected"), False, "with a session the socket opens")
 
 
 @test("ws")
 def t09_cross_site_origin_refused(ctx):
     srv = ctx.server()
-    c = srv.client()
+    c = harness.ready_admin(srv)
     with c.ws(origin="http://evil.example") as ws:
         eq(ws.wait_closed(), (4403, "bad_origin"), "WS from evil.example")
     r = c.post("/api/connect", SIM, origin="http://evil.example")
@@ -72,7 +77,7 @@ def t09_cross_site_origin_refused(ctx):
 @test("ws")
 def t09b_same_host_other_port_and_missing_origin(ctx):
     srv = ctx.server()
-    c = srv.client()
+    c = harness.ready_admin(srv)
     other = "http://127.0.0.1:8077"                     # e.g. Echo on the same PC: same host, other port
     with c.ws(origin=other) as ws:
         eq(ws.wait_closed(), (4403, "bad_origin"), "WS from another port")
@@ -97,7 +102,7 @@ def t09b_same_host_other_port_and_missing_origin(ctx):
 @test("ws")
 def t37_ipv6_literal_host_and_null_origin(ctx):
     srv = ctx.server()
-    c = srv.client()
+    c = harness.ready_admin(srv)
     v6 = f"[::1]:{srv.port}"
     with c.ws(origin=f"http://{v6}", host_header=v6) as ws:
         eq(ws.recv_json(type="state").get("type"), "state", "IPv6-literal Host + matching Origin accepted")
@@ -114,7 +119,7 @@ def t37_ipv6_literal_host_and_null_origin(ctx):
 @test("ws")
 def t10_bad_frames_never_kill_the_socket(ctx):
     srv = ctx.server()
-    c = srv.client()
+    c = harness.ready_admin(srv)
     eq(c.post("/api/connect", SIM).status, 200, "sim connect")
     with c.ws() as ws:
         st0 = ws.recv_json(type="state")
@@ -163,7 +168,7 @@ def ws_state_hides_lan_address(ctx):
     """Sanitized state (§2.11): the hub never sends a 'LAN <ip>' transport label. The simulator's
     label is unchanged; the LAN case is covered in backend/hub_test.py."""
     srv = ctx.server()
-    c = srv.client()
+    c = harness.ready_admin(srv)
     eq(c.post("/api/connect", SIM).status, 200)
     with c.ws() as ws:
         eq(ws.recv_json(type="state").get("transport"), "Simulator")

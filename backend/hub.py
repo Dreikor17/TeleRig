@@ -72,15 +72,17 @@ class RateWindow:
 
 
 class Conn:
-    """One WebSocket connection (identity fields are filled in by A3)."""
+    """One WebSocket connection. Identity: the signed-in user, the EFFECTIVE role (refreshed on
+    every non-fast-path message, F17), the user generation and the session token (re-checked
+    every 30 s for expiry and revocation)."""
 
     def __init__(self, cid: int, ws: Any, *, user: Optional[str] = None, role: Optional[str] = None,
                  gen: int = 0, token: Optional[str] = None, token_fp: Optional[str] = None,
-                 ip: str = "", direct_local: bool = False):
+                 ip: str = "", direct_local: bool = False, exp: int = 0):
         self.id = cid
         self.ws = ws
         self.user, self.role, self.gen = user, role, gen
-        self.token, self.token_fp = token, token_fp
+        self.token, self.token_fp, self.exp = token, token_fp, exp
         self.ip, self.direct_local = ip, direct_local
         self.opened = time.time()
         # queues
@@ -305,3 +307,11 @@ class Hub:
 
     def kick_all(self, code: int, reason: str) -> int:
         return self.kick(lambda c: True, code, reason)
+
+    def kick_user(self, user: str, code: int, reason: str) -> int:
+        """Close every socket of this user (gen change, delete, sign-out-everywhere)."""
+        return self.kick(lambda c: c.user == user, code, reason)
+
+    def kick_fp(self, token_fp: str, code: int, reason: str) -> int:
+        """Close every socket opened with this session token (logout revokes the token)."""
+        return self.kick(lambda c: c.token_fp == token_fp, code, reason)

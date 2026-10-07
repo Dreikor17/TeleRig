@@ -6,8 +6,9 @@ or its top level is not an object. Unknown keys are ignored. A known key with th
 ignored with a console warning and its default is used. Allowlist entries are normalised on read:
 names are lowercased and a bare name loses any ":port" (v1 stored entries exactly as typed);
 origins get their default port made explicit; IPs, localhost, *.localhost and junk are dropped with
-a warning. Nothing is ever written back by a read: only explicit writes (admin saves, and until A3
-the v1 password/Serve helpers) go through mutate().
+a warning. Nothing is ever written back by a read: only explicit writes (admin saves, the Serve
+helpers and the startup reconcile() of a stale behind_proxy, §2.6) go through mutate(). The v1 keys
+(session_secret, password_hash) are read once by the account migration and never deleted (R10).
 
 Standard library only; no file I/O at import time (the path resolves lazily, §2.1).
 """

@@ -24,10 +24,13 @@ def atomic_write(path: Path, data: bytes) -> None:
 
 
 def wait_status(client, path: str, want: int, timeout: float = 6.0) -> int:
+    """Poll `path` with a cookie-less client on the same server (a signed-in client gets 303 from
+    /login, A3)."""
+    probe = harness.Client(client.port, host=client.host)
     end = time.monotonic() + timeout
     got = None
     while time.monotonic() < end:
-        got = client.get(path).status
+        got = probe.get(path).status
         if got == want:
             return got
         time.sleep(0.2)
@@ -75,9 +78,13 @@ def t26a_unparsable_config_locks_the_server(ctx):
     eq([n for n in names if n not in ("config.json", "home") and not n.startswith("server-")], [],
        "files created while locked")
 
-    # fixing the file unlocks without a restart
+    eq(sorted(n for n in names if n.startswith("auth")), [], "auth.json seeded while config.json was unparsable")
+
+    # fixing the file unlocks without a restart (and only then is the account store seeded)
     atomic_write(cfg, b"{}")
     eq(wait_status(c, "/login", 200), 200, "unlocked after the fix")
+    check((tmp / "auth.json").exists(), "auth.json not seeded after the unlock")
+    harness.ready_admin(srv, c)
     eq(c.post("/api/connect", SIM).status, 200, "sim connect after unlock")
 
     # corrupting it at runtime: open sockets are closed 4403 server_locked, pages get 503
@@ -102,7 +109,7 @@ def t26a_kicked_client_that_ignores_the_close_is_inert(ctx):
     tmp = ctx.tmp()
     cfg = tmp / "config.json"
     srv = ctx.server(tmp)
-    c = srv.client()
+    c = harness.ready_admin(srv)
     eq(c.post("/api/connect", SIM).status, 200, "sim connect")
     base_hz = 145100000
     with harness.RawWS(c) as raw:

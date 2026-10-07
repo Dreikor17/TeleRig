@@ -1,56 +1,235 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>TeleRig — sign in</title>
-  <style>
-    :root { color-scheme: dark; }
-    * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      background: radial-gradient(120% 120% at 50% 0%, #0a2536 0%, #061320 60%, #03080f 100%); color: #dcefff; }
-    .card { width: min(92vw, 360px); background: #0c1f2c; border: 1px solid #14425c;
-      border-radius: 12px; padding: 26px 24px; box-shadow: 0 18px 50px rgba(0,0,0,.45); }
-    h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: .3px; }
-    h1 span { color: #1ec0ff; }
-    p.sub { margin: 0 0 18px; font-size: 12.5px; color: #7fa8bd; }
-    label { display: block; font-size: 11px; color: #7fa8bd; margin: 0 0 5px; letter-spacing: .04em; text-transform: uppercase; }
-    input { width: 100%; padding: 11px 12px; font-size: 15px; border-radius: 8px;
-      border: 1px solid #1c5474; background: #07161f; color: #eaf6ff; outline: none; }
-    input:focus { border-color: #1ec0ff; box-shadow: 0 0 0 3px rgba(30,192,255,.25); }
-    button { margin-top: 16px; width: 100%; padding: 11px; font-size: 15px; font-weight: 600;
-      border: none; border-radius: 8px; cursor: pointer; color: #04121f;
-      background: linear-gradient(180deg, #1ec0ff, #1488c0); }
-    button:disabled { opacity: .6; cursor: default; }
-    .err { margin-top: 12px; min-height: 16px; font-size: 12.5px; color: #ff8a8a; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TeleRig — sign in</title>
+<script>try{var t=localStorage.getItem("telerig.theme");if(t===null)t=localStorage.getItem("radiowebop.theme");if(t==="day")document.documentElement.classList.add("day")}catch(e){}</script>
+<style>
+  :root{color-scheme:dark;
+    --bg:#0a0a0a;--surface:#151619;--surface-2:#111214;--field:#0a0a0a;--border:#2a2b2e;--border-strong:#3a3b3e;
+    --txt:#e0e0e0;--txt-dim:#8e9299;--txt-faint:#5a5b5e;--accent:#10b981;--accent-hi:#34d399;--accent-solid:#059669;
+    --accent-tint:rgba(16,185,129,.10);--accent-line:rgba(16,185,129,.45);--danger:#ef4444;--danger-hi:#f87171;
+    --danger-tint:rgba(239,68,68,.10);--warn:#f59e0b;--warn-hi:#fbbf24;--hover:rgba(255,255,255,.05);
+    --r-card:12px;--r-ctl:8px;
+    --font-ui:ui-monospace,"Cascadia Mono","SF Mono",SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+    --font-prose:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  :root.day{color-scheme:light;
+    --bg:#eceef1;--surface:#ffffff;--surface-2:#f1f3f5;--field:#ffffff;--border:#d5d8de;--border-strong:#b9bec7;
+    --txt:#16181b;--txt-dim:#5a6068;--txt-faint:#8a909a;--accent:#059669;--accent-hi:#047857;--accent-solid:#047857;
+    --accent-tint:rgba(5,150,105,.08);--accent-line:rgba(5,150,105,.45);--danger:#dc2626;--danger-hi:#b91c1c;
+    --danger-tint:rgba(220,38,38,.07);--warn:#d97706;--warn-hi:#b45309;--hover:rgba(0,0,0,.04)}
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--txt);font-family:var(--font-prose)}
+  body{display:flex;justify-content:center;align-items:flex-start;padding:max(6vh,24px) 16px 24px}
+  .col{width:100%;max-width:384px}
+  .brand{display:flex;align-items:center;gap:10px;margin:0 0 18px;font-family:var(--font-ui)}
+  .brand svg{width:32px;height:32px;color:var(--accent-hi)}
+  .brand b{font-style:italic;font-size:22px;letter-spacing:.08em}
+  .theme{position:fixed;top:12px;right:12px;font:12px var(--font-ui);background:var(--surface);color:var(--txt-dim);
+    border:1px solid var(--border);border-radius:var(--r-ctl);padding:6px 10px;cursor:pointer}
+  .card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-card);padding:24px}
+  .micro{margin:0 0 16px;font:700 11px var(--font-ui);letter-spacing:.14em;color:var(--txt-dim)}
+  label{display:block;font:700 10px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--txt-dim);margin:14px 0 6px}
+  .field{position:relative}
+  input{width:100%;padding:10px 12px;font:15px var(--font-ui);border-radius:var(--r-ctl);border:1px solid var(--border);
+    background:var(--field);color:var(--txt);outline:none}
+  input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
+  #user,#setup{text-transform:uppercase}
+  #pw{padding-right:64px}
+  .eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);font:11px var(--font-ui);color:var(--txt-dim);
+    background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer}
+  .btn{margin-top:20px;width:100%;padding:11px;font:700 14px var(--font-ui);letter-spacing:.06em;border:none;
+    border-radius:var(--r-ctl);cursor:pointer;color:#fff;background:var(--accent-solid);display:flex;gap:8px;
+    align-items:center;justify-content:center}
+  .btn:disabled{opacity:.55;cursor:default}
+  .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
+    animation:sp .8s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  .box{margin:0 0 14px;padding:10px 12px;border-radius:var(--r-ctl);font-size:13px;line-height:1.45}
+  .box.err{background:var(--danger-tint);border:1px solid var(--danger);color:var(--danger-hi)}
+  .box.warn{background:rgba(245,158,11,.10);border:1px solid var(--warn);color:var(--warn-hi)}
+  .box.ok{background:var(--accent-tint);border:1px solid var(--accent-line);color:var(--accent-hi)}
+  .box.info{background:var(--surface);border:1px solid var(--border);color:var(--txt-dim)}
+  code{font-family:var(--font-ui);font-size:12px}
+  details{margin-top:16px;font-size:12.5px;color:var(--txt-dim)}
+  summary{cursor:pointer}
+  footer{margin-top:18px;text-align:center;font:11px var(--font-ui);color:var(--txt-faint)}
+  footer a{color:var(--txt-dim)}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
 </head>
 <body>
-  <form class="card" id="f" autocomplete="on">
-    <h1>Tele<span>Rig</span></h1>
-    <p class="sub">Remote access — enter the password set on the host PC.</p>
+<!--TR_AUTH_ICONS-->
+<button class="theme" id="themeBtn" type="button" aria-label="Toggle day / night theme">Theme</button>
+<main class="col">
+  <div class="brand"><svg aria-hidden="true"><use href="#i-radio-tower"/></svg><b>TELERIG</b></div>
+  <div id="reasonBox" class="box info" role="status" hidden></div>
+  <div id="setupHint" class="box ok" hidden></div>
+  <div id="httpWarn" class="box warn" hidden>This connection is not encrypted — your password crosses the network in clear text. Use your https:// (Tailscale) address.</div>
+  <form class="card" id="f" autocomplete="on" novalidate>
+    <p class="micro">SIGN IN</p>
+    <div id="errBox" class="box err" role="alert" hidden></div>
+    <div id="setupBox" class="box warn" role="alert" hidden>Enter the setup code shown in the TeleRig window on this PC.</div>
+    <label for="user">Username</label>
+    <input id="user" name="username" autocomplete="username" autocapitalize="characters" spellcheck="false"
+           maxlength="32" pattern="[A-Za-z0-9/_\-]{2,32}" placeholder="N0CALL" autofocus required>
     <label for="pw">Password</label>
-    <input id="pw" name="password" type="password" autocomplete="current-password" autofocus required>
-    <button id="btn" type="submit">Sign in</button>
-    <div class="err" id="err"></div>
+    <div class="field">
+      <input id="pw" name="password" type="password" autocomplete="current-password" maxlength="128" required>
+      <button class="eye" id="eye" type="button" aria-pressed="false" aria-label="Show password">Show</button>
+    </div>
+    <div id="setupRow" hidden>
+      <label for="setup">Setup code</label>
+      <input id="setup" name="setup" autocapitalize="characters" spellcheck="false" maxlength="16"
+             placeholder="XXXX-XXXX-XXXX" autocomplete="off">
+    </div>
+    <button class="btn" id="btn" type="submit" disabled><svg aria-hidden="true" width="16" height="16"><use href="#i-log-in"/></svg><span id="btnText">Sign in</span></button>
+    <details id="localHelp" hidden><summary>Trouble signing in on this PC?</summary><p id="localHelpText"></p></details>
   </form>
-  <script>
-    var f = document.getElementById("f"), btn = document.getElementById("btn"), err = document.getElementById("err");
-    f.addEventListener("submit", async function (e) {
-      e.preventDefault();
-      err.textContent = ""; btn.disabled = true;
-      try {
-        var r = await fetch("/api/login", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: document.getElementById("pw").value })
-        });
-        var j = await r.json().catch(function () { return {}; });
-        if (j.ok) { location.replace("/"); return; }
-        err.textContent = j.error || "Sign in failed.";
-      } catch (_) { err.textContent = "Network error."; }
-      btn.disabled = false;
-    });
-  </script>
+  <div id="live" class="sr" aria-live="polite"></div>
+  <footer>TeleRig · <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">Source (AGPL-3.0)</a></footer>
+</main>
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var f = $("f"), user = $("user"), pw = $("pw"), setup = $("setup"), btn = $("btn"), btnText = $("btnText");
+  var errBox = $("errBox"), setupBox = $("setupBox"), live = $("live");
+  var lockTimer = null, lockedUntil = 0, busy = false, status = null;
+  var params = new URLSearchParams(location.search);
+
+  function show(el, text) { if (text !== undefined) el.textContent = text; el.hidden = false; }
+  function hide(el) { el.hidden = true; }
+
+  // theme toggle (the same key app.js uses)
+  $("themeBtn").addEventListener("click", function () {
+    var day = document.documentElement.classList.toggle("day");
+    try { localStorage.setItem("telerig.theme", day ? "day" : "night"); } catch (e) {}
+  });
+
+  // #setup=<code> -> sessionStorage, then removed from the address bar (F1)
+  var stored = "";
+  try {
+    var m = /(?:^|[#&])setup=([^&]*)/.exec(location.hash || "");
+    if (m) {
+      sessionStorage.setItem("telerig.setup", decodeURIComponent(m[1]));
+      history.replaceState(null, "", location.pathname + location.search);
+    }
+    stored = sessionStorage.getItem("telerig.setup") || "";
+  } catch (e) {}
+
+  var REASONS = {
+    session_revoked: "Your session was ended by an administrator. Sign in again.",
+    expired: "Your session expired.",
+    signed_out: "Signed out.",
+    pwchanged: "Password changed — sign in again.",
+    role_changed: "Your role changed — sign in again."
+  };
+  var r = params.get("reason");
+  if (r && REASONS[r]) show($("reasonBox"), REASONS[r]);
+
+  var host = location.hostname;
+  var localName = host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "::1";
+  if (location.protocol === "http:" && !localName) show($("httpWarn"));
+
+  function setupNeeded() { return status && status.setup && status.setup.kind === "default"; }
+  function refresh() {
+    btn.disabled = busy || Date.now() < lockedUntil || !user.value.trim() || !pw.value;
+  }
+  [user, pw, setup].forEach(function (el) { el.addEventListener("input", refresh); });
+
+  $("eye").addEventListener("click", function () {
+    var on = pw.type === "password";
+    pw.type = on ? "text" : "password";
+    this.setAttribute("aria-pressed", on ? "true" : "false");
+    this.setAttribute("aria-label", on ? "Hide password" : "Show password");
+    this.textContent = on ? "Hide" : "Show";
+  });
+
+  fetch("/api/auth_status", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (s) {
+    status = s || {};
+    if (status.authed) { location.replace(status.must_change ? "/change-password" : "/"); return; }
+    var kind = status.setup && status.setup.kind;
+    var hint = $("setupHint");
+    if (kind === "default") {
+      hint.innerHTML = "";
+      hint.append("First run: username ", strong("admin"), ", password ", strong("admin"),
+                  ", plus the setup code from the TeleRig window — you'll choose a new password next.");
+      hint.hidden = false;
+      if (!stored) { $("setupRow").hidden = false; }
+    } else if (kind === "migrated") {
+      hint.innerHTML = "";
+      hint.append("Upgraded install: sign in as ", strong("admin"),
+                  " with your previous remote-access password — or run ", code("run.bat --reset-admin"),
+                  " (Windows) / ", code("python3 run.py --reset-admin"), ".");
+      hint.hidden = false;
+    }
+    var why = {
+      behind_proxy: "This server is marked as behind a proxy, so this PC is treated like any other device.",
+      forwarded_header: "A forwarding header was present (a proxy or tunnel is in the way).",
+      host_not_local: "Open it as http://localhost:" + (status.port || location.port) + ", not by name."
+    }[status.local_reason];
+    if (why) { $("localHelpText").textContent = why; $("localHelp").hidden = false; }
+  }).catch(function () {});
+
+  function strong(t) { var b = document.createElement("strong"); b.textContent = t; return b; }
+  function code(t) { var c = document.createElement("code"); c.textContent = t; return c; }
+
+  function startLock(sec) {
+    lockedUntil = Date.now() + sec * 1000;
+    clearInterval(lockTimer);
+    var tick = function () {
+      var left = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      if (left <= 0) {
+        clearInterval(lockTimer); hide(errBox); live.textContent = "You can try again now."; refresh(); return;
+      }
+      var mm = Math.floor(left / 60), ss = ("0" + (left % 60)).slice(-2);
+      show(errBox, "Too many attempts. Try again in " + mm + ":" + ss);
+    };
+    tick(); lockTimer = setInterval(tick, 1000); refresh();
+  }
+
+  f.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (btn.disabled) return;
+    hide(errBox); hide(setupBox);
+    busy = true; refresh();
+    btnText.textContent = "Signing in…";
+    var sp = document.createElement("span"); sp.className = "spin"; sp.setAttribute("aria-hidden", "true");
+    btn.insertBefore(sp, btnText);
+    var body = { username: user.value, password: pw.value, next: params.get("next") || "/" };
+    var sc = (setup.value || stored || "").trim();
+    if (sc) body.setup = sc;
+    fetch("/api/login", { method: "POST", credentials: "same-origin",
+                          headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { return [r.status, j]; }); })
+      .then(function (res) {
+        var st = res[0], j = res[1] || {};
+        if (st === 200 && j.ok) {
+          try { sessionStorage.removeItem("telerig.setup"); } catch (e2) {}
+          location.replace(j.next || "/"); return;
+        }
+        if (st === 429) { startLock(j.retry_after || 60); }
+        else if (st === 403 && j.error === "setup_code_required") {
+          try { sessionStorage.removeItem("telerig.setup"); } catch (e3) {}
+          stored = ""; $("setupRow").hidden = false; show(setupBox); setup.focus();
+        } else if (st === 401) {
+          show(errBox, "Invalid username or password."); pw.value = ""; pw.focus();
+        } else {
+          show(errBox, j.message || ("Sign-in failed (HTTP " + st + ")."));
+        }
+      })
+      .catch(function () { show(errBox, "Can't reach the server — check the connection."); })
+      .then(function () {
+        busy = false; btnText.textContent = "Sign in";
+        if (sp.parentNode) sp.parentNode.removeChild(sp);
+        refresh();
+      });
+  });
+  refresh();
+})();
+</script>
 </body>
 </html>

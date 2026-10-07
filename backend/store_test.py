@@ -365,14 +365,28 @@ use_config(cfg2)
 C("settings: missing config.json -> defaults", (settings.status(), settings.allowed_hosts(), settings.behind_proxy()),
   ("missing", (), False))
 C("settings: missing config.json is never created by reads", cfg2.exists(), False)
-C("settings: v1 auth reads create no file", (auth.auth_enabled(), auth.valid_session("1.x"), cfg2.exists()),
-  (False, False, False))
-auth.set_password("hunter22")                               # v1 write path (A3 removes it)
-d = json.loads(cfg2.read_text())
-C("v1 set_password creates the secret inside its mutate", (len(d.get("session_secret", "")), "password_hash" in d), (64, True))
-C("v1 verify_password", (auth.verify_password("hunter22"), auth.verify_password("nope")), (True, False))
-tok = auth.make_session()
-C("v1 session round trip", (auth.valid_session(tok), auth.valid_session(tok + "0"), auth.valid_session("é.ü")), (True, False, False))
+C("settings: auth reads (host/origin/proxy checks) create no file",
+  (auth.host_ok("radio-pc:8790"), settings.behind_proxy(), cfg2.exists()), (True, False, False))
+
+# ---- mutate(timeout=, move_corrupt=) (A3: best-effort writes and the --reset-admin repair) -----------
+p = fresh("move-corrupt")
+p.write_bytes(b'{"broken": ')
+s = JsonStore(p)
+C("move_corrupt: a corrupt store is renamed aside and fn starts from {}",
+  s.mutate(lambda d: d.update(fresh=True), move_corrupt=True), {"fresh": True})
+C("move_corrupt: the backup holds the corrupt bytes", s.last_backup.read_bytes(), b'{"broken": ')
+C("move_corrupt: the backup is named <name>.corrupt-<UTC>", s.last_backup.name.startswith("data.json.corrupt-"), True)
+C("move_corrupt: a healthy store is not moved", (s.mutate(lambda d: d.update(n=1), move_corrupt=True),
+                                                 sorted(x.name for x in p.parent.iterdir() if "corrupt" in x.name)),
+  ({"fresh": True, "n": 1}, [s.last_backup.name]))
+pr = child(HOLD, p)
+C("timeout: holder child has the lock", pr.stdout.readline().strip(), "LOCKED")
+t0 = time.monotonic()
+C("timeout: mutate(timeout=0.2) gives up quickly with StoreBusy",
+  raises(lambda: JsonStore(p).mutate(lambda d: d.update(n=9), timeout=0.2), StoreBusy), True)
+C("timeout: ... within ~0.2 s, not the 5 s default", time.monotonic() - t0 < 1.5, True)
+pr.kill()
+pr.wait(timeout=30)
 
 # normalize_entry edge cases (the allowlist rules)
 for e, want in (("Radio-PC", ("name", "radio-pc")), ("radio-pc:8700", ("name", "radio-pc")),

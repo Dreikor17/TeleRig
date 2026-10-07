@@ -7,11 +7,14 @@ commanding the radio until the close timeout (about 10 s).
 
 `server.radio` and `server.host_audio` are replaced by recorders BEFORE any frame is fed, so no
 radio, transport, sound card, server, socket or file is touched. Nothing can transmit: the real
-Radio objects are never connected, and the recorder only appends to a list.
+Radio objects are never connected, and the recorder only appends to a list. A3: connections carry
+an identity; `server.accounts.get` is replaced by a fake user table (no auth.json is read or
+created), and `server.hub.kick_conn` by a recorder.
 """
 import json
+import time
 
-from backend import server
+from backend import accounts, server
 from backend.hub import Conn
 from backend.store import StoreCorrupt
 
@@ -52,6 +55,18 @@ audio = Recorder()
 server.radio = rec
 server.host_audio = audio
 
+# fake account table: OP1 operator gen 3, V1 viewer gen 1, MIG migrated_v1 admin gen 2
+USERS = {n: accounts.User(n, "x", role, gen, False, False, mig, None, None, None, None)
+         for n, role, gen, mig in (("OP1", "operator", 3, False), ("V1", "viewer", 1, False),
+                                   ("MIG", "admin", 2, True))}
+server.accounts.get = lambda name: USERS.get(name)
+kicks = []
+server.hub.kick_conn = lambda c, code, reason: kicks.append((c.id, code, reason))
+
+
+def mk(cid, user="OP1", role="operator", gen=3, direct_local=False):
+    return Conn(cid, None, user=user, role=role, gen=gen, direct_local=direct_local)
+
 TEXT = {
     "set_freq": {"action": "set_freq", "hz": 145333000},
     "tune": {"action": "tune", "delta": 100},
@@ -87,7 +102,7 @@ def feed_bytes(conn, tx_device):
 
 # -- control: an open connection on an unlocked server reaches the (recorded) radio -----------------
 server._locked = None
-live = Conn(1, None)
+live = mk(1)
 C("open: set_freq reaches the radio", feed(live, TEXT["set_freq"]), [("set_freq", 145333000)])
 C("open: ptt false reaches the radio", feed(live, STOPS["ptt_off"][0]), [("set_ptt", False)])
 C("open: mic PCM -> the radio's modulator (LAN)", [c[0] for c in feed_bytes(live, None)], ["write_audio"])
@@ -107,18 +122,80 @@ def gated(label, conn):
 
 
 # -- a kicked connection (its close frame is out; the client ignores it) ----------------------------
-kicked = Conn(2, None)
+kicked = mk(2)
 kicked.closing = True
 gated("kicked", kicked)
 
 # -- a locked server: every socket was kicked, but the gate holds on its own too --------------------
 server._locked = StoreCorrupt("config.json", "test")
-gated("locked", Conn(3, None))
+gated("locked", mk(3))
 server._locked = None
 
 # -- unlocking does not revive a kicked connection ---------------------------------------------------
 C("unlocked: the kicked connection still acts on nothing", feed(kicked, TEXT["set_freq"]), [])
-C("unlocked: an open connection works again", feed(Conn(4, None), TEXT["set_freq"]), [("set_freq", 145333000)])
+C("unlocked: an open connection works again", feed(mk(4), TEXT["set_freq"]), [("set_freq", 145333000)])
+
+# -- A3: identity on every message ---------------------------------------------------------------------
+viewer = mk(5, "V1", "viewer", 1)
+C("viewer: set_freq is denied (coarse rule, T14a) and never reaches the radio", feed(viewer, TEXT["set_freq"]), [])
+C("viewer: ptt false (fast path, last-known role) never reaches the radio (I11)", feed(viewer, STOPS["ptt_off"][0]), [])
+C("viewer: menu_read reaches the radio (F23)", feed(viewer, {"action": "menu_read", "num": 41}), [("get_menu", 41)])
+kicks.clear()
+stale = mk(6, "OP1", "operator", 2)                       # its generation is older than the user's (3)
+C("stale generation: set_freq dropped", feed(stale, TEXT["set_freq"]), [])
+C("stale generation: socket closed 4401 session_revoked", kicks, [(6, 4401, "session_revoked")])
+kicks.clear()
+gone = mk(7, "NOBODY", "operator", 1)
+C("deleted user: set_freq dropped", feed(gone, TEXT["set_freq"]), [])
+C("deleted user: socket closed 4401 session_revoked", kicks, [(7, 4401, "session_revoked")])
+kicks.clear()
+gone2 = mk(8, "NOBODY", "operator", 1)
+C("deleted user: a fast-path stop still unkeys (no store read, AR-17)", feed(gone2, STOPS["ptt_off"][0]),
+  [STOPS["ptt_off"][1]])
+C("... and is not what closes the socket", kicks, [])
+mig_remote = mk(9, "MIG", "admin", 2, direct_local=False)
+feed(mig_remote, TEXT["set_freq"])
+C("F17: a migrated ADMIN off the host PC is refreshed to operator", mig_remote.role, "operator")
+mig_local = mk(10, "MIG", "operator", 2, direct_local=True)
+feed(mig_local, TEXT["set_freq"])
+C("F17: a migrated ADMIN on the host PC is an admin", mig_local.role, "admin")
+promoted = mk(11, "V1", "operator", 1)                    # role refreshed from the store each message
+C("role refreshed from the store: a stale 'operator' viewer is denied", feed(promoted, TEXT["set_freq"]), [])
+C("... and now carries the stored role", promoted.role, "viewer")
+
+
+def bad_get(name):
+    raise StoreCorrupt("auth.json", "test")
+
+
+server.accounts.get = bad_get
+entered = []
+real_enter = server._enter_locked
+server._enter_locked = lambda e: entered.append(str(e.path))
+C("corrupt auth.json during a message: set_freq dropped", feed(mk(12), TEXT["set_freq"]), [])
+C("... and locked mode is entered", entered, ["auth.json"])
+C("... while a stop still unkeys (fast path, no store read)", feed(mk(13), STOPS["cw_stop"][0]), [STOPS["cw_stop"][1]])
+server._enter_locked = real_enter
+server.accounts.get = lambda name: USERS.get(name)
+
+# -- the 30 s token revalidation ------------------------------------------------------------------------
+real = (server.accounts.parse_token, server.accounts.is_revoked, server.hub.conns)
+now = time.time()
+server.hub.conns = {}
+cases = {21: ("OP1", 3, now + 999, "good", False), 22: ("OP1", 3, now - 1, "good", False),
+         23: ("OP1", 3, now + 999, "bad", False), 24: ("OP1", 3, now + 999, "good", True),
+         25: ("OP1", 2, now + 999, "good", False), 26: ("NOBODY", 1, now + 999, "good", False)}
+for cid, (user, gen, exp, tok, revoked) in cases.items():
+    c = Conn(cid, None, user=user, role="operator", gen=gen, token=tok, token_fp=f"fp{cid}", exp=int(exp))
+    server.hub.conns[cid] = c
+server.accounts.parse_token = lambda t: object() if t == "good" else None
+server.accounts.is_revoked = lambda fp: fp == "fp24"
+kicks.clear()
+server._revalidate_conns()
+C("revalidation: expired / bad token / revoked / old gen / deleted user are closed, the good one kept",
+  sorted(kicks), [(22, 4401, "expired"), (23, 4401, "session_revoked"), (24, 4401, "signed_out"),
+                  (25, 4401, "session_revoked"), (26, 4401, "session_revoked")])
+server.accounts.parse_token, server.accounts.is_revoked, server.hub.conns = real
 
 print("\nALL PASS" if _ok else "\nSOME FAILED")
 raise SystemExit(0 if _ok else 1)
