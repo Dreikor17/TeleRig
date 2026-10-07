@@ -218,6 +218,80 @@ def phone_only_items_hidden_on_desktop(ctx):
         check('role="menuitem"' in tag, f"a phone-only element outside the user menu: {tag}")
 
 
+def _css_rules(css: str) -> list:
+    """[(enclosing @media prelude or "", selector, {property: value})] for every style rule."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    rules, stack, buf = [], [], ""
+    for ch in css:
+        if ch == "{":
+            stack.append(" ".join(buf.split()))
+            buf = ""
+        elif ch == "}":
+            check(stack, "unbalanced '}' in style.css")
+            prelude = stack.pop()
+            if buf.strip() and not prelude.startswith("@"):
+                media = next((p for p in reversed(stack) if p.startswith("@media")), "")
+                decls = {}
+                for d in buf.split(";"):
+                    if ":" in d:
+                        k, v = d.split(":", 1)
+                        decls[k.strip()] = " ".join(v.split())
+                rules.append((media, prelude, decls))
+            buf = ""
+        else:
+            buf += ch
+    check(not stack, "unbalanced '{' in style.css")
+    return rules
+
+
+@test("unit")
+def onair_chip_layout_rules(ctx):
+    """B2b round 1: the ON-AIR chip is never squeezed on desktop. Its no-wrap, basis-0 sizing (text cut
+    with an ellipsis) is phone-only (< 900 px); at >= 900 px it keeps its content width and the top bar
+    wraps instead (the two-row bar also while ON AIR at 1440-1799 px), capped so it never leaves the
+    brand's row; STOP never shrinks out of / extends past the chip."""
+    rules = _css_rules((FRONT / "style.css").read_text(encoding="utf-8"))
+
+    def find(selector, media=""):
+        return [d for m, s, d in rules if m == media and selector in [x.strip() for x in s.split(",")]]
+
+    PHONE, TWO_ROW, ON_AIR_TWO_ROW = ("@media (max-width:899px)", "@media (max-width:1439px)",
+                                      "@media (min-width:1440px) and (max-width:1799px)")
+    base = find(".onair")
+    eq(len(base), 1, "one base .onair rule")
+    b = base[0]
+    eq(b.get("flex"), "0 1 auto", "desktop chip: content width, the bar wraps instead of squeezing it")
+    eq(b.get("min-width"), "0")
+    check(b.get("max-width", "").startswith("calc(100% -"), f"desktop chip cap: {b.get('max-width')!r}")
+    # the basis-0 / max-content sizing (which squeezed the text to 0 px at 1440-1600 px) is phone-only
+    for media, sel, d in rules:
+        if ".onair" in [x.strip() for x in sel.split(",")]:
+            squeezing = d.get("max-width") == "max-content" or d.get("flex", "").endswith(" 0") \
+                or d.get("flex-basis") == "0"
+            check(not squeezing or media == PHONE, f"squeezing .onair sizing outside the phone block: {media!r} {d}")
+    phone = {k: v for d in find(".onair", PHONE) for k, v in d.items()}      # later rules win
+    check(phone.get("flex", "").endswith(" 0") and phone.get("max-width") == "max-content",
+          f"phone chip keeps the no-wrap sizing: {phone}")
+    # STOP: never shrinks below its content by flex, but is capped at the chip's own width
+    stop = find(".onair-stop")
+    eq(len(stop), 1)
+    eq(stop[0].get("flex"), "0 0 auto", "STOP never flex-shrinks")
+    check(stop[0].get("max-width", "").startswith("calc(100% -"), f"STOP capped inside the chip: {stop[0]}")
+    txt = find(".onair-txt")
+    check(txt and txt[0].get("min-width") == "0" and txt[0].get("text-overflow") == "ellipsis", f".onair-txt: {txt}")
+    # desktop two-row bar: no order for the chip (it stays right after the brand, as in the markup)
+    for media, sel, d in rules:
+        if media in (TWO_ROW, ON_AIR_TWO_ROW) and ".onair" in sel:
+            check("order" not in d, f"the desktop two-row bar reorders the chip: {sel} {d}")
+    on_air = ".topbar:has(#onAir:not([hidden]))"
+    eq(find(on_air + " .conn", ON_AIR_TWO_ROW), [{"display": "contents"}], "ON-AIR two-row bar at 1440-1799 px")
+    ctl = find(on_air + " .conn-controls", ON_AIR_TWO_ROW)
+    check(ctl and ctl[0].get("flex") == "1 1 100%", f"connection form on its own row while ON AIR: {ctl}")
+    idx = (FRONT / "index.html").read_text(encoding="utf-8")
+    check(re.search(r'<div class="tb-brand">.*?</div>\s*<div class="onair" id="onAir"', idx, re.S),
+          "the chip must follow the brand in the markup (the desktop bar keeps that order)")
+
+
 @test("smoke")
 def pages_carry_their_icons_inline(ctx):
     srv = ctx.server()

@@ -823,7 +823,16 @@ ADMIN_PW = "Harness#Admin-2026"                    # what ready_admin() sets for
 def read_auth(tmp: Any) -> dict:
     """The scratch auth.json (never the real one: tmp passed check_config_path via Server/Ctx)."""
     p = check_config_path(Path(tmp) / "config.json").parent / "auth.json"
-    return json.loads(p.read_text(encoding="utf-8"))
+    # On Windows, opening the file while the server's store os.replace()s it raises PermissionError
+    # (a sharing violation for a few ms; the server side retries the same way, store.REPLACE_TRIES).
+    for attempt in range(40):
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
+    raise AssertionError("unreachable")
 
 
 def setup_code(tmp: Any) -> Optional[str]:

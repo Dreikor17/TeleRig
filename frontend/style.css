@@ -556,11 +556,15 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 
 /* ===== session UI (§4.5): ON-AIR chip, STOP FAB, overlays, toasts, inline confirm ===== */
 /* ON-AIR chip (top bar): whoever owns TX; STOP is one tap for the owner, two taps for others */
-/* The chip never wraps the top bar: its flex basis is 0 (so it always fits the row) and it grows up to
-   its own content width; when the row is short, the text (ON AIR · <owner> · m:ss) is cut with an
-   ellipsis while the dot and the STOP pill keep their size. */
+/* Desktop (>= 900 px): the chip keeps its full width ("ON AIR · <owner> · m:ss" + STOP) and the top bar
+   wraps instead (two-row layout below). It never leaves the brand's row: at most the bar minus the brand
+   (<= ~250 px), so arming STOP (which widens it) can't push the chip to another row and move STOP away
+   from the second tap. Only past that cap (a very long owner while armed, near 900 px) is the text cut
+   with an ellipsis. Inside the chip only the text shrinks; the STOP pill keeps its width but is capped
+   at the chip's own width (its label ellipsized), so STOP never extends past the chip at any width.
+   Phones (< 900 px) keep the chip on the single top row instead: see the max-width:899px block. */
 .onair{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border-radius:999px;
-  flex:1 1 0;min-width:0;max-width:max-content;
+  flex:0 1 auto;min-width:0;max-width:calc(100% - 264px);
   background:var(--danger-tint);border:1px solid var(--danger);color:var(--danger-hi);font-size:12px;white-space:nowrap}
 .onair-txt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .onair b{letter-spacing:.08em}
@@ -568,9 +572,10 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 .onair-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex:0 0 auto;animation:trpulse 1.6s ease-in-out infinite}
 @keyframes trpulse{50%{opacity:.3}}
 .onair-stop{display:inline-flex;align-items:center;gap:4px;margin-left:4px;border:1px solid var(--danger);background:transparent;color:var(--danger-hi);
-  border-radius:999px;padding:3px 9px;font:700 11px/1 var(--font-ui);letter-spacing:.04em;cursor:pointer;flex:0 0 auto}
-.onair-stop span{min-width:0;overflow:hidden;text-overflow:ellipsis}
-.onair-stop svg.i{width:13px;height:13px}
+  border-radius:999px;padding:3px 9px;font:700 11px/1 var(--font-ui);letter-spacing:.04em;cursor:pointer;
+  flex:0 0 auto;min-width:0;max-width:calc(100% - 18px)}   /* the chip minus the dot, gap and margin */
+.onair-stop span{min-width:0;max-width:40ch;overflow:hidden;text-overflow:ellipsis}   /* "Tap again to stop <long call…" */
+.onair-stop svg.i{width:13px;height:13px;flex:0 0 auto}
 .onair-stop:hover,.onair-stop.armed{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff}
 /* STOP floating button: the owner's STOP when PTT is scrolled off / parked / collapsed */
 .tx-fab{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:150;display:inline-flex;align-items:center;gap:8px;
@@ -624,17 +629,24 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 }
 
 /* ===== responsive / touch ===== */
+/* Two-row top bar: brand, ON-AIR, LED, label and the actions on top (the markup order, as in the one-row
+   bar); the connection form gets the second row. Used below 1440 px (one row needs ~1340 px with the
+   connection form open) and, while the ON-AIR chip shows, up to 1799 px (one row then needs another
+   ~250-370 px). The chip comes right after the brand, so the first tap on its two-tap STOP (which widens
+   the pill to "Tap again to stop <owner>") never moves STOP: only the items after it can re-wrap. */
 @media (max-width:1439px){
-  /* two rows: brand, LED, ON-AIR, actions on top; the connection form gets the second row
-     (one row needs ~1340 px with the connection form open) */
   .conn{display:contents}
-  .tb-brand{order:0}
-  #led{order:1}
-  .connlabel{order:2;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .onair{order:3}
-  .conn-toggle{order:4}
-  .tb-actions{order:5}
+  .connlabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .conn-controls{order:10;flex:1 1 100%;justify-content:flex-end}
+  /* while ON AIR shows, the connection label (the LED keeps the state) yields its width before the
+     actions have to wrap to a third row */
+  .topbar:has(#onAir:not([hidden])) .connlabel{flex:1 1 0;max-width:max-content}
+}
+@media (min-width:1440px) and (max-width:1799px){
+  .topbar:has(#onAir:not([hidden])) .conn{display:contents}
+  .topbar:has(#onAir:not([hidden])) .connlabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    flex:1 1 0;max-width:max-content}
+  .topbar:has(#onAir:not([hidden])) .conn-controls{order:10;flex:1 1 100%;justify-content:flex-end}
 }
 @media (max-width:899px){
   /* phone top row: brand icon, LED, ON-AIR, connection toggle, user; the rest moves to the menu */
@@ -644,16 +656,22 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .phone-only{display:flex}
   .tb-btn.user{width:34px;padding:0}
   .tb-btn.user .user-name,.tb-btn.user .badge{display:none}
-  .connlabel{flex:1 1 auto}
+  .tb-brand{order:0}
+  #led{order:1}
+  .connlabel{order:2;flex:1 1 auto}
+  .onair{order:3}
+  .conn-toggle{order:4}
+  .tb-actions{order:5}
   .conn-controls{justify-content:flex-start}
-  /* while ON AIR shows, the connection label becomes an invisible spacer AFTER the chip (same order,
-     later in the DOM), so the connection toggle and the user button stay pinned at the right edge;
-     the chip's large grow factor gives it the free space first (up to its content width) */
-  .topbar:has(#onAir:not([hidden])) .connlabel{order:3;visibility:hidden;flex:1 1 0;min-width:0;padding:0}
-  .onair{flex-grow:1000;gap:4px;padding:3px 3px 3px 8px;font-size:11px}
+  /* The chip never wraps the phone row: its flex basis is 0 (so it always fits) and it grows up to its
+     own content width; when the row is short its text is cut with an ellipsis first, then the STOP
+     label (e.g. "Tap again to stop VE3AB…"). While it shows, the connection label becomes an invisible
+     spacer AFTER the chip (same order, later in the DOM), so the connection toggle and the user button
+     stay pinned at the right edge; the chip's large grow factor gives it the free space first. */
+  .topbar:has(#onAir:not([hidden])) .connlabel{order:3;visibility:hidden;flex:1 1 0;min-width:0;max-width:none;padding:0}
+  .onair{flex:1000 1 0;max-width:max-content;gap:4px;padding:3px 3px 3px 8px;font-size:11px}
   .onair-stop{margin-left:2px;padding:3px 8px}
   .onair-stop svg.i{display:none}
-  .onair-stop span{max-width:22ch}             /* "Tap again to stop <long call…" stays on the row */
   .toprow{flex-wrap:wrap}
   .toprow .bands{flex:1 1 100%}
   .ptt-big{flex:1 1 40%}

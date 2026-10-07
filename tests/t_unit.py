@@ -5,6 +5,7 @@ TX command ever reaches anything.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -243,6 +244,46 @@ def tx_burst_send_repeated_interlock(ctx):
     dt = time.monotonic() - t0
     eq((len(conn.sent), c.calls), (50, 0))
     check(dt >= 49 / 250 - 0.01, f"50 frames at 250/s took {dt:.3f}s")
+
+
+@test("unit")
+def read_auth_rides_out_a_sharing_violation(ctx):
+    """harness.read_auth retries a Windows PermissionError (the server's store replacing auth.json at that
+    moment) for a bounded time, then re-raises; other errors are not retried."""
+    d = Path(ctx.tmp("auth"))
+    (d / "auth.json").write_text(json.dumps({"meta": {"setup_code": "ABCD-EFGH-JKLM"}}), encoding="utf-8")
+    real = Path.read_text
+    fails = {"n": 0, "left": 0, "exc": PermissionError}
+
+    def flaky(self, *a, **kw):
+        if self.name == "auth.json" and fails["left"]:
+            fails["left"] -= 1
+            fails["n"] += 1
+            raise fails["exc"](13, "sharing violation")
+        return real(self, *a, **kw)
+    Path.read_text = flaky
+    try:
+        fails["left"] = 3
+        eq(harness.setup_code(d), "ABCD-EFGH-JKLM", "after 3 sharing violations")
+        eq(fails["n"], 3)
+        fails.update(n=0, left=1000)                       # never clears: bounded, then re-raised
+        try:
+            harness.read_auth(d)
+        except PermissionError:
+            pass
+        else:
+            raise harness.TestFailure("a persistent PermissionError was swallowed")
+        eq(fails["n"], 40, "read attempts before giving up")
+        fails.update(n=0, left=1, exc=FileNotFoundError)    # anything else is not retried
+        try:
+            harness.read_auth(d)
+        except FileNotFoundError:
+            pass
+        else:
+            raise harness.TestFailure("FileNotFoundError was retried / swallowed")
+        eq(fails["n"], 1)
+    finally:
+        Path.read_text = real
 
 
 # -- the close-code accessor (pinned against a stub websockets server, not TeleRig) ------------
