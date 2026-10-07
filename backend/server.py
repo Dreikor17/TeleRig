@@ -227,9 +227,9 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 
 
 # -- HTTP routes -------------------------------------------------------------
-# One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15). Later steps
-# append layout.js, account.js and admin.js here when they add those files.
-ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "app.js", "cwtool.js")
+# One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15). B4 appends
+# account.js and admin.js here when it adds those files.
+ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js")
 
 
 def _asset_version():
@@ -324,7 +324,8 @@ def _boot_json(p, request) -> str:
             "status": status_for(p), "migrated_remote": p.migrated_remote,
             "radios": [{"id": pid, "name": pr.name,
                         "tile_caps": {"ptt": bool(pr.capabilities.ptt),
-                                      "meters": not (pr.capabilities.meters == [])}}
+                                      "meters": not (pr.capabilities.meters == []),
+                                      "dual_watch": bool(pr.capabilities.dual_watch)}}
                        for pid, pr in profiles.PROFILES.items()],
             "notices": notices_for(p, port)}
     payload = json.dumps(boot, separators=(",", ":"))

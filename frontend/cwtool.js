@@ -34,19 +34,44 @@
   const panel = $("cwTool"), btn = $("cwToolBtn"), head = $("cwHead");
   if (!panel || !btn) return;
   let open = false;
+  // Tile mode (§3.18): the panel lives in the CW tile. Its visibility belongs to RadioLayout; `open`
+  // only means "the decoder runs". Outside a tile it is the old floating panel.
+  const inTile = !!panel.closest(".grid-stack-item, #tileParking");
+  const Lay = () => window.RadioLayout || null;
 
   // ---- show / hide ----
   function setOpen(v) {
-    open = v;
-    panel.hidden = !v;
-    btn.classList.toggle("active", v);
-    if (v) startDecoder(); else stopDecoder();
+    open = !!v;
+    if (inTile) panel.hidden = false; else panel.hidden = !open;
+    btn.classList.toggle("active", open);
+    const db = $("cwDecodeBtn");
+    if (db) db.setAttribute("aria-pressed", open ? "true" : "false");
+    if (open) startDecoder(); else stopDecoder();
   }
-  btn.addEventListener("click", () => setOpen(!open));
-  $("cwClose").addEventListener("click", () => setOpen(false));
+  // the scope's CW button: a hidden (or collapsed) CW tile is shown first (persisted, make-room),
+  // then the decoder starts; when the tile is already showing it toggles the decoder
+  btn.addEventListener("click", () => {
+    const L = Lay();
+    if (inTile && L && typeof L.visible === "function" && !L.visible("cw")) {
+      if (L.showTile("cw") !== false) setOpen(true);
+      return;
+    }
+    setOpen(!open);
+  });
+  if ($("cwDecodeBtn")) $("cwDecodeBtn").addEventListener("click", () => setOpen(!open));
+  $("cwClose").addEventListener("click", () => {
+    setOpen(false);
+    const L = Lay();
+    if (inTile && L && typeof L.hideTile === "function") L.hideTile("cw");   // persisted, gives the columns back
+  });
+  // the tile left the grid or was collapsed: stop the decoder
+  document.addEventListener("tr:tile", (e) => {
+    const d = e.detail || {};
+    if (d.id === "cw" && (d.visible === false || d.collapsed === true) && open) setOpen(false);
+  });
 
-  // ---- drag the panel by its header ----
-  (function () {
+  // ---- drag the panel by its header (floating mode only) ----
+  if (!inTile) (function () {
     let down = false, sx = 0, sy = 0, baseL = 0, baseT = 0;
     const prect = () => (panel.offsetParent || panel.parentElement).getBoundingClientRect();
     head.addEventListener("pointerdown", (e) => {
@@ -73,8 +98,8 @@
     head.addEventListener("lostpointercapture", end);
   })();
 
-  // ---- resize the panel by dragging any edge / corner ----
-  (function () {
+  // ---- resize the panel by dragging any edge / corner (floating mode only) ----
+  if (!inTile) (function () {
     const MINW = 240, MINH = 160;
     const prect = () => (panel.offsetParent || panel.parentElement).getBoundingClientRect();
     for (const dir of ["n", "s", "e", "w", "ne", "nw", "se", "sw"]) {
@@ -446,6 +471,6 @@
     }
     return { peak: +lastPeak.toFixed(4), pendingLen, sec: +(pendingLen / SR).toFixed(2),
              domHz: domF, inBand: domF >= 400 && domF <= 1200,
-             pending: pendingText, committed: committed.slice(-48), ready: workerReady };
+             pending: pendingText, committed: messages.map((m) => m.text).join(" ").slice(-48), ready: workerReady };
   };
 })();

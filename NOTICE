@@ -27,5 +27,11 @@ Bundled / third-party components
     Feather, Copyright (c) 2013-present Cole Bemis, licensed MIT (frontend/vendor/lucide/LICENSE).
     tools/build_icons.py turns the vendored SVGs into the inline sprites the pages carry.
 
+- GridStack.js  -  frontend/vendor/gridstack/  (14.0.0)
+    The panel grid (drag / resize / arrange) of the main page, vendored byte-for-byte
+    from the gridstack@14.0.0 npm package (dist/gridstack-all.js, its LICENSE.txt banner
+    and dist/gridstack.min.css).
+    Copyright (c) 2019-2025 Alain Dumesny.  Licensed MIT (frontend/vendor/gridstack/LICENSE).
+
 The Icom CI-V / RS-BA1 LAN and Yaesu CAT implementations are clean-room work informed
 by public open-source projects (wfview, kappanhang, Hamlib); no code was copied.

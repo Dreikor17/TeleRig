@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TeleRig</title>
 <script>try{var t=localStorage.getItem("telerig.theme");if(t===null)t=localStorage.getItem("radiowebop.theme");if(t==="day")document.documentElement.classList.add("day")}catch(e){}</script>
+<link rel="stylesheet" href="/static/vendor/gridstack/gridstack.min.css?v=14.0.0" />
 <link rel="stylesheet" href="/static/style.css" />
 <!--TR_BOOT-->
 </head>
@@ -45,8 +46,8 @@
     </div>
   </div>
   <nav class="tb-actions" aria-label="App">
-    <!-- #arrangeBtn / #adminBtn (and their menu twins) stay hidden until B3 (arrange) / B4 (admin) bind them -->
-    <button id="arrangeBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Arrange panels" aria-label="Arrange panels" hidden><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg></button>
+    <!-- #adminBtn (and its menu twin) stays hidden until B4 (admin) binds it -->
+    <button id="arrangeBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Arrange panels" aria-label="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg></button>
     <button id="themeBtn" class="tb-btn desk-only" type="button" title="Day / night theme" aria-label="Day / night theme"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
     <a id="sourceLink" class="tb-btn desk-only" href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener" title="Source code (AGPL-3.0)" aria-label="Source code (AGPL-3.0)"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></a>
     <button id="adminBtn" class="tb-btn desk-only" type="button" data-perm="admin" title="Administration" aria-label="Administration" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg></button>
@@ -55,7 +56,7 @@
         <svg class="i" aria-hidden="true"><use href="#i-user"/></svg><span id="userName" class="user-name"></span><span id="userRole" class="badge"></span></button>
       <div id="userMenu" class="menu" role="menu" aria-labelledby="userBtn" hidden>
         <div class="um-head"><b id="umUser"></b> <span id="umRole" class="badge"></span></div>
-        <button role="menuitem" type="button" id="umArrange" class="phone-only" hidden><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
+        <button role="menuitem" type="button" id="umArrange" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
         <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Day / night theme</span></button>
         <button role="menuitem" type="button" id="umAdmin" class="phone-only" data-perm="admin" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Administration</button>
         <button role="menuitem" type="button" id="umChangePw" hidden><svg class="i" aria-hidden="true"><use href="#i-key-round"/></svg>Change password…</button>
@@ -81,55 +82,107 @@
   </div>
 </div>
 
-<main class="radio">
-  <!-- ===================== RIGHT: VFO readout + meter + waterfall ===================== -->
-  <section class="scopepane">
-    <div class="toprow">
-    <div class="bands tft" id="bands" data-gate="operate">
-      <div class="bandrow active" data-act="select_band" data-band="main" id="rowMain" title="Operate the MAIN band">
-        <div class="b-modebox">
-          <b class="band-mode" id="mainMode">USB</b>
-          <i class="band-fil" id="mainFil">FIL1</i>
-        </div>
-        <div class="b-center">
-          <div class="ind-strip" id="mainInd"></div>
-          <div class="band-freq" id="mainFreq">—</div>
-        </div>
-        <div class="b-side">
-          <span class="tx" id="txTag">RX</span>
-          <span class="b-vfo" id="mainVfo">VFO A</span>
-          <span class="b-band"><b class="band-tag">MAIN</b><i id="mainBand"></i></span>
-        </div>
-      </div>
-      <div class="bandrow" data-act="select_band" data-band="sub" id="rowSub" title="Operate the SUB band">
-        <div class="b-modebox">
-          <b class="band-mode" id="subMode">FM</b>
-          <i class="band-fil" id="subFil">FIL1</i>
-        </div>
-        <div class="b-center">
-          <div class="ind-strip" id="subInd"></div>
-          <div class="band-freq" id="subFreq">—</div>
-        </div>
-        <div class="b-side">
-          <span class="b-vfo" id="subVfo">VFO A</span>
-          <span class="b-band"><b class="band-tag">SUB</b><i id="subBand"></i></span>
-        </div>
-      </div>
-    </div>
+<!-- The panel grid (§3.4). #grid holds tiles ONLY (S8); layout.js builds it before app.js measures. -->
+<div id="gridWrap" class="grid-wrap"><div id="grid" class="grid-stack tr-grid"></div></div>
 
+<!-- The seven panels (§3.1-§3.3). They start here, OUTSIDE #grid; layout.js moves them into the grid
+     with appendChild only, so every id, listener and canvas bitmap survives. Never clone them.
+     Header buttons are <button>s, so they never start a drag. -->
+<div id="tileParking" hidden aria-hidden="true">
+
+<div class="grid-stack-item" gs-id="vfo" data-tile="vfo">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-vfo">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-radio"/></svg>
+      <h2 class="tile-title" id="th-vfo">VFO</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move VFO up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move VFO down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse VFO" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove VFO panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-vfo" data-gate="operate"><div class="tile-fit">
+      <div class="bands tft" id="bands" data-gate="operate">
+        <div class="bandrow active" data-act="select_band" data-band="main" id="rowMain" title="Operate the MAIN band">
+          <div class="b-modebox">
+            <b class="band-mode" id="mainMode">USB</b>
+            <i class="band-fil" id="mainFil">FIL1</i>
+          </div>
+          <div class="b-center">
+            <div class="ind-strip" id="mainInd"></div>
+            <div class="band-freq" id="mainFreq">—</div>
+          </div>
+          <div class="b-side">
+            <span class="tx" id="txTag">RX</span>
+            <span class="b-vfo" id="mainVfo">VFO A</span>
+            <span class="b-band"><b class="band-tag">MAIN</b><i id="mainBand"></i></span>
+          </div>
+        </div>
+        <div class="bandrow" data-act="select_band" data-band="sub" id="rowSub" title="Operate the SUB band">
+          <div class="b-modebox">
+            <b class="band-mode" id="subMode">FM</b>
+            <i class="band-fil" id="subFil">FIL1</i>
+          </div>
+          <div class="b-center">
+            <div class="ind-strip" id="subInd"></div>
+            <div class="band-freq" id="subFreq">—</div>
+          </div>
+          <div class="b-side">
+            <span class="b-vfo" id="subVfo">VFO A</span>
+            <span class="b-band"><b class="band-tag">SUB</b><i id="subBand"></i></span>
+          </div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+</div>
+
+<div class="grid-stack-item" gs-id="ptt" data-tile="ptt">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-ptt">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-mic"/></svg>
+      <h2 class="tile-title" id="th-ptt">TRANSMIT</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move Transmit up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Transmit down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Transmit" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Transmit panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-ptt"><div class="tile-fit">
       <button class="key ptt ptt-big" id="pttBtn" data-act="ptt" data-tx aria-pressed="false">PTT</button>
-
       <!-- ATAS manual antenna tuning — shown only when TUNER SELECT = ATAS. Steps the
-           motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter. -->
+           motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter.
+           A fixed row of the PTT tile: showing it never resizes a desktop tile (G-15). -->
       <div class="atas-tune" id="atasTune" hidden data-tx>
         <span class="atas-lbl" title="Active-Tuning Antenna System (ATAS-120A) manual tuning">ATAS</span>
         <button class="key atas-btn" data-act="atas_step" data-dir="1" title="Extend the ATAS element — hold PTT and step to minimum SWR">&#9650;</button>
         <button class="key atas-btn" data-act="atas_step" data-dir="-1" title="Retract the ATAS element — hold PTT and step to minimum SWR">&#9660;</button>
         <span class="atas-hint" id="atasHint">key PTT · watch SWR</span>
       </div>
+    </div></div>
+  </section>
+</div>
 
+<div class="grid-stack-item" gs-id="audio" data-tile="audio">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-audio">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-volume-2"/></svg>
+      <h2 class="tile-title" id="th-audio">AUDIO</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <span class="lan-only" id="audioAvail"></span>
+        <button type="button" class="tile-btn tile-up" aria-label="Move Audio up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Audio down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Audio" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Audio panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-audio"><div class="tile-fit">
       <div class="grp audio-grp">
-        <div class="grp-title">AUDIO <span class="lan-only" id="audioAvail"></span></div>
         <div class="row">
           <button class="key" id="audioBtn" type="button"><svg class="i" aria-hidden="true"><use href="#i-volume-2"/></svg><span>RX</span></button>
           <button class="key ptt" id="micBtn" type="button" data-tx><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span>Mic</span></button>
@@ -141,92 +194,106 @@
         <div class="mic-meter" id="micMeter" data-tx><span>MIC</span><div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div></div>
         <label class="sl"><span>VOL</span><input type="range" min="0" max="100" id="vol" value="80"></label>
       </div>
-    </div><!-- /toprow -->
-
-    <div class="meter">
-      <div class="meter-scale">
-        <span>S1</span><span>3</span><span>5</span><span>7</span><span>9</span>
-        <span>+20</span><span>+40</span><span>+60</span>
-      </div>
-      <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
-      <div class="meter-val" id="meterVal">S0</div>
-      <div class="meter-sel" id="meterSel" data-gate="operate">
-        <button class="m-btn active" data-act="meter" data-meter="S">S</button>
-        <button class="m-btn" data-act="meter" data-meter="PO">PO</button>
-        <button class="m-btn" data-act="meter" data-meter="SWR">SWR</button>
-        <button class="m-btn" data-act="meter" data-meter="ALC">ALC</button>
-        <button class="m-btn" data-act="meter" data-meter="COMP">COMP</button>
-        <button class="m-btn" data-act="meter" data-meter="Vd">Vd</button>
-        <button class="m-btn" data-act="meter" data-meter="Id">Id</button>
-      </div>
-    </div>
-
-    <div class="scope" id="scopeWrap">
-      <canvas id="spectrum"></canvas>
-      <div class="scope-split" id="scopeSplit" title="Drag to resize spectrum / waterfall"></div>
-      <canvas id="waterfall"></canvas>
-      <canvas id="overlay" class="overlay-canvas"></canvas>
-      <div id="hoverFreq" class="hover-freq" hidden></div>
-      <div class="scope-labels">
-        <span id="lblLeft" class="lbl-left"></span>
-        <span id="lblRight" class="lbl-right"></span>
-      </div>
-      <div class="no-scope" id="noScope" hidden>No band scope over CAT — turn on RX audio for an audio spectrum, or just use frequency &amp; mode control</div>
-      <div class="af-badge" id="afBadge" hidden><svg class="i" aria-hidden="true"><use href="#i-audio-waveform"/></svg> audio spectrum (RX passband)</div>
-      <div class="scope-tunehint" id="scopeTuneHint">click or drag the waterfall to tune</div>
-    </div>
-
-    <div class="scope-ctl">
-      <span id="scopeOnlyCtl" data-gate="operate">
-        <button data-act="scope_mode" data-center="1" class="sc-btn active" id="btnCenter">CENT</button>
-        <button data-act="scope_mode" data-center="0" class="sc-btn" id="btnFixed">FIX</button>
-        <span class="sep"></span>
-        <button class="sc-btn" id="spanDn">SPAN &minus;</button>
-        <span class="span-val" id="spanVal">±25k</span>
-        <button class="sc-btn" id="spanUp">SPAN +</button>
-        <span class="sep"></span>
-      </span>
-      <button class="sc-btn" id="bandPlanBtn" title="Overlay the ARRL band plan (VHF/UHF) or FCC license-class sub-bands (HF)">BAND PLAN</button>
-      <button class="sc-btn" id="cwToolBtn" title="CW decoder / coder — pops up over the waterfall">CW</button>
-      <span class="bandlegend" id="bandLegend" hidden></span>
-      <span class="sep"></span>
-      <span class="hint" id="scopeHint">Click a freq digit to tune (scroll it too) · tap / drag the waterfall</span>
-    </div>
-
-    <!-- overlay tool: CW decoder / coder -->
-    <div class="tool-panel" id="cwTool" hidden>
-      <div class="tp-head" id="cwHead">
-        <span class="tp-title">CW</span>
-        <span class="tp-meta cw-status" id="cwStatus">neural</span>
-        <button class="tp-close" id="cwClose" title="Close">&#10005;</button>
-      </div>
-      <div class="tp-body">
-        <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
-        <div class="cw-row">
-          <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
-          <button class="key sm" id="cwClear">Clear</button>
-        </div>
-        <div class="cw-row">
-          <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
-          <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
-          <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
-        </div>
-        <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
-          <span class="cw-txhint" id="cwTxHint"></span>
-        </div>
-        <div class="cw-row">
-          <span class="cw-lbl">WPM</span>
-          <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" title="CW speed (words per minute)">
-          <span class="cw-lbl">Tone</span>
-          <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" title="Sidetone pitch">
-        </div>
-        <div class="cw-credit">neural decode: <a href="https://github.com/e04/deepcw-engine" target="_blank" rel="noopener">DeepCW</a> (AGPL-3.0) ·
-          <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">source</a></div>
-      </div>
-    </div>
+    </div></div>
   </section>
+</div>
 
-  <!-- ===================== LEFT: tabbed controls ===================== -->
+<div class="grid-stack-item" gs-id="meter" data-tile="meter">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-meter">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-gauge"/></svg>
+      <h2 class="tile-title" id="th-meter">METER</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move Meter up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Meter down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Meter" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Meter panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-meter"><div class="tile-fit">
+      <div class="meter" id="meterBlock">
+        <div class="meter-scale">
+          <span>S1</span><span>3</span><span>5</span><span>7</span><span>9</span>
+          <span>+20</span><span>+40</span><span>+60</span>
+        </div>
+        <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
+        <div class="meter-val" id="meterVal">S0</div>
+        <div class="meter-sel" id="meterSel" data-gate="operate">
+          <button class="m-btn active" data-act="meter" data-meter="S">S</button>
+          <button class="m-btn" data-act="meter" data-meter="PO">PO</button>
+          <button class="m-btn" data-act="meter" data-meter="SWR">SWR</button>
+          <button class="m-btn" data-act="meter" data-meter="ALC">ALC</button>
+          <button class="m-btn" data-act="meter" data-meter="COMP">COMP</button>
+          <button class="m-btn" data-act="meter" data-meter="Vd">Vd</button>
+          <button class="m-btn" data-act="meter" data-meter="Id">Id</button>
+        </div>
+      </div>
+    </div></div>
+  </section>
+</div>
+
+<div class="grid-stack-item" gs-id="scope" data-tile="scope">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-scope">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-audio-waveform"/></svg>
+      <h2 class="tile-title" id="th-scope">SCOPE</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move Scope up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Scope down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Scope" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Scope panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-scope"><div class="tile-fit">
+      <div class="scope" id="scopeWrap">
+        <canvas id="spectrum"></canvas>
+        <div class="scope-split" id="scopeSplit" title="Drag to resize spectrum / waterfall"></div>
+        <canvas id="waterfall"></canvas>
+        <canvas id="overlay" class="overlay-canvas"></canvas>
+        <div class="scope-labels">
+          <span id="lblLeft" class="lbl-left"></span>
+          <span id="lblRight" class="lbl-right"></span>
+        </div>
+        <div class="no-scope" id="noScope" hidden>No band scope over CAT — turn on RX audio for an audio spectrum, or just use frequency &amp; mode control</div>
+        <div class="af-badge" id="afBadge" hidden><svg class="i" aria-hidden="true"><use href="#i-audio-waveform"/></svg> audio spectrum (RX passband)</div>
+        <div class="scope-tunehint" id="scopeTuneHint">click or drag the waterfall to tune</div>
+      </div>
+      <div class="scope-ctl">
+        <span id="scopeOnlyCtl" data-gate="operate">
+          <button data-act="scope_mode" data-center="1" class="sc-btn active" id="btnCenter">CENT</button>
+          <button data-act="scope_mode" data-center="0" class="sc-btn" id="btnFixed">FIX</button>
+          <span class="sep"></span>
+          <button class="sc-btn" id="spanDn">SPAN &minus;</button>
+          <span class="span-val" id="spanVal">±25k</span>
+          <button class="sc-btn" id="spanUp">SPAN +</button>
+          <span class="sep"></span>
+        </span>
+        <button class="sc-btn" id="bandPlanBtn" title="Overlay the ARRL band plan (VHF/UHF) or FCC license-class sub-bands (HF)">BAND PLAN</button>
+        <button class="sc-btn" id="cwToolBtn" title="Open the CW panel (decoder / keyer)">CW</button>
+        <span class="bandlegend" id="bandLegend" hidden></span>
+        <span class="sep"></span>
+        <span class="hint" id="scopeHint">Click a freq digit to tune (scroll it too) · tap / drag the waterfall</span>
+      </div>
+    </div></div>
+  </section>
+</div>
+
+<div class="grid-stack-item" gs-id="controls" data-tile="controls">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-controls">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-sliders-horizontal"/></svg>
+      <h2 class="tile-title" id="th-controls">CONTROLS</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move Controls up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Controls down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Controls" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Controls panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-controls" data-gate="operate"><div class="tile-fit">
   <section class="controls" data-gate="operate">
     <div class="tabs" id="ctlTabs">
       <div class="tab on" data-t="radio">Radio</div>
@@ -464,38 +531,104 @@
     </div>
     <div class="grp">
       <div class="grp-title">SCOPE TOOLS</div>
-      <div class="setup-note">Over the waterfall: <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands, and <b>CW</b> opens the decoder / keyer. Both live on the scope toolbar.</div>
+      <div class="setup-note">On the scope toolbar: <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands, and <b>CW</b> opens the CW panel (decoder / keyer).</div>
     </div>
     <div id="menuRoot" class="menu-root" hidden></div>
     </div><!-- /setup -->
 
     </div><!-- /sbody -->
   </section>
-</main>
+    </div></div>
+  </section>
+</div>
+
+<div class="grid-stack-item" gs-id="cw" data-tile="cw">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-cw">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-keyboard"/></svg>
+      <h2 class="tile-title" id="th-cw">CW</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <span class="tp-meta cw-status" id="cwStatus">neural</span>
+        <button type="button" class="tile-btn tile-txt" id="cwDecodeBtn" aria-pressed="false" title="Decoder on/off">DEC</button>
+        <button type="button" class="tile-btn cw-close" id="cwClose" aria-label="Close the CW panel" title="Close the CW panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+        <button type="button" class="tile-btn tile-up" aria-label="Move CW up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move CW down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse CW" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove CW panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <div class="tile-body tile-cw"><div class="tile-fit">
+      <!-- CW decoder / coder. Its visibility belongs to RadioLayout (no hidden attribute, AR-27). -->
+      <div class="tool-panel" id="cwTool">
+        <div class="tp-head" id="cwHead">
+          <span class="tp-title">CW</span>
+        </div>
+        <div class="tp-body">
+          <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
+          <div class="cw-row">
+            <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
+            <button class="key sm" id="cwClear">Clear</button>
+          </div>
+          <div class="cw-row">
+            <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
+            <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
+            <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
+          </div>
+          <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
+            <span class="cw-txhint" id="cwTxHint"></span>
+          </div>
+          <div class="cw-row">
+            <span class="cw-lbl">WPM</span>
+            <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" title="CW speed (words per minute)">
+            <span class="cw-lbl">Tone</span>
+            <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" title="Sidetone pitch">
+          </div>
+          <div class="cw-credit">neural decode: <a href="https://github.com/e04/deepcw-engine" target="_blank" rel="noopener">DeepCW</a> (AGPL-3.0) ·
+            <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">source</a></div>
+        </div>
+      </div>
+    </div></div>
+  </section>
+</div>
+
+</div><!-- /tileParking -->
+
+<!-- Arrange mode (§3.10): a fixed toolbar at the bottom; never inside the grid -->
+<div id="arrangeBar" class="arrange-bar" role="toolbar" aria-label="Arrange panels" hidden>
+  <div class="ab-left">
+    <b class="ab-title">ARRANGING · <span id="arrangeDev">DESKTOP</span></b>
+    <span id="arrangeHelp" class="ab-help">Drag headers to move · drag edges to resize · arrow keys move · Shift+arrows resize · Esc when done</span>
+  </div>
+  <div class="ab-right" id="arrangeActions">
+    <button type="button" id="arrangeAdd" class="ab-btn ab-add" aria-haspopup="dialog" aria-expanded="false" aria-controls="addPanel"><svg class="i" aria-hidden="true"><use href="#i-plus"/></svg>Add panel</button>
+    <button type="button" id="arrangeReset" class="ab-btn ab-ghost"><svg class="i" aria-hidden="true"><use href="#i-rotate-ccw"/></svg>Reset</button>
+    <button type="button" id="arrangeDone" class="ab-btn ab-done"><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Done</button>
+  </div>
+  <div class="ab-right ab-confirm" id="arrangeConfirm" hidden>
+    <span id="arrangeConfirmMsg">Reset the desktop layout to default?</span>
+    <button type="button" id="arrangeResetYes" class="ab-btn ab-danger">Reset</button>
+    <button type="button" id="arrangeResetNo" class="ab-btn ab-ghost">Cancel</button>
+  </div>
+</div>
+<div id="addPanel" class="add-panel" role="dialog" aria-label="Add panel" hidden>
+  <div class="ap-head"><span class="ap-title">ADD PANEL</span>
+    <button type="button" class="tile-btn" id="addPanelClose" aria-label="Close" title="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></div>
+  <div class="ap-grid" id="addPanelGrid"></div>
+</div>
 
 <div id="bandTip" class="band-tip" hidden></div>
+<div id="hoverFreq" class="hover-freq" hidden></div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <div id="srLive" class="sr-only" aria-live="assertive"></div>
 <button id="txStopFab" class="tx-fab" type="button" hidden data-tx><svg class="i" aria-hidden="true"><use href="#i-octagon-x"/></svg>STOP · <span id="txStopFabTime"></span></button>
 
+<script src="/static/vendor/gridstack/gridstack-all.js?v=14.0.0"></script>
 <script src="/static/tr.js"></script>
 <script src="/static/waterfall.js"></script>
 <script src="/static/bandplan.js"></script>
+<script src="/static/layout.js"></script>
 <script src="/static/app.js"></script>
 <script src="/static/cwtool.js"></script>
-<script>
-/* tabbed control panels — show one panel at a time (additive; does not touch app.js) */
-(function () {
-  var tabs = document.querySelectorAll(".controls .tab");
-  tabs.forEach(function (t) {
-    t.addEventListener("click", function () {
-      tabs.forEach(function (x) { x.classList.toggle("on", x === t); });
-      document.querySelectorAll(".controls .panel").forEach(function (p) {
-        p.classList.toggle("hide", p.getAttribute("data-p") !== t.getAttribute("data-t"));
-      });
-    });
-  });
-})();
-</script>
 </body>
 </html>

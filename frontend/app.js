@@ -106,6 +106,7 @@
       if (micOn) send({ action: "mic", on: true });
     }
     applyStatusUi();
+    try { Layout().applyGates && Layout().applyGates(); } catch (_) {}   // the role may gate the PTT tile (§3.8)
   }
 
   // ---- TX: server-derived ownership (G-1, AR-8), claim seq + heartbeats (§2.13, AR-46) ----
@@ -358,6 +359,20 @@
     state.meter = m.meter; state.meter_val = m.meter_val;
     state.smeter = m.smeter; state.smeter_s = m.smeter_s;
     renderMeter();
+    layoutSummaries();
+  }
+  // collapsed tiles show a one-line summary in their header (§3.11); layout.js only touches collapsed ones
+  function layoutSummaries() { try { const L = Layout(); if (L.summaries) L.summaries(); } catch (_) {} }
+  // VFO tile cues (§4.2): the operating VFO / split colour the tile border; .dual sizes the digits
+  function setBandsCues(s) {
+    const b = $("bands");
+    if (!b) return;
+    const dual = $("rowSub") ? $("rowSub").style.display !== "none" : false;
+    b.classList.toggle("dual", dual);
+    if (s) {
+      b.classList.toggle("sub-active", dual && s.active_band === "sub");
+      b.classList.toggle("split", (s.split || 0) > 0);
+    }
   }
   function updateState(s) {
     const justConnected = !state.connected && s.connected;
@@ -378,6 +393,7 @@
     if (connChanged) refreshStatus();
     // dual-watch band readout (MAIN/SUB); single-rx radios show MAIN only
     $("rowSub").style.display = s.dual_watch ? "" : "none";
+    setBandsCues(s);
     if (blanked) {                                  // radio just changed: keep VFOs zeroed until a fresh connect
       renderFreq($("mainFreq"), 0, false);
       renderFreq($("subFreq"), 0, false);
@@ -483,6 +499,7 @@
       scope.meta.filterBw = s.filter_bw;
       scope.drawOverlay();
     }
+    layoutSummaries();
   }
 
   const BAND_LABEL = { "144": "2 m", "430": "70 cm", "1200": "23 cm" };
@@ -1137,9 +1154,9 @@
 
   // ---- spectrum / waterfall split (§3.16) ----
   // The split is a FRACTION of the scope height, clamped to BOUNDS.split before it is applied or
-  // saved, per device. It is applied only where the waterfall flexes to fill a layout-sized scope;
-  // where the scope's height follows its content (phone in this layout) the fraction would feed
-  // back into the height, so there the spectrum keeps its CSS / dragged pixel height.
+  // saved, per device. It is applied where the waterfall flexes to fill a layout-sized scope (the
+  // scope tile on both devices); where the scope's height followed its content the fraction would
+  // feed back into the height, so there the spectrum keeps its CSS / dragged pixel height.
   const SPLIT_BOUNDS = (TR.boot.layout_bounds && Array.isArray(TR.boot.layout_bounds.split))
     ? TR.boot.layout_bounds.split : [0.15, 0.85];
   function clampSplit(f) {
@@ -1149,9 +1166,19 @@
   }
   function splitDevice() { return matchMedia("(min-width: 900px)").matches ? "desktop" : "phone"; }
   const splitByDev = (function () {
+    const L = Layout();                           // layout.js knows the stored (or cached) fraction
+    if (L && typeof L.scopeSplit === "function")
+      return { desktop: clampSplit(L.scopeSplit("desktop")), phone: clampSplit(L.scopeSplit("phone")) };
     const s = ((TR.boot.layout || {}).scope_split) || {};
     return { desktop: clampSplit(s.desktop), phone: clampSplit(s.phone) };
   })();
+  // reset / undo / the server's echo / a device switch hand over a new fraction (layout.js)
+  document.addEventListener("tr:split", (e) => {
+    const d = e.detail || {};
+    if (d.device !== "desktop" && d.device !== "phone") return;
+    splitByDev[d.device] = clampSplit(d.fraction);
+    if (d.device === splitDevice()) { applySplit(); scope.resize(); placeNoScope(); }
+  });
   let specSetBy = null;                           // "apply" | "drag" | null: who set the inline height
   function splitApplies() {
     const wf = $("waterfall");
@@ -1527,6 +1554,7 @@
     const cap = p.capabilities || {};
     const capHas = (k, flat) => (k in cap ? cap[k] : flat);
     const sub = $("rowSub"); if (sub) sub.style.display = capHas("dual_watch", p.dual_watch) ? "" : "none";
+    setBandsCues(state.connected ? state : null);
     const pa = $("preampBtn"); if (pa) {
       pa.style.display = capHas("preamp", p.has_preamp) ? "" : "none";
       const pl = p.preamp_labels || ["OFF", "P.AMP"];
@@ -1571,8 +1599,9 @@
     { const mb = $("micBtn"); if (mb) mb.style.display = canPtt ? "" : "none"; }
     { const mid = $("micInDev"); if (mid && mid.closest(".sl")) mid.closest(".sl").style.display = canPtt ? "" : "none"; }
     { const mm = $("micMeter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
-    // meter block: hide entirely when the rig exposes no meters over the control link (S-bar included)
-    { const mtr = document.querySelector(".scopepane .meter");
+    // meter block: hide entirely when the rig exposes no meters over the control link (S-bar included);
+    // the METER tile itself is gated by layout.js (§3.8)
+    { const mtr = $("meterBlock");
       if (mtr) mtr.style.display = (Array.isArray(cap.meters) && cap.meters.length === 0) ? "none" : ""; }
     // control-panel tabs: hide the ones the rig can't drive + the Settings tab when it has no menu
     const tabOn = { rx: capHas("tab_rx", true), tx: capHas("tab_tx", true),

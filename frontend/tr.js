@@ -8,7 +8,7 @@
  *   handleClose(code, reason, reconnect) / linkUp()       WebSocket close codes, onAuthLost, link banner
  *   myConn / tx / isTxOwner()                             this tab's connection id + the TX owner
  *   _inject(frame)                                        sim-only: feed a synthetic server frame
- *   fallbackLayout()                                      the stacked-tile fallback (B3 tiles)
+ *   fallbackLayout()                                      the stacked-tile fallback (§3.20)
  *   applyTheme(day) / icon(name)                          day/night theme (html.day); an inline-sprite <svg>
  *   menu / renderNotices(list) / noticeActions            the top-bar user menu; the notices under it
  * window.RadioLayout: a no-op stub that layout.js (B3) replaces.
@@ -509,14 +509,36 @@
   }
 
   // -- stacked-tile fallback (§3.20): the layout engine failed or never became ready ---------------
+  // Every tile, in the phone's default order, stacked in #tileParking: nothing collapsed or inert.
   TR.fallbackLayout = function () {
     const parking = $("tileParking");
     if (!parking || document.body.classList.contains("tr-nogrid")) return;
-    const grid = $("grid");
-    if (grid) grid.querySelectorAll(".grid-stack-item").forEach((el) => parking.appendChild(el));
+    const ORDER = ["vfo", "ptt", "scope", "meter", "audio", "controls", "cw"];
+    const tiles = [...document.querySelectorAll("#grid > .grid-stack-item, #tileParking > .grid-stack-item")];
+    tiles.sort((a, b) => ORDER.indexOf(a.dataset.tile) - ORDER.indexOf(b.dataset.tile));
+    for (const el of tiles) {
+      el.classList.remove("is-collapsed");
+      el.querySelectorAll(".tile-body").forEach((b) => { b.inert = false; });
+      parking.appendChild(el);
+    }
+    document.body.classList.remove("arranging");
+    const bar = $("arrangeBar");
+    if (bar) bar.hidden = true;
+    for (const id of ["arrangeBtn", "umArrange"]) { const b = $(id); if (b) b.hidden = true; }
     parking.hidden = false;
     parking.removeAttribute("aria-hidden");
     document.body.classList.add("tr-nogrid");
+    // the Controls tabs normally get their switcher from layout.js; bind a plain one if it never ran
+    const tl = $("ctlTabs");
+    if (tl && !tl.dataset.bound) {
+      tl.dataset.bound = "1";
+      const tabs = [...tl.querySelectorAll(".tab")];
+      tabs.forEach((t) => t.addEventListener("click", () => {
+        tabs.forEach((x) => x.classList.toggle("on", x === t));
+        document.querySelectorAll(".controls .panel").forEach((p) =>
+          p.classList.toggle("hide", p.getAttribute("data-p") !== t.getAttribute("data-t")));
+      }));
+    }
     TR.toast("Layout engine failed — showing basic layout", "warn");
   };
   document.addEventListener("DOMContentLoaded", () => {
@@ -538,7 +560,7 @@
     TR.renderNotices(Array.isArray(boot.notices) ? boot.notices : []);
     setTimeout(() => {
       const grid = $("grid");
-      if (!grid) return;                         // no tiled layout on this page (before B3)
+      if (!grid) return;                         // a page without the tiled layout
       const lay = window.RadioLayout;
       if (!grid.classList.contains("tr-ready") || !window.GridStack || !lay || lay._stub) TR.fallbackLayout();
     }, 2000);

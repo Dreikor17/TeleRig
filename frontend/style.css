@@ -194,19 +194,8 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .radio-help li{margin:2px 0;line-height:1.4;color:var(--txt-dim)}
 .radio-help li code{color:var(--txt);font-family:var(--font-ui);font-size:11px}
 
-/* ===== operating console (pre-tile layout; B3 replaces it with GridStack tiles) ===== */
-.radio{max-width:1180px;margin:0 auto;display:flex;flex-direction:column;gap:8px}
-.scopepane,.controls{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);
-  box-shadow:var(--shadow-card);padding:10px}
-.scopepane{position:relative}
-
-/* top header row: VFO readout | large PTT | audio */
-.toprow{display:flex;gap:10px;align-items:stretch}
-.toprow .bands{flex:1.5 1 0;min-width:0;margin:0}
-.toprow .audio-grp{flex:1 1 0;min-width:0;margin:0}
-
 /* ---- TFT band readout (instrument: dark in both themes) ---- */
-.bands{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.bands{display:flex;flex-direction:column;gap:6px;margin:0}
 .bands.tft{gap:6px}
 .bandrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:8px 10px;
   border:1px solid var(--tft-border);border-radius:var(--r-ctl);background:var(--tft-row);cursor:pointer;color:var(--tft-digit)}
@@ -227,9 +216,11 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
   background:var(--tft-pill-bg);color:var(--tft-pill-fg);border:1px solid rgba(52,211,153,.35)}
 .ind.amber{background:rgba(251,191,36,.12);color:var(--tft-amber);border-color:rgba(251,191,36,.4)}
 .band-freq{white-space:nowrap}
-/* interim sizing until B3's container queries (§4.2): follow the viewport so the digits never wrap */
-.b-center .band-freq{font-size:clamp(18px,2.2vw,30px)}
-.bandrow.active .b-center .band-freq{font-size:clamp(22px,2.9vw,40px)}
+/* digit size follows the VFO tile body (container-type:size, §4.2): the operating VFO is full size,
+   the other one 0.72x; a single-receiver radio (#bands:not(.dual)) gets up to 72 px */
+.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(26cqh,7.4cqw),64px))}
+.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(26cqh,7.4cqw),64px)}
+#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(44cqh,7.4cqw),72px)}
 .b-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:58px}
 .b-vfo{font-size:11px;font-weight:700;color:var(--tft-pill-fg);background:var(--tft-pill-bg);padding:1px 6px;border-radius:var(--r-sm)}
 #rowSub .band-tag{color:var(--tft-sub)}
@@ -250,7 +241,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .band-freq.tunable .fd:hover::after{content:"▼";bottom:-9px}
 
 /* ---- S-meter ---- */
-.meter{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;gap:2px 8px;margin-bottom:10px}
+.meter{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;gap:2px 8px;margin:0}
 .meter-scale{grid-column:1;display:flex;justify-content:space-between;font-size:9px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
 .meter-bar{grid-column:1;grid-row:2;height:12px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden}
 .meter-fill{height:100%;width:0%;
@@ -448,11 +439,11 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .sl input[type=range]:focus::-moz-range-thumb{box-shadow:0 0 0 3px var(--accent-line)}
 
 /* ---- tabbed control panels: RCW underline tabs ---- */
-.controls{scrollbar-width:thin;scrollbar-color:var(--scrollthumb) transparent}
-.controls::-webkit-scrollbar{width:8px}
-.controls::-webkit-scrollbar-track{background:transparent}
-.controls::-webkit-scrollbar-thumb{background:var(--scrollthumb);border-radius:5px;border:2px solid transparent;background-clip:content-box}
-.controls::-webkit-scrollbar-thumb:hover{background:var(--accent);background-clip:content-box}
+.tile-body,.grid-wrap{scrollbar-width:thin;scrollbar-color:var(--scrollthumb) transparent}
+.tile-body::-webkit-scrollbar,.grid-wrap::-webkit-scrollbar{width:8px;height:8px}
+.tile-body::-webkit-scrollbar-track,.grid-wrap::-webkit-scrollbar-track{background:transparent}
+.tile-body::-webkit-scrollbar-thumb,.grid-wrap::-webkit-scrollbar-thumb{background:var(--scrollthumb);border-radius:5px;border:2px solid transparent;background-clip:content-box}
+.tile-body::-webkit-scrollbar-thumb:hover,.grid-wrap::-webkit-scrollbar-thumb:hover{background:var(--accent);background-clip:content-box}
 .controls .tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:8px;
   position:sticky;top:0;z-index:6;background:var(--surface)}
 .controls .tab{flex:1;text-align:center;padding:9px 2px;font:700 10px/1 var(--font-ui);letter-spacing:.08em;text-transform:uppercase;
@@ -672,10 +663,6 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .onair{flex:1000 1 0;max-width:max-content;gap:4px;padding:3px 3px 3px 8px;font-size:11px}
   .onair-stop{margin-left:2px;padding:3px 8px}
   .onair-stop svg.i{display:none}
-  .toprow{flex-wrap:wrap}
-  .toprow .bands{flex:1 1 100%}
-  .ptt-big{flex:1 1 40%}
-  .toprow .audio-grp{flex:1 1 55%}
   .toasts{left:8px;right:8px;top:calc(var(--tb-h) + 14px);bottom:auto;max-width:none}
 }
 @media (max-width:680px){
@@ -692,9 +679,6 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .lan-host{flex:1 1 100%}
   .lan-user,.lan-pass{flex:1 1 45%}
   .ctl-btn{flex:1 1 auto;min-height:44px}
-  .scopepane,.controls{padding:8px}
-  #spectrum{height:120px}
-  #waterfall{height:200px}
   .scope-ctl .hint{display:none}
   .key{min-height:44px;padding:11px 6px}
   .sc-btn{min-height:38px;padding:8px 11px}
@@ -703,8 +687,7 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .sl input[type=range]{height:30px}
   .sl-val{font-size:12px}
   .bandrow{grid-template-columns:auto minmax(0,1fr) auto;gap:6px;padding:6px 8px}
-  .bandrow.active .b-center .band-freq{font-size:26px}
-  .b-center .band-freq{font-size:18px;letter-spacing:0;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .b-center .band-freq{letter-spacing:0;min-width:0;overflow:hidden;text-overflow:ellipsis}
   .b-modebox{min-width:46px}
   .band-mode{font-size:12px}
   .ind{font-size:8px;padding:1px 3px}
@@ -715,39 +698,190 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 }
 @media (max-width:360px){ .mi-val{min-width:38px;font-size:10px} .mi-ctl{gap:5px} }
 
-/* ===== wide "operating console": controls left | VFO + meter + waterfall right (B3 → tiles) ===== */
+/* ===== the panel grid (§3, §4.2): GridStack tiles under the fixed top bar ===== */
+/* Desktop (>= 900 px): the page never scrolls; the top bar sits on top and #gridWrap takes the rest.
+   Only #gridWrap scrolls, and only when a user layout is taller than the 24 viewport-fit rows (F10). */
 @media (min-width:900px){
   html{height:100%}
   body{height:100vh;display:flex;flex-direction:column;overflow:hidden;padding:8px;gap:0}
   .topbar{flex:0 0 auto;max-width:none;margin:0 0 8px}
-  .radio{
-    flex:1 1 auto;min-height:0;max-width:none;margin:0;
-    display:grid;gap:8px;
-    grid-template-columns:272px 1fr;             /* one control section wide | the rest */
-  }
-  /* LEFT: single compact column of controls (scopepane comes first in the DOM, so place explicitly) */
-  .controls{grid-column:1;grid-row:1;min-height:0;overflow-y:auto;padding-top:0;
-    display:flex;flex-direction:column;gap:7px}
-  .controls .grp{margin:0;padding:6px 8px}
-  .controls .grp-title{margin-bottom:4px;font-size:9px}
-  .controls .row{gap:5px}
-  .controls .key{padding:6px 5px;font-size:12px;min-width:30px}
-  .controls .sl{gap:6px}
-  .controls .sl input[type=range]{margin:1px 0}
-  .controls .step-row{margin-top:4px}
-  .controls .tab{padding:10px 2px 8px}
-  /* RIGHT: readout + meter on top, the waterfall fills the rest */
-  .scopepane{grid-column:2;grid-row:1;display:flex;flex-direction:column;min-height:0;min-width:0;gap:8px}
-  .scopepane .bands,.scopepane .meter{margin-bottom:0}
-  .scopepane .scope{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
-  #spectrum{flex:0 0 auto;height:150px;width:100%}
-  #waterfall{flex:1 1 auto;min-height:0;height:auto;width:100%}
-  .scope-ctl{flex:0 0 auto;margin-top:0}
+  .grid-wrap{flex:1 1 auto;min-height:0;overflow-y:auto;overflow-x:hidden}
 }
-@media (min-width:900px) and (max-width:1099px){
-  /* a narrow console: the VFO readout gets its own row so the digits fit (B3's VFO tile replaces this) */
-  .toprow{flex-wrap:wrap}
-  .toprow .bands{flex:1 1 100%}
-  .ptt-big{flex:1 1 40%}
-  .toprow .audio-grp{flex:1 1 55%}
+.grid-wrap{position:relative}
+body.arranging .grid-wrap{padding-bottom:64px}       /* room above the fixed arrange bar */
+.tr-grid{isolation:isolate}
+.tr-grid:not(.tr-ready)>.grid-stack-item{visibility:hidden}   /* no layout flash before the first applyFull */
+#tileParking{display:none}                                     /* [hidden] too; the fallback shows it */
+
+/* ---- card chrome (§4.2) ---- */
+.grid-stack-item-content{overflow:hidden}                       /* override the library's overflow-y:auto */
+.grid-stack>.grid-stack-item>.grid-stack-item-content{overflow:hidden}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow-card);
+  display:flex;flex-direction:column;overflow:hidden;color:var(--txt)}   /* NO transform/filter/backdrop-filter/contain */
+.tile-head{flex:0 0 30px;display:flex;align-items:center;gap:8px;padding:0 6px 0 10px;background:var(--surface-head);
+  border-bottom:1px solid var(--border);color:var(--txt-dim);user-select:none;touch-action:manipulation;min-width:0}
+body[data-device=phone] .tile-head{flex-basis:38px}
+body[data-device=phone] .tile-btn{width:34px;height:34px}
+.tile-icon{width:12px;height:12px;flex:0 0 12px}
+.tile-title{margin:0;font:700 9px/1 var(--font-ui);letter-spacing:.1em;text-transform:uppercase;color:inherit;white-space:nowrap}
+.tile-summary{display:none;min-width:0;font:600 11px/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--num);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.is-collapsed .tile-summary{display:inline}
+.is-collapsed .tile-body{display:none}
+.is-collapsed .tile-head{border-bottom:0}
+.tile-actions{margin-left:auto;display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.tile-btn{width:24px;height:24px;display:grid;place-items:center;border:0;border-radius:6px;background:none;color:var(--txt-dim);cursor:pointer;padding:0}
+.tile-btn:hover{background:var(--hover);color:var(--txt)}
+.tile-btn svg{width:14px;height:14px;fill:none;stroke:currentColor}
+.tile-btn.tile-txt{width:auto;padding:0 7px;font:700 9px/1 var(--font-ui);letter-spacing:.08em;border:1px solid var(--border)}
+.tile-btn.tile-txt[aria-pressed="true"]{color:var(--accent-hi);border-color:var(--accent-line);background:var(--accent-tint)}
+.tile-remove{display:none}
+body.arranging .tile-remove{display:grid;color:var(--danger-hi)}
+.tile-up,.tile-down{display:none}                               /* phone arrange only (▲ ▼) */
+body[data-device=phone].arranging .tile-up,body[data-device=phone].arranging .tile-down{display:grid}
+body.arranging .cw-close{display:none}                          /* arrange mode has its own × */
+.tile-actions .lan-only{font-size:9px;color:var(--accent-hi);letter-spacing:0;white-space:nowrap}
+.tile-actions .lan-only:empty{display:none}
+.tile-actions .cw-status{max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tile-body{flex:1 1 auto;min-height:0;overflow:auto;padding:8px;position:relative}
+body[data-device=desktop] .tile-body{overscroll-behavior:contain}
+body[data-device=phone] .tile-body{overscroll-behavior:auto}   /* no scroll trap on phone (AR-37) */
+body[data-device=phone] .tile.fit .tile-body{overflow:visible} /* content-fit tiles: height follows content */
+.tile-fit{display:flow-root}
+.tile-fit>.grp{background:none;border:0;padding:0}             /* no double chrome */
+body.arranging .tile{outline:1px dashed var(--accent-line);outline-offset:-1px}
+body.arranging .tile-head{cursor:move;color:var(--accent-hi)}
+body.arranging .tile-body{opacity:.6}
+.grid-stack-placeholder>.placeholder-content{background:var(--accent-tint);border:1px dashed var(--accent);border-radius:var(--r-card)}
+.tile-head:focus-visible,.tile-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+@media (prefers-reduced-motion:reduce){.tile,.toast,.onair-dot{transition:none!important;animation:none!important}}
+.grid-stack-item.is-collapsed>.tile{bottom:auto;height:auto}     /* header-only card in its fixed 2-row slot (§3.11) */
+
+/* VFO tile: container-sized digits; the border follows the operating VFO (§4.2 state cues) */
+.tile-vfo{container-type:size}                                   /* only fixed-position-free bodies get containment */
+.tile-vfo>.tile-fit{height:100%}
+.tile-vfo .bands{height:100%}
+.tile-vfo .bandrow{flex:1 1 0;min-height:0}
+/* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar) with BOTH receivers: each
+   receiver becomes one line (mode, digits, indicators, VFO) so neither is clipped */
+@container (max-height:120px){
+  #bands.dual{gap:4px}
+  #bands.dual .bandrow{padding:2px 8px;gap:8px}
+  #bands.dual .b-modebox{flex-direction:row;gap:5px;min-width:0}
+  #bands.dual .b-modebox .band-mode{font-size:12px;width:auto;padding:1px 6px}
+  #bands.dual .b-center{flex-direction:row;align-items:center;gap:8px}
+  #bands.dual .ind-strip{order:2;flex-wrap:nowrap;overflow:hidden;min-height:0}
+  #bands.dual .b-side{flex-direction:row;align-items:center;gap:6px;min-width:0}
+  #bands.dual .b-band{flex-direction:row;align-items:baseline;gap:4px}
+  #bands.dual .b-center{overflow:hidden}
 }
+/* ...and when that short body is also narrow, the digits win: indicators and band name step aside */
+@container (max-height:120px) and (max-width:460px){
+  #bands.dual .ind-strip,#bands.dual .b-band{display:none}
+}
+.tile:has(#bands){border-color:rgba(16,185,129,.30)}
+.tile:has(#bands.sub-active){border-color:rgba(59,130,246,.35)}
+.tile:has(#bands.split){border-color:rgba(245,158,11,.40)}
+/* PTT tile: the button fills the body; ATAS is a fixed row under it (G-15) */
+.tile-ptt{container-type:size}
+.tile-ptt>.tile-fit{height:100%;display:flex;flex-direction:column;gap:6px}
+.tile-ptt #pttBtn{flex:1 1 auto;width:100%;min-height:44px;font-size:clamp(14px,11cqmin,28px)}
+.tile-ptt #atasTune{flex:0 0 auto;flex-direction:row;align-items:center;justify-content:space-between;min-width:0}
+.tile-ptt #atasTune .atas-btn{flex:0 0 auto;min-width:40px;padding:6px 10px}
+.tile:has(#pttBtn.tx-mine){border-color:var(--danger);box-shadow:0 0 0 1px var(--danger),0 0 24px rgba(239,68,68,.25)}
+.tile:has(#pttBtn.tx-busy),.tile:has(#pttBtn.tx-external){border-color:rgba(245,158,11,.55)}
+/* scope tile (§3.16): spectrum fixed, waterfall flexes; the split is a fraction applied by app.js */
+.tile-scope{display:flex;flex-direction:column;padding:0;overflow:hidden}
+.tile-scope>.tile-fit{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.tile-scope .scope{flex:1 1 0;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0}
+.tile-scope #spectrum{flex:0 0 auto;height:150px;width:100%}
+.tile-scope .scope-split{flex:0 0 8px}
+.tile-scope #waterfall{flex:1 1 0;min-height:0;height:auto;width:100%}
+.tile-scope .scope-ctl{flex:0 0 auto;margin:0;padding:6px 8px;border-top:1px solid var(--border)}
+/* meter: in a wide tile the selector sits beside the bar (one line), so 4 rows fit even at 22-26 px cells */
+.tile-meter{container-type:inline-size}
+@container (min-width:560px){
+  .meter{grid-template-columns:1fr auto auto}
+  .meter-val{grid-column:2}
+  .meter-sel{grid-column:3;grid-row:1/3;margin-top:0;flex-wrap:nowrap;align-self:center}
+}
+/* audio: tighter rows when its desktop tile is short */
+body[data-device=desktop] .tile-audio{container-type:size}
+@container (max-height:90px){
+  .audio-grp .row{margin-bottom:4px}
+  .audio-grp .key{padding:5px 6px}
+  .audio-grp .mic-meter{margin-bottom:4px}
+  .audio-grp .sl input[type=range]{margin:0}
+}
+/* controls: the tab bar sits flush at the top of the scrolling body */
+.tile-controls{padding-top:0}
+/* CW tool as a tile (§3.18): the old floating panel becomes the tile body */
+.tile-cw{padding:0}
+.tile-cw>.tile-fit{height:100%}
+.tile .tool-panel{position:static;inset:auto;width:auto;height:100%;max-width:none;min-width:0;min-height:0;border:0;box-shadow:none;background:none;border-radius:0}
+.tile .tool-panel .tp-head,.tile .tool-panel .tp-resize{display:none}
+/* compact Controls — these lived only inside the deleted >= 900 px console block; kept at every width,
+   scoped to the tile, so 900-1100 px windows are no worse than v0.2.25 (AR-30) */
+.tile .controls{display:flex;flex-direction:column;gap:7px;columns:auto}
+.tile .controls .grp{margin:0;padding:6px 8px}
+.tile .controls .grp-title{margin-bottom:4px;font-size:9px}
+.tile .controls .row{gap:5px}
+.tile .controls .key{padding:6px 5px;font-size:12px;min-width:30px}
+.tile .controls .sl{gap:6px}
+.tile .controls .sl input[type=range]{margin:1px 0}
+.tile .controls .step-row{margin-top:4px}
+.tile .controls .tab{padding:10px 2px 8px}
+/* phone: content-fit tiles size to their content; touch targets stay large */
+@media (max-width:680px){
+  .tile .controls .key{min-height:44px;padding:11px 6px}
+  .tile .controls .tab{padding:11px 2px}
+}
+
+/* ---- arrange bar + add-panel popover (§3.10, §3.12) ---- */
+.arrange-bar{position:fixed;left:8px;right:8px;bottom:8px;z-index:160;display:flex;align-items:center;gap:10px 16px;flex-wrap:wrap;
+  padding:8px 10px 8px 14px;background:var(--surface);border:1px solid var(--accent-line);border-radius:var(--r-card);box-shadow:var(--shadow-pop)}
+.ab-left{display:flex;align-items:baseline;gap:12px;min-width:0;flex:1 1 300px;flex-wrap:wrap}
+.ab-title{font:700 10px/1.2 var(--font-ui);letter-spacing:.1em;color:var(--accent-hi);white-space:nowrap}
+.ab-help{font:12px/1.35 var(--font-prose);color:var(--txt-dim);min-width:0}
+.ab-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-left:auto}
+.ab-confirm span{font:13px/1.3 var(--font-prose)}
+.ab-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border-radius:var(--r-ctl);cursor:pointer;
+  font:600 12px/1.2 var(--font-ui);border:1px solid var(--border);background:none;color:var(--txt)}
+.ab-btn svg.i{width:14px;height:14px}
+.ab-btn:hover{background:var(--hover)}
+.ab-add{border-color:var(--accent-line);color:var(--accent-hi)}
+.ab-add[aria-expanded="true"]{background:var(--accent-tint)}
+.ab-done{background:var(--accent-solid);border-color:var(--accent-solid);color:#fff}
+.ab-done:hover{background:var(--accent-solid-hover);border-color:var(--accent-solid-hover)}
+.ab-danger{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff}
+.ab-danger:hover{background:var(--danger-hi)}
+.add-panel{position:fixed;z-index:170;width:288px;max-width:calc(100vw - 16px);padding:8px 10px 10px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow-pop)}
+.ap-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.ap-title{font:700 9px/1 var(--font-ui);letter-spacing:.1em;color:var(--txt-dim)}
+.ap-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.ap-item{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:8px;border:1px solid var(--border);border-radius:var(--r-ctl);
+  background:var(--surface-2);color:var(--txt);cursor:pointer;text-align:left;font:600 11px/1.2 var(--font-ui)}
+.ap-item svg.i{width:14px;height:14px;color:var(--accent-hi)}
+.ap-item:hover:not(:disabled){border-color:var(--accent-line);background:var(--accent-tint)}
+.ap-item:disabled{cursor:not-allowed;opacity:.6}
+.ap-item:disabled svg.i{color:var(--txt-dim)}
+.ap-why{font:400 10px/1.25 var(--font-prose);color:var(--txt-dim)}
+@media (max-width:899px){
+  .arrange-bar{left:6px;right:6px;bottom:6px;padding:8px 10px}
+  .ab-help{display:none}
+}
+
+/* ---- failure fallback (§3.20): every tile stacked in #tileParking, the page scrolls ---- */
+body.tr-nogrid{height:auto;overflow:auto}
+body.tr-nogrid #gridWrap{display:none}
+body.tr-nogrid #tileParking{display:flex;flex-direction:column;gap:8px}
+body.tr-nogrid .tile-scope{height:60vh}
+body.tr-nogrid .tile-vfo{height:150px}
+body.tr-nogrid .tile-vfo:has(#bands.dual){height:200px}
+body.tr-nogrid .tile-ptt{height:110px}
+body.tr-nogrid .tile-ptt:has(#atasTune:not([hidden])){height:150px}
+body.tr-nogrid .tile-cw{height:340px}
+body.tr-nogrid .tile-audio{container-type:normal}
+body.tr-nogrid .tile-remove,body.tr-nogrid .tile-collapse,body.tr-nogrid .tile-up,body.tr-nogrid .tile-down{display:none}
+body.tr-nogrid .ui-resizable-handle{display:none!important}

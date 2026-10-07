@@ -92,7 +92,7 @@ def icons_every_reference_resolves(ctx):
     full, auth = set(mod.ICONS), set(mod.AUTH_ICONS)
     pat = re.compile(r'#i-([a-z0-9-]+)')
     call = re.compile(r'(?:TR\.icon|setIcon)\([^"\')]*["\']([a-z0-9-]+)["\']')
-    app_files = ["index.html", "tr.js", "app.js", "cwtool.js"]
+    app_files = ["index.html", "tr.js", "layout.js", "app.js", "cwtool.js"]
     seen = set()
     for f in app_files:
         text = (FRONT / f).read_text(encoding="utf-8")
