@@ -419,10 +419,13 @@
       : !ready ? "CW key port not found"
       : "Transmit this message as CW on the radio";
     if (stopArmed) return;                          // keep "Tap again to stop …" visible while armed
+    const h = txHint ? txHint.textContent : "";
     if (tx) setTxHint(other ? ownerName(other) + " is sending CW" : "on air — sending CW");
     else if (st.connected && !ready) setTxHint("CW key port not found — check the radio's 2nd USB (Standard) COM port");
-    else if (txHint && (/^on air — sending CW$| is sending CW$|^busy — /.test(txHint.textContent) ||
-                        txHint.textContent.indexOf("CW key port") === 0) && !other) setTxHint("");
+    // the CW message ended: its "… sending CW" hint goes, even while the same or another user still
+    // holds a non-CW claim (PTT, VOX, TUNE). A "busy — …" hint stays while someone else transmits.
+    else if (/^on air — sending CW$| is sending CW$/.test(h)) setTxHint("");
+    else if (!other && (/^busy — /.test(h) || h.indexOf("CW key port") === 0)) setTxHint("");
   }
   setInterval(syncTx, 400);
   syncTx();

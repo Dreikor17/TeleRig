@@ -9,6 +9,7 @@ import os
 import re
 import sys
 import threading
+import time
 from pathlib import Path
 
 import harness
@@ -185,6 +186,63 @@ def tx_sends_always_pass_assert_sim(ctx):
     eq(len(conn2.sent), 3)
     # a socket with no client to ask cannot send TX at all
     _refuses(harness.WS(_StubConn(), None).send, {"action": "ptt", "tx": True})
+
+
+@test("unit")
+def tx_burst_send_repeated_interlock(ctx):
+    """WS.send_repeated (T67's refused burst): assert_sim before the first send and every
+    check_every sends; keep_going before every send; a non-simulator refuses before anything."""
+    ptt = {"action": "ptt", "tx": True}
+    # not a simulator: refused before the first frame
+    bad = _StubClient(payload={"sim_only": True, "transport_kind": "serial"})
+    conn = _StubConn()
+    _refuses(harness.WS(conn, bad).send_repeated, ptt, 10, check_every=5, keep_going=lambda: True)
+    eq(conn.sent, [], "a TX burst frame reached the socket before assert_sim")
+    # a simulator: one status check per check_every frames, starting with the first
+    good = _StubClient(payload=SIM)
+    conn = _StubConn()
+    eq(harness.WS(conn, good).send_repeated(ptt, 1000, check_every=250, keep_going=lambda: True), 1000)
+    eq((len(conn.sent), good.calls), (1000, 4), "1000 frames, assert_sim at 0/250/500/750")
+
+    # the transport stops being a simulator mid-burst: the next check refuses, nothing more is sent
+    class Flip(_StubClient):
+        def get(self, path):
+            r = super().get(path)
+            if self.calls >= 2:
+                r._p = {"sim_only": True, "transport_kind": "lan"}
+            return r
+    conn = _StubConn()
+    _refuses(harness.WS(conn, Flip(payload=SIM)).send_repeated, ptt, 100, check_every=10, keep_going=lambda: True)
+    eq(len(conn.sent), 10, "frames after a failed check")
+    # keep_going False stops at once (before the frame), and a TX burst without it is refused
+    conn, n = _StubConn(), {"i": 0}
+
+    def kg():
+        n["i"] += 1
+        return n["i"] <= 3
+    try:
+        harness.WS(conn, _StubClient(payload=SIM)).send_repeated(ptt, 10, check_every=5, keep_going=kg)
+    except harness.TestFailure as e:
+        check("after 3 of 10" in str(e), str(e))
+    else:
+        raise harness.TestFailure("keep_going=False did not stop the burst")
+    eq(len(conn.sent), 3)
+    for kw in ({}, {"check_every": 0, "keep_going": kg}, {"check_every": 501, "keep_going": kg},
+               {"check_every": True, "keep_going": kg}, {"keep_going": kg, "rate": 0}, {"keep_going": kg, "rate": True}):
+        try:
+            harness.WS(_StubConn(), _StubClient(payload=SIM)).send_repeated(ptt, 5, **kw)
+        except harness.HarnessError:
+            pass
+        else:
+            raise harness.TestFailure(f"send_repeated accepted {kw!r}")
+    # a non-TX burst needs no status checks; `rate` spreads a burst over time
+    c = _StubClient(payload=SIM)
+    conn = _StubConn()
+    t0 = time.monotonic()
+    harness.WS(conn, c).send_repeated({"action": "tx_hb"}, 50, rate=250)
+    dt = time.monotonic() - t0
+    eq((len(conn.sent), c.calls), (50, 0))
+    check(dt >= 49 / 250 - 0.01, f"50 frames at 250/s took {dt:.3f}s")
 
 
 # -- the close-code accessor (pinned against a stub websockets server, not TeleRig) ------------

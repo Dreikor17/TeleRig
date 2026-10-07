@@ -152,7 +152,7 @@
     pendingClaims.set(seq, { kind: k, at: now });
     if (k === "ptt") pttPending = { seq, at: now };
     rawSend(Object.assign({}, obj, { seq }));
-    startHb();                                   // tx_hb from the moment the claim is sent (AR-46)
+    startHb(true);                               // tx_hb from the moment the claim is sent (AR-46)
     renderTx();
     return true;
   }
@@ -225,8 +225,27 @@
     renderTx();
   }
 
-  function startHb() { if (!hbTimer) hbTimer = setInterval(hbTick, hbMs); }
-  function stopHb() { if (hbTimer) { clearInterval(hbTimer); hbTimer = 0; } }
+  // A claim gets its first tx_hb HB_FIRST_MS after it is sent (well inside 250 ms), then one every
+  // hbMs: the interval restarts from that first beat, so the server never waits a whole interval.
+  const HB_FIRST_MS = 150;
+  let hbFirst = 0;
+  function startHb(claimSent) {
+    if (claimSent) {
+      clearTimeout(hbFirst);
+      hbFirst = setTimeout(() => {
+        hbFirst = 0;
+        if (hbTimer) { clearInterval(hbTimer); hbTimer = 0; }
+        hbTick();                                // sends, or stops if the claim is already gone
+        if (pendingClaims.size || TR.isTxOwner()) startHb();
+      }, HB_FIRST_MS);
+      return;
+    }
+    if (!hbTimer) hbTimer = setInterval(hbTick, hbMs);
+  }
+  function stopHb() {
+    if (hbTimer) { clearInterval(hbTimer); hbTimer = 0; }
+    if (hbFirst) { clearTimeout(hbFirst); hbFirst = 0; }
+  }
   function hbTick() {
     expirePending();
     if (pendingClaims.size || TR.isTxOwner()) rawSend({ action: "tx_hb" });   // never touches the radio (I16)
@@ -871,11 +890,23 @@
   }
   setInterval(tickTx, 400);
   if (ptt) {
-    let touchTimer = 0, touchHeld = false, swallowClickUntil = 0;
+    // The compat click a browser fires after a touch must never reach pttClick() (it would unkey a
+    // hold, or re-key after the touch unkeyed). Clicks are swallowed from the touch's pointerdown
+    // until SWALLOW_MS after ITS pointerup/pointercancel, however long the finger was held. A
+    // mouse/pen press ends the window at once (its click is a real one).
+    const SWALLOW_MS = 800;
+    let touchTimer = 0, touchHeld = false, touchId = null, swallowClickUntil = 0;
     const cancelHold = () => { touchHeld = false; clearTimeout(touchTimer); };
+    const touchEnded = (e) => {
+      if (touchId === null || e.pointerId !== touchId) return;
+      touchId = null;
+      swallowClickUntil = performance.now() + SWALLOW_MS;
+    };
     ptt.addEventListener("pointerdown", (e) => {
-      if (e.pointerType !== "touch") return;
-      swallowClickUntil = performance.now() + 1000;
+      if (e.pointerType !== "touch") { touchId = null; swallowClickUntil = 0; return; }
+      touchId = e.pointerId;
+      // until this touch ends (touchEnded); bounded so a lost pointerup can't block clicks forever
+      swallowClickUntil = performance.now() + 130000;
       if (ownedPtt() || pttPending || otherOwner()) { pttClick(); return; }   // unkey at once / busy hint
       cancelHold();
       touchHeld = true;
@@ -884,6 +915,10 @@
     ptt.addEventListener("pointerup", cancelHold);
     ptt.addEventListener("pointercancel", cancelHold);
     ptt.addEventListener("pointerleave", cancelHold);
+    // the end of the touch, wherever the finger is lifted (window capture also sees a pointerup
+    // that lands outside the button)
+    window.addEventListener("pointerup", touchEnded, true);
+    window.addEventListener("pointercancel", touchEnded, true);
     window.addEventListener("scroll", cancelHold, { capture: true, passive: true });
     ptt.addEventListener("click", (e) => {
       if (performance.now() < swallowClickUntil) { e.preventDefault(); return; }   // compat click after touch
@@ -898,17 +933,26 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
   }
-  let stopArmed = 0;
+  // The two-tap STOP is armed for ONE owner: the owner's conn (EXTERNAL = -1) and name at the first
+  // tap. The second tap sends tx_stop only while that same owner still holds TX; any other owner (or
+  // none) disarms it, so a stale arm can never stop someone else's transmission (D-16, I23).
+  let stopArmed = 0, stopArmedFor = null;
+  function ownerKey(o) { return o ? String(o.conn) + "|" + (o.external ? "ext" : (o.user || "")) : null; }
   function disarmStop() {
     if (stopArmed) { clearTimeout(stopArmed); stopArmed = 0; }
+    stopArmedFor = null;
     const b = $("onAirStop"), l = $("onAirStopLbl");
     if (b) b.classList.remove("armed");
-    if (l) l.textContent = "STOP";
+    if (l && l.textContent !== "STOP") l.textContent = "STOP";
+  }
+  function checkStopArm() {                      // every tx frame: the armed owner gone -> disarm
+    if (stopArmedFor !== null && ownerKey(txOwner()) !== stopArmedFor) disarmStop();
   }
   function renderOnAir() {
     const chip = $("onAir");
     if (!chip) return;
     const o = txOwner();
+    checkStopArm();
     if (!o) { if (!chip.hidden) chip.hidden = true; disarmStop(); return; }
     chip.hidden = false;
     chip.classList.toggle("mine", TR.isTxOwner());
@@ -916,17 +960,25 @@
     const w = $("onAirWho"), t = $("onAirTime");
     if (w && w.textContent !== " · " + who) w.textContent = " · " + who;
     if (t) t.textContent = " · " + fmtMmSs(performance.now() - txSince);
+    const tip = "ON AIR · " + who;                // the chip text may be cut with an ellipsis (narrow bar)
+    if (chip.title !== tip) chip.title = tip;
   }
   if ($("onAirStop")) $("onAirStop").addEventListener("click", () => {
     const o = txOwner();
-    if (!o) return;
+    if (!o) { disarmStop(); return; }
     if (TR.isTxOwner()) { disarmStop(); txStop(); return; }          // the owner: one tap
     if (!TR.can("tx")) return;
-    if (stopArmed) { disarmStop(); send({ action: "tx_stop" }); return; }   // second tap: STOP (F18)
+    if (stopArmed) {                                                   // second tap (F18)
+      const same = stopArmedFor !== null && ownerKey(o) === stopArmedFor;
+      disarmStop();
+      if (same) send({ action: "tx_stop" });     // only the owner the first tap was armed for
+      return;
+    }
     $("onAirStop").classList.add("armed");
     const l = $("onAirStopLbl");
     if (l) l.textContent = "Tap again to stop " + ownerName(o);
     TR.srLive("Tap STOP again within 3 seconds to stop " + ownerName(o));
+    stopArmedFor = ownerKey(o);
     stopArmed = setTimeout(disarmStop, 3000);
   });
   let pttVisible = true;                          // the IntersectionObserver's view of #pttBtn
@@ -1073,6 +1125,16 @@
     }, { passive: false });
   }
 
+  // The no-scope notice (FT-991A, FT-891, IC-728) sits in the middle of the WATERFALL, so it never
+  // covers the band-plan strip drawn along the spectrum's bottom edge, whatever the split.
+  function placeNoScope() {
+    const ns = $("noScope"), wf = $("waterfall");
+    if (!ns || ns.hidden || !wf || !wf.offsetHeight) return;
+    const top = wf.offsetTop + Math.max(6, (wf.offsetHeight - ns.offsetHeight) / 2);
+    ns.style.top = Math.round(top) + "px";
+    ns.style.bottom = "auto";
+  }
+
   // ---- spectrum / waterfall split (§3.16) ----
   // The split is a FRACTION of the scope height, clamped to BOUNDS.split before it is applied or
   // saved, per device. It is applied only where the waterfall flexes to fill a layout-sized scope;
@@ -1126,6 +1188,7 @@
       const r = sw.getBoundingClientRect();
       spec.style.height = Math.max(60, Math.min(r.height - 110, e.clientY - r.top)) + "px";   // height only
       specSetBy = "drag";
+      placeNoScope();
     });
     const end = (e) => {
       if (!down) return; down = false; split.classList.remove("drag");
@@ -1138,6 +1201,7 @@
         try { Layout().setScopeSplit(f); } catch (_) {}
       }
       scope.resize();                                  // once, at the end of the drag
+      placeNoScope();
     };
     split.addEventListener("pointerup", end);
     split.addEventListener("pointercancel", end);
@@ -1147,7 +1211,7 @@
   // its final size at tr:resizestop, so the observer is paused in between (§3.16).
   (function () {
     let t = 0, paused = false;
-    const refit = () => { applySplit(); scope.resize(); };
+    const refit = () => { applySplit(); scope.resize(); placeNoScope(); };
     document.addEventListener("tr:resizestart", () => { paused = true; });
     document.addEventListener("tr:resizestop", () => { paused = false; refit(); });
     document.addEventListener("tr:layout", () => {
@@ -1492,6 +1556,7 @@
     // no-scope radios (Yaesu CAT): hide the scope-only controls, show the notice
     const noScope = p.has_scope === false;
     const ns = $("noScope"); if (ns) ns.hidden = !noScope;
+    placeNoScope();
     const soc = $("scopeOnlyCtl"); if (soc) soc.hidden = noScope;
     if (p.default_baud) $("baud").value = p.default_baud;
     // COM-only radios (FT-991A, IC-7300 family): no RS-BA1 LAN — hide that option
@@ -2088,7 +2153,7 @@
     if (afTimer) { clearInterval(afTimer); afTimer = 0; }
     if (afAnalyser) { try { afAnalyser.disconnect(); } catch (_) {} afAnalyser = null; }
     const badge = $("afBadge"); if (badge) badge.hidden = true;
-    if (afEligible()) { const ns = $("noScope"); if (ns) ns.hidden = false; }
+    if (afEligible()) { const ns = $("noScope"); if (ns) ns.hidden = false; placeNoScope(); }
   }
   // stop every audio path + reset the buttons (on radio change / disconnect). The server keeps RX
   // and mic subscriptions per connection (G-5): tell it, then stop locally.
@@ -2296,7 +2361,8 @@
     check(true);
   })();
 
-  // ---- RadioTx / RadioControl: for cwtool.js and layout.js (B3) ----
+  // ---- RadioScope / RadioTx / RadioControl: for cwtool.js and layout.js (B3) ----
+  window.RadioScope = scope;                       // §0.1: the spectrum / waterfall / overlay
   window.RadioTx = {
     ownedPtt: () => ownedPtt(),
     ownedOrPending: () => ownedOrPending(),
@@ -2321,7 +2387,7 @@
 
   // ---- boot ----
   requestAnimationFrame(() => { applySplit(); scope.resize(); });   // re-measure once the console layout settles
-  window.addEventListener("load", () => { applySplit(); scope.resize(); });
+  window.addEventListener("load", () => { applySplit(); scope.resize(); placeNoScope(); });
   setupFmControls();                                     // populate + wire the FM Tone/DCS selects once
   setupExtControls();                                    // wire the WIDTH/CONTOUR/APF/CW sliders once
   renderTx();

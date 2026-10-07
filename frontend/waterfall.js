@@ -311,7 +311,22 @@
       this.drawBandplan();
     }
 
+    // The label text that fits `maxW` px: the whole label, else the label cut short with "…" (at
+    // least 3 characters kept), else "" (no label). Clipping an over-long label to its segment cut
+    // words in half and ran neighbouring labels together on a narrow scope.
+    fitLabel(ctx, label, maxW) {
+      label = String(label || "");
+      if (!label || maxW <= 0) return "";
+      if (ctx.measureText(label).width <= maxW) return label;
+      for (let n = label.length - 1; n >= 3; n--) {
+        const t = label.slice(0, n).trimEnd() + "…";
+        if (ctx.measureText(t).width <= maxW) return t;
+      }
+      return "";
+    }
+
     drawBandplan() {
+      this.bpLabels = [];                       // what was drawn (segment x0/x1, text, width)
       if (!this.showBandplan || !this.bandplan || !this.bandplan.length) return;
       const ctx = this.octx, w = this.W;
       const [lo, hi] = this.visibleRange();
@@ -330,13 +345,13 @@
         ctx.fillRect(x0, sy, bw, STRIP_H);
         ctx.strokeStyle = base + "0.85)"; ctx.lineWidth = 1;
         ctx.strokeRect(x0 + 0.5, sy + 0.5, Math.max(0, bw - 1), STRIP_H - 1);
-        if (bw > 24) {
-          ctx.save();
-          ctx.beginPath(); ctx.rect(x0 + 1, sy, bw - 2, STRIP_H); ctx.clip();
+        const text = this.fitLabel(ctx, seg.label, bw - 6);   // 3 px clear of each edge
+        if (text) {
+          const cx = (x0 + x1) / 2;
           ctx.fillStyle = "rgba(255,255,255,.95)";
           ctx.textAlign = "center";
-          ctx.fillText(seg.label, (x0 + x1) / 2, sy + STRIP_H / 2 + 0.5);
-          ctx.restore();
+          ctx.fillText(text, cx, sy + STRIP_H / 2 + 0.5);
+          this.bpLabels.push({ label: seg.label, text, x0, x1, cx, w: ctx.measureText(text).width });
         }
       }
       ctx.textBaseline = "alphabetic"; ctx.textAlign = "left";

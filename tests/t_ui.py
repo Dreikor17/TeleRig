@@ -151,6 +151,73 @@ def theme_head_script_and_tokens(ctx):
     check("[hidden]{display:none!important}" in css, "global [hidden] rule")
 
 
+def _palette(text: str, selector: str) -> dict:
+    """{--token: value} of one `selector{...}` block (the first one) in a stylesheet text."""
+    m = re.search(re.escape(selector) + r"\s*\{(.*?)\}", text, re.S)
+    check(m, f"no {selector} block")
+    body = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S)
+    return {k: v.strip() for k, v in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);?", body)}
+
+
+def _lum(hexcol: str) -> float:
+    h = hexcol.strip().lstrip("#")
+    check(re.fullmatch(r"[0-9a-fA-F]{6}", h), f"not a #rrggbb colour: {hexcol!r}")
+    ch = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    lin = [c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4 for c in ch]
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+
+
+def _ratio(a: str, b: str) -> float:
+    la, lb = _lum(a), _lum(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+@test("unit")
+def contrast_white_on_accent_and_auth_text(ctx):
+    """B2b: white text on --accent-solid (and its hover) is WCAG AA (>= 4.5:1) in both themes, in the
+    app and on both sign-in pages; the auth pages' footer and hint use --txt-dim (>= 4.5:1), never
+    --txt-faint (below 3:1)."""
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    sheets = {"style.css": css}
+    for f in ("login.html", "change-password.html"):
+        sheets[f] = (FRONT / f).read_text(encoding="utf-8")
+    for name, text in sheets.items():
+        for sel in (":root", ":root.day"):
+            p = _palette(text, sel)
+            r = _ratio("#ffffff", p["--accent-solid"])
+            check(r >= 4.5, f"{name} {sel}: white on --accent-solid {p['--accent-solid']} is {r:.2f}:1")
+            if name == "style.css":
+                r = _ratio("#ffffff", p["--accent-solid-hover"])
+                check(r >= 4.5, f"{sel}: white on --accent-solid-hover is {r:.2f}:1")
+                r = _ratio(p["--sel-fg"], p["--sel-bg"])
+                check(r >= 4.5, f"{sel}: --sel-fg on --sel-bg is {r:.2f}:1")
+            else:
+                for bg in ("--bg", "--surface-2"):
+                    r = _ratio(p["--txt-dim"], p[bg])
+                    check(r >= 4.5, f"{name} {sel}: --txt-dim on {bg} is {r:.2f}:1")
+    # hovers on the solid fills go darker (never to --accent, which is 2.5:1 with white at night)
+    check(".ctl-btn.primary:hover{background:var(--accent-solid-hover)" in css, "primary hover token")
+    check(".ver-update:hover{background:var(--accent-solid-hover)}" in css, "update pill hover token")
+    for f in ("login.html", "change-password.html"):
+        text = sheets[f]
+        check("footer{" in text and "color:var(--txt-faint)" not in text, f"{f}: text set in --txt-faint")
+
+
+@test("unit")
+def phone_only_items_hidden_on_desktop(ctx):
+    """B2b: `.menu [role=menuitem]{display:flex}` out-specifies a plain `.phone-only{display:none}`, so
+    the desktop hide is an !important rule at >= 900 px; [hidden] stays the global !important rule."""
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    check(re.search(r"@media \(min-width:900px\)\{\s*\.phone-only\{display:none!important\}\s*\}", css),
+          "no >= 900 px !important hide for .phone-only")
+    check("[hidden]{display:none!important}" in css, "global [hidden] rule")
+    idx = (FRONT / "index.html").read_text(encoding="utf-8")
+    items = re.findall(r'<[^>]*class="[^"]*\bphone-only\b[^"]*"[^>]*>', idx)
+    check(len(items) >= 3, f"phone-only items: {items}")
+    for tag in items:
+        check('role="menuitem"' in tag, f"a phone-only element outside the user menu: {tag}")
+
+
 @test("smoke")
 def pages_carry_their_icons_inline(ctx):
     srv = ctx.server()

@@ -589,16 +589,36 @@ def t66_continuous_setters(ctx):
 # -- T67: denial floods never push TX records out --------------------------------------------------------------------------
 @test("tx")
 def t67_audit_isolation(ctx):
+    """5000 refused ptt:true from OP2 while OP1 transmits: every one is accounted for in a few
+    coalesced audit lines, and audit-tx.log keeps OP1's tx_start.
+
+    Robust under machine load (B2b): both sockets are drained while the burst runs (an unread
+    socket stops answering keepalive pings and the server dropped it with 1011 mid-burst, which
+    ended OP1's TX or lost queued frames), and the burst runs assert_sim before its first send and
+    every 250 sends instead of 5000 status requests. OP1's own claim still goes through send()
+    (assert_sim first), and the burst stops at once if any frame says OP1 no longer holds TX, so
+    none of OP2's claims can key. The burst is still spread over ~20 s (250/s, about the old
+    per-send pace), so the flood spans many coalescing windows and the per-key 1/s cap, and both
+    tx_denied (token bucket 60 + 30/s) and rate_limited carry hundreds of events, which makes the
+    line caps below a real coalescing check."""
     srv, cl = setup(ctx, extra_env={"TELERIG_TEST_AUDIT_WINDOW": "1"})
-    w1, _ = open_ws(cl["OP1"])
+    w1, hello1 = open_ws(cl["OP1"])
     w2, _ = open_ws(cl["OP2"])
-    hb = None
+    hb = d1 = d2 = None
+    op1 = hello1["conn"]
+    lost = []
+
+    def watch(m):                                  # anything saying OP1 no longer holds TX
+        if m.get("type") == "tx_revoked" or (m.get("type") == "tx" and (m.get("owner") or {}).get("conn") != op1):
+            lost.append(m)
     try:
-        key(w1)
+        key(w1)                                    # assert_sim before OP1's claim (harness)
         hb = harness.Heartbeat(w1)
+        d1, d2 = harness.Drain(w1, watch), harness.Drain(w2, watch)
+        st = harness.assert_sim(cl["OP2"])
+        eq(((st.get("tx") or {}).get("owner") or {}).get("user"), "OP1", "T67 OP1 owns TX before the burst")
         t0 = time.monotonic()
-        for i in range(5000):
-            w2.send({"action": "ptt", "tx": True})               # assert_sim before EACH (harness)
+        w2.send_repeated({"action": "ptt", "tx": True}, 5000, check_every=250, keep_going=lambda: not lost, rate=250)
         ctx.log(f"5000 ptt:true sent in {time.monotonic() - t0:.1f}s")
 
         def tallies():
@@ -612,14 +632,25 @@ def t67_audit_isolation(ctx):
         check(all(isinstance(r.get("count"), int) and r["count"] >= 1 for r in denied + rl), "T67 entries carry counts")
         check(len(denied) <= 100 and len(denied + rl) <= 200, f"T67 coalesced: {len(denied)} tx_denied, {len(rl)} rate_limited lines")
         total = sum(r["count"] + r.get("suppressed", 0) for r in denied + rl)
+        n_denied = sum(r["count"] + r.get("suppressed", 0) for r in denied)
+        n_rl = sum(r["count"] + r.get("suppressed", 0) for r in rl)
+        ctx.log(f"audit.log: {len(denied)} tx_denied lines ({n_denied} events), {len(rl)} rate_limited lines ({n_rl} events)")
         eq(total, 5000, "T67 the coalesced counts account for every refused ptt:true")
+        check(n_denied >= 300 and n_rl >= 300,
+              f"T67 both denial kinds flooded ({n_denied} tx_denied, {n_rl} rate_limited events), so the line caps mean coalescing")
         txs = harness.audit_records(srv.tmp)
         eq([r["user"] for r in txs if r.get("ev") == "tx_start"], ["OP1"], "T67 audit-tx.log still holds OP1's tx_start")
         eq([r for r in txs if r.get("ev") in ("tx_denied", "rate_limited", "denied")], [], "no denials in audit-tx.log")
         eq(tx_owner(cl["OP1"])["user"], "OP1", "OP1 still owns TX")
+        eq(lost, [], "T67 OP1 held TX through the burst")
+        eq((d1.closed, d2.closed, d1.error, d2.error), (None, None, None, None), "T67 both sockets stayed open")
+        check(hb.sent >= 1, f"T67 OP1 heartbeats ({hb.sent} tx_hb)")
     finally:
         if hb:
             hb.stop()
+        for d in (d1, d2):
+            if d:
+                d.stop()
         w1.close()
         w2.close()
 

@@ -12,7 +12,9 @@
   --field:#0a0a0a;
   --border:#2a2b2e; --border-strong:#3a3b3e;
   --txt:#e0e0e0; --txt-dim:#8e9299; --txt-faint:#5a5b5e; --txt-disabled:#4a4b4e;
-  --accent:#10b981; --accent-hi:#34d399; --accent-solid:#059669;
+  /* --accent-solid carries white text (primary buttons, update pill): emerald-700 in both themes,
+     5.5:1 (§4.1's #059669 gives white only 3.8:1); its hover goes darker (emerald-800, 7.7:1) */
+  --accent:#10b981; --accent-hi:#34d399; --accent-solid:#047857; --accent-solid-hover:#065f46;
   --accent-tint:rgba(16,185,129,.10); --accent-line:rgba(16,185,129,.45);
   --danger:#ef4444; --danger-hi:#f87171; --danger-tint:rgba(239,68,68,.10);
   --warn:#f59e0b; --warn-hi:#fbbf24;
@@ -53,7 +55,7 @@
   --field:#ffffff;
   --border:#d5d8de; --border-strong:#b9bec7;
   --txt:#16181b; --txt-dim:#5a6068; --txt-faint:#8a909a; --txt-disabled:#b0b5bc;
-  --accent:#059669; --accent-hi:#047857; --accent-solid:#047857;
+  --accent:#059669; --accent-hi:#047857; --accent-solid:#047857; --accent-solid-hover:#065f46;
   --accent-tint:rgba(5,150,105,.08); --accent-line:rgba(5,150,105,.45);
   --danger:#dc2626; --danger-hi:#b91c1c; --danger-tint:rgba(220,38,38,.07);
   --warn:#d97706; --warn-hi:#b45309;
@@ -105,7 +107,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .ctl-btn:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .ctl-btn svg.i{width:14px;height:14px}
 .ctl-btn.primary{background:var(--accent-solid);border-color:var(--accent-solid);color:#fff}
-.ctl-btn.primary:hover{background:var(--accent);border-color:var(--accent)}
+.ctl-btn.primary:hover{background:var(--accent-solid-hover);border-color:var(--accent-solid-hover)}
 .ctl-btn.danger{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff}
 .ctl-btn:disabled,.ctl-btn[disabled]{opacity:.5;cursor:not-allowed}
 /* RCW pills: emerald plug = connect, red unplug = disconnect */
@@ -133,7 +135,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .ver-update{position:fixed;left:16px;top:calc(var(--tb-h) + 14px);z-index:181;
   font-size:10px;font-weight:700;letter-spacing:.04em;padding:3px 8px;border-radius:999px;
   background:var(--accent-solid);color:#fff;text-decoration:none;white-space:nowrap;box-shadow:var(--shadow-pop)}
-.ver-update:hover{background:var(--accent)}
+.ver-update:hover{background:var(--accent-solid-hover)}
 .tb-btn{display:inline-grid;place-items:center;width:32px;height:32px;padding:0;flex:0 0 auto;
   background:var(--field);color:var(--txt-dim);border:1px solid var(--border);border-radius:var(--r-ctl);
   cursor:pointer;text-decoration:none}
@@ -161,7 +163,10 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .menu [role="menuitem"]:focus-visible{box-shadow:inset 0 0 0 1px var(--accent-line)}
 .menu [role="menuitem"].danger{color:var(--danger-hi)}
 .menu [role="menuitem"].danger svg.i{color:var(--danger-hi)}
-.phone-only{display:none}
+/* phone-only menu items (§4.5) exist only below 900 px. `.menu [role="menuitem"]{display:flex}` above
+   is more specific than a plain .phone-only rule, so the desktop hide needs !important. A [hidden]
+   item stays hidden at every width: the global [hidden] rule is !important and nothing un-hides it. */
+@media (min-width:900px){ .phone-only{display:none!important} }
 /* connection cluster */
 .conn{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .conn-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
@@ -266,9 +271,13 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .overlay-canvas{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
 .scope-labels{position:absolute;left:0;right:0;top:2px;display:flex;justify-content:space-between;
   padding:0 6px;font:11px var(--font-ui);color:#bfe6ff;text-shadow:0 0 4px #000;pointer-events:none}
-.no-scope{position:absolute;left:0;right:0;top:34%;text-align:center;color:var(--tft-digit-dim);
+/* the no-scope notice lives in the waterfall, clear of the band-plan strip along the spectrum's
+   bottom edge: app.js (placeNoScope) centres it there; bottom-anchored until then */
+.no-scope{position:absolute;left:0;right:0;top:auto;bottom:22%;text-align:center;color:var(--tft-digit-dim);
   font-size:12px;letter-spacing:.02em;pointer-events:none;padding:0 12px}
-.af-badge{position:absolute;left:8px;top:4px;z-index:3;display:inline-flex;align-items:center;gap:4px;font-size:10px;letter-spacing:.04em;
+/* the AF-scope badge sits on its own line under the edge-frequency labels (it covered #lblLeft) and
+   above the band-plan strip, which starts >= 41 px down even at the smallest spectrum height (60 px) */
+.af-badge{position:absolute;left:8px;top:20px;z-index:3;display:inline-flex;align-items:center;gap:4px;font-size:10px;letter-spacing:.04em;
   color:var(--tft-pill-fg);background:rgba(4,18,31,.7);border:1px solid var(--tft-border);border-radius:var(--r-sm);
   padding:1px 6px;pointer-events:none}
 .af-badge svg.i{width:12px;height:12px}
@@ -547,14 +556,20 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 
 /* ===== session UI (§4.5): ON-AIR chip, STOP FAB, overlays, toasts, inline confirm ===== */
 /* ON-AIR chip (top bar): whoever owns TX; STOP is one tap for the owner, two taps for others */
-.onair{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border-radius:999px;min-width:0;
+/* The chip never wraps the top bar: its flex basis is 0 (so it always fits the row) and it grows up to
+   its own content width; when the row is short, the text (ON AIR · <owner> · m:ss) is cut with an
+   ellipsis while the dot and the STOP pill keep their size. */
+.onair{display:inline-flex;align-items:center;gap:6px;padding:3px 4px 3px 10px;border-radius:999px;
+  flex:1 1 0;min-width:0;max-width:max-content;
   background:var(--danger-tint);border:1px solid var(--danger);color:var(--danger-hi);font-size:12px;white-space:nowrap}
+.onair-txt{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 .onair b{letter-spacing:.08em}
 .onair .num{font-variant-numeric:tabular-nums}
 .onair-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);flex:0 0 auto;animation:trpulse 1.6s ease-in-out infinite}
 @keyframes trpulse{50%{opacity:.3}}
 .onair-stop{display:inline-flex;align-items:center;gap:4px;margin-left:4px;border:1px solid var(--danger);background:transparent;color:var(--danger-hi);
-  border-radius:999px;padding:3px 9px;font:700 11px/1 var(--font-ui);letter-spacing:.04em;cursor:pointer}
+  border-radius:999px;padding:3px 9px;font:700 11px/1 var(--font-ui);letter-spacing:.04em;cursor:pointer;flex:0 0 auto}
+.onair-stop span{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .onair-stop svg.i{width:13px;height:13px}
 .onair-stop:hover,.onair-stop.armed{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff}
 /* STOP floating button: the owner's STOP when PTT is scrolled off / parked / collapsed */
@@ -631,10 +646,14 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .tb-btn.user .user-name,.tb-btn.user .badge{display:none}
   .connlabel{flex:1 1 auto}
   .conn-controls{justify-content:flex-start}
-  .topbar:has(#onAir:not([hidden])) .connlabel{display:none}
-  .onair{gap:4px;padding:3px 3px 3px 8px;font-size:11px}
+  /* while ON AIR shows, the connection label becomes an invisible spacer AFTER the chip (same order,
+     later in the DOM), so the connection toggle and the user button stay pinned at the right edge;
+     the chip's large grow factor gives it the free space first (up to its content width) */
+  .topbar:has(#onAir:not([hidden])) .connlabel{order:3;visibility:hidden;flex:1 1 0;min-width:0;padding:0}
+  .onair{flex-grow:1000;gap:4px;padding:3px 3px 3px 8px;font-size:11px}
   .onair-stop{margin-left:2px;padding:3px 8px}
   .onair-stop svg.i{display:none}
+  .onair-stop span{max-width:22ch}             /* "Tap again to stop <long call…" stays on the row */
   .toprow{flex-wrap:wrap}
   .toprow .bands{flex:1 1 100%}
   .ptt-big{flex:1 1 40%}

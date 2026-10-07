@@ -463,6 +463,40 @@ class WS:
         assert_sim(self.client)                    # binary frames are mic audio -> the TX path
         self._c.send(bytes(data))
 
+    def send_repeated(self, obj: dict, count: int, *, check_every: int = 250,
+                      keep_going: Optional[Callable[[], bool]] = None, rate: Optional[float] = None) -> int:
+        """Send the same frame `count` times (a burst that the server is expected to refuse, T67).
+
+        A TX-capable frame runs assert_sim(client) before the FIRST send and again before every
+        `check_every`-th send (1..500), instead of before each one, so a long burst is not paced
+        by thousands of status requests. Because that is a weaker interlock than send(), a TX
+        burst must also pass keep_going: it is asked before EVERY send, and False stops the burst
+        at once with a TestFailure (e.g. "the expected owner still holds TX", so claims that are
+        meant to be refused can never key). `rate` (frames/s) spreads the burst over time on a
+        fixed schedule. Returns the number sent."""
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise HarnessError(f"send_repeated: bad count {count!r}")
+        if not isinstance(check_every, int) or isinstance(check_every, bool) or not 1 <= check_every <= 500:
+            raise HarnessError(f"send_repeated: check_every must be 1..500, got {check_every!r}")
+        if rate is not None and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not rate > 0):
+            raise HarnessError(f"send_repeated: rate must be > 0 frames/s, got {rate!r}")
+        text = json.dumps(obj)
+        tx = is_tx_command(json.loads(text))       # exactly what the server will parse
+        if tx and keep_going is None:
+            raise HarnessError("send_repeated: a TX-capable burst needs keep_going")
+        t0 = time.monotonic()
+        for i in range(count):
+            if rate:
+                wait = t0 + i / rate - time.monotonic()
+                if wait > 0:
+                    time.sleep(wait)
+            if keep_going is not None and not keep_going():
+                raise TestFailure(f"send_repeated stopped after {i} of {count}: keep_going() is False")
+            if tx and i % check_every == 0:
+                assert_sim(self.client)
+            self._c.send(text)
+        return count
+
     def recv(self, timeout: float = 5.0) -> Any:
         from websockets.exceptions import ConnectionClosed
         try:
@@ -926,6 +960,52 @@ class Heartbeat:
             except Exception:
                 return
             self._stop.wait(self.interval)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._t.join(timeout=3)
+
+
+class Drain:
+    """Reads a WS on a background thread until stop(), so a test socket that only sends (or idles)
+    keeps its receive queue empty. Without a reader, the websockets client stops reading once its
+    queue is full, keepalive pongs go unanswered, and the socket dies mid-test with 1011
+    "keepalive ping timeout" (T67 under machine load). on_frame(obj) is called for every JSON text
+    frame; `frames` counts everything read; `closed` is (code, reason) once the socket closed.
+    Never start a Drain on a socket another thread is reading."""
+
+    def __init__(self, ws: "WS", on_frame: Optional[Callable[[dict], None]] = None):
+        import threading
+        self.ws, self.on_frame = ws, on_frame
+        self.frames = 0
+        self.closed: Optional[tuple] = None
+        self.error: Optional[BaseException] = None
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True, name="tr-test-drain")
+        self._t.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                m = self.ws.recv(timeout=0.2)
+            except TimeoutError:
+                continue
+            except WSClosed as e:
+                self.closed = (e.code, e.reason)
+                return
+            except Exception as e:                  # pragma: no cover - reported by the test
+                self.error = e
+                return
+            self.frames += 1
+            if isinstance(m, str) and self.on_frame is not None:
+                try:
+                    obj = json.loads(m)
+                except ValueError:
+                    continue
+                try:
+                    self.on_frame(obj)
+                except Exception:
+                    pass
 
     def stop(self) -> None:
         self._stop.set()
