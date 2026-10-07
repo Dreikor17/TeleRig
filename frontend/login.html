@@ -27,8 +27,10 @@
   .brand{display:flex;align-items:center;gap:10px;margin:0 0 18px;font-family:var(--font-ui)}
   .brand svg{width:32px;height:32px;color:var(--accent-hi)}
   .brand b{font-style:italic;font-size:22px;letter-spacing:.08em}
-  .theme{position:fixed;top:12px;right:12px;font:12px var(--font-ui);background:var(--surface);color:var(--txt-dim);
-    border:1px solid var(--border);border-radius:var(--r-ctl);padding:6px 10px;cursor:pointer}
+  .theme{position:fixed;top:12px;right:12px;display:grid;place-items:center;width:34px;height:34px;padding:0;
+    background:var(--surface);color:var(--txt-dim);border:1px solid var(--border);border-radius:var(--r-ctl);cursor:pointer}
+  .theme:hover{color:var(--txt)}
+  .theme svg{width:16px;height:16px}
   .card{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-card);padding:24px}
   .micro{margin:0 0 16px;font:700 11px var(--font-ui);letter-spacing:.14em;color:var(--txt-dim)}
   label{display:block;font:700 10px var(--font-ui);letter-spacing:.12em;text-transform:uppercase;color:var(--txt-dim);margin:14px 0 6px}
@@ -37,9 +39,11 @@
     background:var(--field);color:var(--txt);outline:none}
   input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
   #user,#setup{text-transform:uppercase}
-  #pw{padding-right:64px}
-  .eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);font:11px var(--font-ui);color:var(--txt-dim);
-    background:none;border:1px solid var(--border);border-radius:6px;padding:4px 8px;cursor:pointer}
+  #pw{padding-right:46px}
+  .eye{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:grid;place-items:center;width:32px;height:28px;
+    color:var(--txt-dim);background:none;border:1px solid var(--border);border-radius:6px;padding:0;cursor:pointer}
+  .eye:hover{color:var(--txt)}
+  .eye svg{width:16px;height:16px}
   .btn{margin-top:20px;width:100%;padding:11px;font:700 14px var(--font-ui);letter-spacing:.06em;border:none;
     border-radius:var(--r-ctl);cursor:pointer;color:#fff;background:var(--accent-solid);display:flex;gap:8px;
     align-items:center;justify-content:center}
@@ -47,7 +51,9 @@
   .spin{width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;
     animation:sp .8s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
-  .box{margin:0 0 14px;padding:10px 12px;border-radius:var(--r-ctl);font-size:13px;line-height:1.45}
+  .box{display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:10px 12px;border-radius:var(--r-ctl);font-size:13px;line-height:1.45}
+  .box>svg{width:16px;height:16px;flex:0 0 auto;margin-top:1px}
+  .box>.bt{flex:1 1 auto;min-width:0}
   .box.err{background:var(--danger-tint);border:1px solid var(--danger);color:var(--danger-hi)}
   .box.warn{background:rgba(245,158,11,.10);border:1px solid var(--warn);color:var(--warn-hi)}
   .box.ok{background:var(--accent-tint);border:1px solid var(--accent-line);color:var(--accent-hi)}
@@ -62,23 +68,23 @@
 </head>
 <body>
 <!--TR_AUTH_ICONS-->
-<button class="theme" id="themeBtn" type="button" aria-label="Toggle day / night theme">Theme</button>
+<button class="theme" id="themeBtn" type="button" aria-label="Toggle day / night theme" title="Day / night theme"><svg aria-hidden="true"><use href="#i-moon"/></svg></button>
 <main class="col">
   <div class="brand"><svg aria-hidden="true"><use href="#i-radio-tower"/></svg><b>TELERIG</b></div>
-  <div id="reasonBox" class="box info" role="status" hidden></div>
-  <div id="setupHint" class="box ok" hidden></div>
-  <div id="httpWarn" class="box warn" hidden>This connection is not encrypted — your password crosses the network in clear text. Use your https:// (Tailscale) address.</div>
+  <div id="reasonBox" class="box info" role="status" hidden><svg aria-hidden="true"><use href="#i-info"/></svg><span class="bt"></span></div>
+  <div id="setupHint" class="box ok" hidden><svg aria-hidden="true"><use href="#i-info"/></svg><span class="bt"></span></div>
+  <div id="httpWarn" class="box warn" hidden><svg aria-hidden="true"><use href="#i-triangle-alert"/></svg><span class="bt">This connection is not encrypted — your password crosses the network in clear text. Use your https:// (Tailscale) address.</span></div>
   <form class="card" id="f" autocomplete="on" novalidate>
     <p class="micro">SIGN IN</p>
-    <div id="errBox" class="box err" role="alert" hidden></div>
-    <div id="setupBox" class="box warn" role="alert" hidden>Enter the setup code shown in the TeleRig window on this PC.</div>
+    <div id="errBox" class="box err" role="alert" hidden><svg aria-hidden="true"><use href="#i-triangle-alert"/></svg><span class="bt"></span></div>
+    <div id="setupBox" class="box warn" role="alert" hidden><svg aria-hidden="true"><use href="#i-triangle-alert"/></svg><span class="bt">Enter the setup code shown in the TeleRig window on this PC.</span></div>
     <label for="user">Username</label>
     <input id="user" name="username" autocomplete="username" autocapitalize="characters" spellcheck="false"
            maxlength="32" pattern="[A-Za-z0-9/_\-]{2,32}" placeholder="N0CALL" autofocus required>
     <label for="pw">Password</label>
     <div class="field">
       <input id="pw" name="password" type="password" autocomplete="current-password" maxlength="128" required>
-      <button class="eye" id="eye" type="button" aria-pressed="false" aria-label="Show password">Show</button>
+      <button class="eye" id="eye" type="button" aria-pressed="false" aria-label="Show password" title="Show password"><svg aria-hidden="true"><use href="#i-eye"/></svg></button>
     </div>
     <div id="setupRow" hidden>
       <label for="setup">Setup code</label>
@@ -100,13 +106,18 @@
   var lockTimer = null, lockedUntil = 0, busy = false, status = null;
   var params = new URLSearchParams(location.search);
 
-  function show(el, text) { if (text !== undefined) el.textContent = text; el.hidden = false; }
+  function textOf(el) { return el.querySelector(".bt") || el; }        // the box's text, after its icon
+  function show(el, text) { if (text !== undefined) textOf(el).textContent = text; el.hidden = false; }
+  function setIcon(el, name) { var u = el.querySelector("use"); if (u) u.setAttribute("href", "#i-" + name); }
   function hide(el) { el.hidden = true; }
 
-  // theme toggle (the same key app.js uses)
+  // theme toggle (the same key and html.day class as tr.js); the icon shows the current theme
+  function themeIcon() { setIcon($("themeBtn"), document.documentElement.classList.contains("day") ? "sun" : "moon"); }
+  themeIcon();
   $("themeBtn").addEventListener("click", function () {
     var day = document.documentElement.classList.toggle("day");
     try { localStorage.setItem("telerig.theme", day ? "day" : "night"); } catch (e) {}
+    themeIcon();
   });
 
   // #setup=<code> -> sessionStorage, then removed from the address bar (F1)
@@ -145,23 +156,24 @@
     pw.type = on ? "text" : "password";
     this.setAttribute("aria-pressed", on ? "true" : "false");
     this.setAttribute("aria-label", on ? "Hide password" : "Show password");
-    this.textContent = on ? "Hide" : "Show";
+    this.title = on ? "Hide password" : "Show password";
+    setIcon(this, on ? "eye-off" : "eye");
   });
 
   fetch("/api/auth_status", { credentials: "same-origin" }).then(function (r) { return r.json(); }).then(function (s) {
     status = s || {};
     if (status.authed) { location.replace(status.must_change ? "/change-password" : "/"); return; }
     var kind = status.setup && status.setup.kind;
-    var hint = $("setupHint");
+    var hint = $("setupHint"), ht = textOf(hint);
     if (kind === "default") {
-      hint.innerHTML = "";
-      hint.append("First run: username ", strong("admin"), ", password ", strong("admin"),
+      ht.textContent = "";
+      ht.append("First run: username ", strong("admin"), ", password ", strong("admin"),
                   ", plus the setup code from the TeleRig window — you'll choose a new password next.");
       hint.hidden = false;
       if (!stored) { $("setupRow").hidden = false; }
     } else if (kind === "migrated") {
-      hint.innerHTML = "";
-      hint.append("Upgraded install: sign in as ", strong("admin"),
+      ht.textContent = "";
+      ht.append("Upgraded install: sign in as ", strong("admin"),
                   " with your previous remote-access password — or run ", code("run.bat --reset-admin"),
                   " (Windows) / ", code("python3 run.py --reset-admin"), ".");
       hint.hidden = false;

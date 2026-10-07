@@ -9,6 +9,8 @@
  *   myConn / tx / isTxOwner()                             this tab's connection id + the TX owner
  *   _inject(frame)                                        sim-only: feed a synthetic server frame
  *   fallbackLayout()                                      the stacked-tile fallback (B3 tiles)
+ *   applyTheme(day) / icon(name)                          day/night theme (html.day); an inline-sprite <svg>
+ *   menu / renderNotices(list) / noticeActions            the top-bar user menu; the notices under it
  * window.RadioLayout: a no-op stub that layout.js (B3) replaces.
  *
  * The server is the authority for everything here: roles, TX ownership and the radio. This file
@@ -56,7 +58,189 @@
     if (ROLES.includes(role)) TR.role = role;
     if (Array.isArray(perms)) TR.perms = new Set(perms);
     if (document.body) document.body.dataset.role = TR.role;
+    fillTopbar();
   };
+
+  // -- icons: <svg class="i"><use href="#i-NAME"/></svg> from the inline sprite (§4.4) -------------
+  const SVGNS = "http://www.w3.org/2000/svg";
+  TR.icon = function (name, cls) {
+    const s = document.createElementNS(SVGNS, "svg");
+    s.setAttribute("class", "i" + (cls ? " " + cls : ""));
+    s.setAttribute("aria-hidden", "true");
+    const u = document.createElementNS(SVGNS, "use");
+    u.setAttribute("href", "#i-" + name);
+    s.appendChild(u);
+    return s;
+  };
+  function setIcon(el, name) {
+    const u = el && el.querySelector("use");
+    if (u && u.getAttribute("href") !== "#i-" + name) u.setAttribute("href", "#i-" + name);
+  }
+
+  // -- day / night theme (§4.1, §4.5): html.day (+ body.day for legacy rules), set before the first
+  // paint by the head script; this owns the toggle, the sun/moon icon and the stored choice.
+  const THEME_KEY = "telerig.theme";
+  TR.isDay = () => document.documentElement.classList.contains("day");
+  TR.applyTheme = function (day, persist) {
+    day = !!day;
+    document.documentElement.classList.toggle("day", day);
+    if (document.body) document.body.classList.toggle("day", day);
+    for (const id of ["themeBtn", "umTheme"]) setIcon($(id), day ? "sun" : "moon");
+    const tb = $("themeBtn");
+    if (tb) {
+      const next = day ? "Switch to the night theme" : "Switch to the day theme";
+      tb.title = next; tb.setAttribute("aria-label", next);
+    }
+    if (persist !== false) { try { localStorage.setItem(THEME_KEY, day ? "day" : "night"); } catch (_) {} }
+    document.dispatchEvent(new CustomEvent("tr:theme", { detail: { day } }));
+  };
+  function storedDay() {
+    try { return localStorage.getItem(THEME_KEY) === "day"; } catch (_) { return TR.isDay(); }
+  }
+  window.addEventListener("storage", (e) => {            // another tab switched the theme
+    if (e.key === THEME_KEY) TR.applyTheme(e.newValue === "day", false);
+  });
+
+  // -- top bar: user, role badge, version (§4.5) ---------------------------------------------------
+  function fillTopbar() {
+    const set = (id, t) => { const el = $(id); if (el && el.textContent !== t) el.textContent = t; };
+    set("userName", TR.user || "");
+    set("umUser", TR.user || "");
+    for (const id of ["userRole", "umRole"]) {
+      const el = $(id);
+      if (!el) continue;
+      el.textContent = TR.role;
+      el.className = "badge role-" + TR.role;
+    }
+    const ub = $("userBtn");
+    if (ub) ub.title = (TR.user ? TR.user + " · " : "") + TR.role;
+    const v = $("verNow");
+    if (v && boot.version && v.textContent === "v—") v.textContent = "v" + boot.version;
+  }
+
+  // The user menu: opens from #userBtn, closes on an outside pointerdown, Escape (focus returns to
+  // the button) or an item; arrow keys / Home / End move between the visible items. Items are bound
+  // where their feature lives (theme here; arrange in layout.js; account / admin in B4).
+  function initUserMenu() {
+    const btn = $("userBtn"), menu = $("userMenu");
+    if (!btn || !menu) return;
+    const items = () => [...menu.querySelectorAll('[role="menuitem"]')]
+      .filter((el) => !el.hidden && !el.disabled && el.getClientRects().length > 0);
+    function open(focusFirst) {
+      menu.hidden = false;
+      btn.setAttribute("aria-expanded", "true");
+      if (focusFirst) { const l = items(); if (l.length) l[0].focus(); }
+    }
+    function close(refocus) {
+      if (menu.hidden) return;
+      menu.hidden = true;
+      btn.setAttribute("aria-expanded", "false");
+      if (refocus) btn.focus();
+    }
+    TR.menu = { open, close, isOpen: () => !menu.hidden };
+    btn.addEventListener("click", () => (menu.hidden ? open(false) : close(false)));
+    btn.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); open(true); }
+    });
+    document.addEventListener("pointerdown", (e) => {
+      if (!menu.hidden && !menu.contains(e.target) && !btn.contains(e.target)) close(false);
+    }, true);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !menu.hidden) { e.preventDefault(); close(true); }
+    });
+    menu.addEventListener("keydown", (e) => {
+      const l = items();
+      if (!l.length) return;
+      const i = l.indexOf(document.activeElement);
+      let n = -1;
+      if (e.key === "ArrowDown") n = (i + 1) % l.length;
+      else if (e.key === "ArrowUp") n = (i - 1 + l.length) % l.length;
+      else if (e.key === "Home") n = 0;
+      else if (e.key === "End") n = l.length - 1;
+      else if (e.key === "Tab") { close(false); return; }
+      if (n >= 0) { e.preventDefault(); l[n].focus(); }
+    });
+    menu.addEventListener("click", (e) => {
+      if (e.target.closest('[role="menuitem"]')) close(false);
+    });
+  }
+
+  // -- notices (§4.5): fixed overlay under the top bar, dismissible for this browser session -------
+  const NOTICE_DISMISS_KEY = "telerig.notices.dismissed";
+  TR.noticeActions = {};                       // key (or key prefix "audio_default") -> {label, fn}; admin.js (B4)
+  function dismissed() {
+    try { const v = JSON.parse(sessionStorage.getItem(NOTICE_DISMISS_KEY) || "[]"); return Array.isArray(v) ? v : []; }
+    catch (_) { return []; }
+  }
+  function radioName(id) {
+    const r = (Array.isArray(boot.radios) ? boot.radios : []).find((x) => x && x.id === id);
+    return r ? r.name : (id || "this radio");
+  }
+  function noticeInfo(key) {
+    if (key === "migrated_v1_password")
+      return { kind: "warn", text: "This admin password is the old shared password. From other devices it only has operator rights. Change it here, then create individual accounts." };
+    if (key === "migrated_local_only")
+      return { kind: "warn", text: "Signed in with the shared password: admin functions work only on the host PC until it is changed there (or run.bat --reset-admin)." };
+    if (key === "lockouts")
+      return { kind: "warn", text: "An account is locked out after repeated failed sign-ins.", lockouts: true };
+    if (key === "behind_proxy_stale")
+      return { kind: "warn", text: "This server is marked as behind a proxy but Tailscale Serve is off for this port." };
+    if (key.startsWith("audio_default:")) {
+      const ha = (TR.status && TR.status.host_audio) || {};
+      const dev = ha.rx_default || ha.tx_default;
+      return { kind: "info", text: "Audio for " + radioName(key.slice(14)) + " uses " + (dev ? dev + " " : "a sound card ") +
+               "(automatic) — confirm in Admin → Radio & audio." };
+    }
+    return null;
+  }
+  TR.renderNotices = function (list) {
+    const box = $("notices");
+    if (!box) return;
+    if (Array.isArray(list)) TR.notices = list.filter((k) => typeof k === "string");
+    box.textContent = "";
+    const gone = dismissed();
+    for (const key of TR.notices || []) {
+      if (gone.includes(key)) continue;
+      const info = noticeInfo(key);
+      if (!info) continue;
+      const n = document.createElement("div");
+      n.className = "notice notice-" + info.kind;
+      n.setAttribute("role", "status");
+      n.dataset.notice = key;
+      n.appendChild(TR.icon(info.kind === "info" ? "info" : "triangle-alert"));
+      const t = document.createElement("span");
+      t.className = "notice-text"; t.textContent = info.text;
+      n.appendChild(t);
+      const act = TR.noticeActions[key] || TR.noticeActions[key.split(":")[0]];
+      if (act && typeof act.fn === "function") {
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "notice-act"; b.textContent = act.label || "Open";
+        b.addEventListener("click", () => act.fn(key));
+        n.appendChild(b);
+      }
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "notice-x"; x.title = "Dismiss"; x.setAttribute("aria-label", "Dismiss this notice");
+      x.appendChild(TR.icon("x"));
+      x.addEventListener("click", () => {
+        try { sessionStorage.setItem(NOTICE_DISMISS_KEY, JSON.stringify(dismissed().concat([key]))); } catch (_) {}
+        n.remove();
+      });
+      n.appendChild(x);
+      box.appendChild(n);
+      if (info.lockouts) lockoutText(t);
+    }
+  };
+  async function lockoutText(el) {           // "ADMIN is locked out until 14:05 …" (admins may read the list)
+    try {
+      const j = await TR.api("/api/admin/lockouts", { noRedirect: true, quiet: true });
+      const users = Array.isArray(j.users) ? j.users : [];
+      if (!users.length) return;
+      const u = users[0];
+      const at = new Date(Number(u.until) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      el.textContent = u.key + " is locked out until " + at + " after repeated failed sign-ins" +
+        (users.length > 1 ? " (and " + (users.length - 1) + " more)." : ".");
+    } catch (_) {}
+  }
 
   // -- the first radio to paint (AR-44): connected radio > this browser's last > first profile --
   TR.initialRadio = (function () {
@@ -105,6 +289,7 @@
     const t = document.createElement("div");
     t.className = "toast toast-" + kind;
     t.setAttribute("role", kind === "error" ? "alert" : "status");
+    t.appendChild(TR.icon({ info: "info", warn: "triangle-alert", error: "octagon-x", ok: "check" }[kind], "toast-i"));
     const span = document.createElement("span");
     span.textContent = msg;
     t.appendChild(span);
@@ -233,6 +418,8 @@
     if (!kind) { b.hidden = true; b.className = "link-banner"; b.textContent = ""; return; }
     b.className = "link-banner " + kind;
     b.textContent = "";
+    if (kind === "fatal") b.appendChild(TR.icon("octagon-x", "lb-i"));
+    else { const sp = document.createElement("span"); sp.className = "lb-spin"; sp.setAttribute("aria-hidden", "true"); b.appendChild(sp); }
     const s = document.createElement("span");
     s.textContent = text;
     b.appendChild(s);
@@ -334,6 +521,21 @@
   };
   document.addEventListener("DOMContentLoaded", () => {
     TR.setRole(TR.role);
+    TR.applyTheme(storedDay(), false);
+    initUserMenu();
+    for (const id of ["themeBtn", "umTheme"]) {
+      const el = $(id);
+      if (el) el.addEventListener("click", () => TR.applyTheme(!TR.isDay()));
+    }
+    // overlays (link banner, notices, inline confirm, phone toasts) sit just under the top bar,
+    // whose height changes when it wraps or the phone connection form opens
+    const tb = $("topbar");
+    if (tb) {
+      const fit = () => document.documentElement.style.setProperty("--tb-h", Math.ceil(tb.getBoundingClientRect().height) + "px");
+      fit();
+      if ("ResizeObserver" in window) new ResizeObserver(fit).observe(tb);
+    }
+    TR.renderNotices(Array.isArray(boot.notices) ? boot.notices : []);
     setTimeout(() => {
       const grid = $("grid");
       if (!grid) return;                         // no tiled layout on this page (before B3)

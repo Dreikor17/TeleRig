@@ -294,7 +294,7 @@
       // flashes "turn on RX" mid-decode just because of a momentary gap or a commit.
       const ra = RA(), rxOn = ra && ra.on ? ra.on() : (lastPeak >= SILENCE);
       hint.textContent = !workerReady ? "loading neural model…"
-        : (rxOn ? "decoding…" : "turn on 🔊 RX to decode the receiver audio");
+        : (rxOn ? "decoding…" : "turn on RX audio to decode the receiver audio");
     }
   }
   function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }

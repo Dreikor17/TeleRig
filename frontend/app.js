@@ -1163,19 +1163,7 @@
     }
   })();
 
-  // ---- day / night theme ----
-  const themeBtn = $("themeBtn");
-  function applyTheme(day) {
-    document.body.classList.toggle("day", day);
-    if (themeBtn) themeBtn.textContent = day ? "☀️" : "🌙";
-    try { localStorage.setItem("telerig.theme", day ? "day" : "night"); } catch (_) {}
-  }
-  if (themeBtn) themeBtn.addEventListener("click", () => applyTheme(!document.body.classList.contains("day")));
-  (function () {
-    let t = "night";
-    try { t = localStorage.getItem("telerig.theme") || "night"; } catch (_) {}
-    applyTheme(t === "day");
-  })();
+  // (the day / night theme lives in tr.js: TR.applyTheme, html.day, set pre-paint by the head script)
 
   // ---- band-plan overlay (ARRL band plan on VHF/UHF, FCC license-class on HF) ----
   (function () {
@@ -1289,9 +1277,7 @@
   // Menu gating (§4.6, F8, AR-13, AR-14): critical items are admin-only (locked with "admin only" for
   // everyone else); writing TX TOT = OFF asks twice and sends confirm:"tot_off"; routing PTT to an
   // RTS/DTR line warns and sends confirm:"tx_route". The server decides all of it again.
-  const LOCK_SVG = '<svg class="mi-lock" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/>' +
-    '<path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  const LOCK_SVG = '<svg class="mi-lock" aria-hidden="true"><use href="#i-lock"/></svg>';   // inline sprite (§4.4)
   function menuLocked(it) { return !TR.can("menu") || (!!it.critical && !TR.can("menu_critical")); }
   function buildMenuItem(it) {
     const row = document.createElement("div");
@@ -1848,8 +1834,8 @@
     applyOperatorForm();                            // operators: the pinned transport wins (F20)
   }
   async function doConnect(body, silent) {
-    const btn = $("connectBtn");
-    btn.textContent = "Connecting…"; btn.disabled = true; connecting = true;
+    const btn = $("connectBtn"), lbl = btn.querySelector(".lbl") || btn;   // the label span keeps the plug icon
+    lbl.textContent = "Connecting…"; btn.disabled = true; connecting = true;
     try {
       await TR.api("/api/connect", { method: "POST", json: body, quiet: !!silent });
       $("conn").classList.remove("open"); blanked = false;              // fresh connection -> live data again
@@ -1858,7 +1844,7 @@
       if (!silent && e.code !== "busy") TR.toast("Connect failed: " + e.message, "error");
     } finally {
       connecting = false;
-      btn.textContent = "Connect"; btn.disabled = false;
+      lbl.textContent = "Connect"; btn.disabled = false;
       applyOperatorForm();
       refreshStatus();
     }
@@ -1960,7 +1946,7 @@
     ensureAudioCtx(); playTime = 0; rsFifo = []; rsPos = 0; audioOn = true;
   }
   // minimal audio API for overlay tools (e.g. the CW decoder/coder in cwtool.js)
-  // on(): is RX audio actually running? (the 🔊 RX button is active for both serial + LAN paths).
+  // on(): is RX audio actually running? (the RX audio button is active for both serial + LAN paths).
   // Tools use this for status instead of guessing from the instantaneous audio level.
   window.RadioAudio = { ensure: ensureAudioCtx, ctx: () => audioCtx, bus: () => rxBus, state: () => state,
     on: () => !!($("audioBtn") && $("audioBtn").classList.contains("active")) };

@@ -8,7 +8,7 @@ published by the Free Software Foundation. See the LICENSE file for the full tex
 The project is AGPL-3.0 because its neural CW decoder bundles the DeepCW model, which
 is AGPL-3.0. If you run a modified version of this software and let users interact
 with it over a network, AGPL section 13 requires you to offer them the corresponding
-source. The app links to its source repository in the CW tool's footer.
+source. The app links to its source in the top bar, the user menu and the sign-in page.
 
 Bundled / third-party components
 --------------------------------
@@ -21,6 +21,11 @@ Bundled / third-party components
 - ONNX Runtime Web  -  frontend/vendor/ort/
     In-browser ONNX inference runtime (onnxruntime-web 1.20.1).
     Copyright (C) Microsoft Corporation.  Licensed MIT.
+
+- Lucide icons  -  frontend/vendor/lucide/  (lucide-static 1.52.0)
+    Copyright (c) Lucide Icons and Contributors.  Licensed ISC; portions derived from
+    Feather, Copyright (c) 2013-present Cole Bemis, licensed MIT (frontend/vendor/lucide/LICENSE).
+    tools/build_icons.py turns the vendored SVGs into the inline sprites the pages carry.
 
 The Icom CI-V / RS-BA1 LAN and Yaesu CAT implementations are clean-room work informed
 by public open-source projects (wfview, kappanhang, Hamlib); no code was copied.

@@ -345,6 +345,7 @@ async def index(request):
         html = html.replace("</head>", tag + "\n</head>", 1)
     role = p.role if p.role in policy.ROLES else "viewer"
     html = html.replace("<body>", f'<body data-role="{role}">', 1)
+    html = html.replace("<!--TR_ICONS-->", account_api.sprite("sprite.svg"), 1)   # inline icons (§4.4)
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 

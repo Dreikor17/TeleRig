@@ -4,23 +4,25 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TeleRig</title>
+<script>try{var t=localStorage.getItem("telerig.theme");if(t===null)t=localStorage.getItem("radiowebop.theme");if(t==="day")document.documentElement.classList.add("day")}catch(e){}</script>
 <link rel="stylesheet" href="/static/style.css" />
 <!--TR_BOOT-->
 </head>
 <body>
+<!--TR_ICONS-->
 
-<header class="topbar">
-  <div class="brand"><span class="mk">TELE</span>Rig<span class="model" id="modelLabel"></span><span class="ver" id="verNow">v0.2.23</span><a class="ver-update" id="verUpdate" hidden target="_blank" rel="noopener"></a>
-    <button id="themeBtn" class="theme-btn" title="Day / night theme">🌙</button>
-  </div>
+<header class="topbar" id="topbar">
+  <div class="tb-brand"><svg class="i brand-i" aria-hidden="true"><use href="#i-radio-tower"/></svg><b class="brand-name">TELERIG</b>
+    <span class="model" id="modelLabel"></span><span class="ver" id="verNow">v—</span>
+    <a class="ver-update" id="verUpdate" hidden target="_blank" rel="noopener"></a></div>
   <div class="onair" id="onAir" hidden role="status" aria-live="assertive">
     <span class="onair-dot" aria-hidden="true"></span><b>ON AIR</b><span id="onAirWho"></span><span id="onAirTime" class="num"></span>
-    <button id="onAirStop" class="onair-stop" type="button" data-tx><span id="onAirStopLbl">STOP</span></button>
+    <button id="onAirStop" class="onair-stop" type="button" data-tx><svg class="i" aria-hidden="true"><use href="#i-octagon-x"/></svg><span id="onAirStopLbl">STOP</span></button>
   </div>
   <div class="conn open" id="conn">
     <span id="led" class="led"></span>
     <span id="connlabel" class="connlabel">Disconnected</span>
-    <button id="connToggle" class="conn-toggle" data-perm="connect" title="Connection settings">⚙</button>
+    <button id="connToggle" class="conn-toggle tb-btn" type="button" data-perm="connect" title="Connection settings" aria-label="Connection settings"><svg class="i" aria-hidden="true"><use href="#i-plug"/></svg></button>
     <div class="conn-controls" id="connControls" data-perm="connect">
       <span class="radio-pick">
         <select id="radioSel" title="Radio model"></select>
@@ -37,13 +39,37 @@
         <input id="lanUser" class="lan-user" placeholder="net user" title="Network username" />
         <input id="lanPass" type="password" class="lan-pass" placeholder="password" title="Network password" />
       </span>
-      <button id="connectBtn" class="ctl-btn primary">Connect</button>
-      <button id="disconnectBtn" class="ctl-btn">Disconnect</button>
-      <button id="remoteBtn" class="ctl-btn" title="Set up secure remote access">🌐 Remote</button>
+      <button id="connectBtn" class="ctl-btn pill pill-go" type="button"><svg class="i" aria-hidden="true"><use href="#i-plug"/></svg><span class="lbl">Connect</span></button>
+      <button id="disconnectBtn" class="ctl-btn pill pill-stop" type="button"><svg class="i" aria-hidden="true"><use href="#i-unplug"/></svg><span class="lbl">Disconnect</span></button>
+      <button id="remoteBtn" class="ctl-btn" type="button" title="Set up secure remote access"><svg class="i" aria-hidden="true"><use href="#i-globe"/></svg><span class="lbl">Remote</span></button>
     </div>
   </div>
+  <nav class="tb-actions" aria-label="App">
+    <!-- #arrangeBtn / #adminBtn (and their menu twins) stay hidden until B3 (arrange) / B4 (admin) bind them -->
+    <button id="arrangeBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Arrange panels" aria-label="Arrange panels" hidden><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg></button>
+    <button id="themeBtn" class="tb-btn desk-only" type="button" title="Day / night theme" aria-label="Day / night theme"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
+    <a id="sourceLink" class="tb-btn desk-only" href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener" title="Source code (AGPL-3.0)" aria-label="Source code (AGPL-3.0)"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></a>
+    <button id="adminBtn" class="tb-btn desk-only" type="button" data-perm="admin" title="Administration" aria-label="Administration" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg></button>
+    <div class="user-menu">
+      <button id="userBtn" class="tb-btn user" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="userMenu" title="Account">
+        <svg class="i" aria-hidden="true"><use href="#i-user"/></svg><span id="userName" class="user-name"></span><span id="userRole" class="badge"></span></button>
+      <div id="userMenu" class="menu" role="menu" aria-labelledby="userBtn" hidden>
+        <div class="um-head"><b id="umUser"></b> <span id="umRole" class="badge"></span></div>
+        <button role="menuitem" type="button" id="umArrange" class="phone-only" hidden><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
+        <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Day / night theme</span></button>
+        <button role="menuitem" type="button" id="umAdmin" class="phone-only" data-perm="admin" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Administration</button>
+        <button role="menuitem" type="button" id="umChangePw" hidden><svg class="i" aria-hidden="true"><use href="#i-key-round"/></svg>Change password…</button>
+        <button role="menuitem" type="button" id="umSignoutAll" hidden><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Sign out everywhere</button>
+        <a role="menuitem" href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg>Source &amp; license (AGPL-3.0)</a>
+        <button role="menuitem" type="button" id="umSignout" class="danger" hidden><svg class="i" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out</button>
+      </div>
+    </div>
+  </nav>
 </header>
-<div id="linkBanner" class="link-banner" role="alert" hidden></div>
+<div class="tr-overlays" id="overlays">
+  <div id="linkBanner" class="link-banner" role="alert" hidden></div>
+  <div id="notices" class="notices" aria-live="polite"></div>
+</div>
 
 <div class="modal-overlay" id="remoteModal" hidden>
   <div class="modal-card">
@@ -105,8 +131,8 @@
       <div class="grp audio-grp">
         <div class="grp-title">AUDIO <span class="lan-only" id="audioAvail"></span></div>
         <div class="row">
-          <button class="key" id="audioBtn">🔊 RX</button>
-          <button class="key ptt" id="micBtn" data-tx>🎤 Mic</button>
+          <button class="key" id="audioBtn" type="button"><svg class="i" aria-hidden="true"><use href="#i-volume-2"/></svg><span>RX</span></button>
+          <button class="key ptt" id="micBtn" type="button" data-tx><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span>Mic</span></button>
         </div>
         <div class="usb-audio" id="audioDevs" hidden>
           <label class="sl sl-dev" data-tx><span>Mic In</span><select id="micInDev" aria-label="Mic In — your microphone on this computer, captured for transmit" title="Your microphone on THIS computer — captured and sent to the radio for transmit"></select></label>
@@ -146,7 +172,7 @@
         <span id="lblRight" class="lbl-right"></span>
       </div>
       <div class="no-scope" id="noScope" hidden>No band scope over CAT — turn on RX audio for an audio spectrum, or just use frequency &amp; mode control</div>
-      <div class="af-badge" id="afBadge" hidden>♪ audio spectrum (RX passband)</div>
+      <div class="af-badge" id="afBadge" hidden><svg class="i" aria-hidden="true"><use href="#i-audio-waveform"/></svg> audio spectrum (RX passband)</div>
       <div class="scope-tunehint" id="scopeTuneHint">click or drag the waterfall to tune</div>
     </div>
 
@@ -177,7 +203,7 @@
       <div class="tp-body">
         <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
         <div class="cw-row">
-          <span class="cw-hint" id="cwHint">turn on 🔊 RX to decode the receiver audio</span>
+          <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
           <button class="key sm" id="cwClear">Clear</button>
         </div>
         <div class="cw-row">
@@ -450,7 +476,7 @@
 <div id="bandTip" class="band-tip" hidden></div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <div id="srLive" class="sr-only" aria-live="assertive"></div>
-<button id="txStopFab" class="tx-fab" type="button" hidden data-tx>STOP · <span id="txStopFabTime"></span></button>
+<button id="txStopFab" class="tx-fab" type="button" hidden data-tx><svg class="i" aria-hidden="true"><use href="#i-octagon-x"/></svg>STOP · <span id="txStopFabTime"></span></button>
 
 <script src="/static/tr.js"></script>
 <script src="/static/waterfall.js"></script>

@@ -136,8 +136,28 @@ def _record_failure(user: Optional[str], src: str, ip: str, **kw) -> None:
         audit.log("lockout_tripped", user=user, until=limiter.locked_until(user))
 
 
+_SPRITES: dict = {}
+
+
+def sprite(name: str) -> str:
+    """The inline Lucide sprite `frontend/vendor/lucide/<name>` (sprite.svg for the app, sprite-auth.svg
+    for the sign-in pages; built by tools/build_icons.py), read on first use and cached (§4.4). Pages
+    carry their icons inline, so they never need /static (gated) or the network. A missing file only
+    costs the icons, never the page."""
+    s = _SPRITES.get(name)
+    if s is None:
+        try:
+            s = (FRONTEND / "vendor" / "lucide" / name).read_text(encoding="utf-8")
+        except OSError:
+            console(f"WARNING: icon sprite frontend/vendor/lucide/{name} is missing - run tools/build_icons.py")
+            s = ""
+        _SPRITES[name] = s
+    return s
+
+
 def _page(name: str) -> HTMLResponse:
     html = (FRONTEND / name).read_text(encoding="utf-8")
+    html = html.replace("<!--TR_AUTH_ICONS-->", sprite("sprite-auth.svg"), 1)
     return HTMLResponse(html, headers=NO_STORE)
 
 
