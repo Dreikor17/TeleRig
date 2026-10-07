@@ -294,6 +294,55 @@ def t19_t20_only_the_owners_drop_unkeys(ctx):
         w1.close()
 
 
+# -- T19b: a KICKED owner whose client ignores the close frame is unkeyed at once (I5, I7) ------------------------------
+@test("tx")
+def t19b_kicked_owner_unkeyed_at_once(ctx):
+    """OP1 keys over a RawWS that never answers the close frame and keeps sending tx_hb. A gen bump
+    (role change / password reset / sign-out-all) and then a delete kick the socket 4401: the radio
+    must be unkeyed right away (the kick releases TX), not when the close times out plus 6 s."""
+    srv, cl = setup(ctx, users=(("OP1", "operator"), ("OP2", "operator")))
+    for n, (body, label) in enumerate((("accounts.bump_gen('OP1')", "gen bump"),
+                                       ("accounts.delete_user('OP1')", "delete")), start=1):
+        if n > 1:
+            r = harness.login(cl["OP1"], "OP1", harness.user_password("OP1"))
+            check(r.status == 200, f"OP1 signs in again: {r!r}")
+        raw = harness.RawWS(cl["OP1"])
+        hb = None
+        try:
+            raw.recv_json(type="hello")
+            raw.send({"action": "ptt", "tx": True, "seq": n})            # assert_sim first (RawWS)
+            end = time.monotonic() + 5
+            while True:
+                m = raw.recv_json(timeout=max(0.05, end - time.monotonic()))
+                if m.get("type") == "tx" and (m.get("req") or {}).get("seq") == n:
+                    break
+            hb = harness.Heartbeat(raw, interval=0.5)                    # keeps going after the kick
+            time.sleep(0.6)
+            eq((radio_state(cl["OP2"])["ptt"], (tx_owner(cl["OP2"]) or {}).get("user")), (True, "OP1"),
+               f"{label}: OP1 keyed")
+            harness.accounts_child(srv.tmp, body)
+            t0 = time.monotonic()                                        # the store now holds the change
+            code = raw.wait_close_frame(timeout=5)                       # NOT answered
+            t_close = time.monotonic() - t0
+            eq(code, (4401, "session_revoked"), f"{label}: the owner's socket is kicked")
+            got = wait_until(lambda: radio_state(cl["OP2"])["ptt"] is False, timeout=8.0, step=0.05)
+            dt = time.monotonic() - t0
+            check(got, f"{label}: still keyed {dt:.2f}s after the change")
+            check(dt - t_close <= 1.0, f"{label}: unkeyed {dt - t_close:.2f}s after the kick (want <= 1 s)")
+            check(dt <= 2.0, f"{label}: unkeyed {dt:.2f}s after the store change (I7: about 1 s)")
+            ends = audit_wait(srv.tmp, lambda r: r.get("ev") == "tx_end" and r.get("user") == "OP1", timeout=4)
+            eq(len(ends), n, f"{label}: one tx_end per session")
+            check(ends[-1]["reason"] == "disconnect" and ends[-1]["dur_s"] < 5.0,
+                  f"{label}: released by the kick, not the heartbeat timeout: {ends[-1]}")
+            time.sleep(1.5)                                              # tx_hb keeps arriving from the closing socket
+            eq((radio_state(cl["OP2"])["ptt"], tx_owner(cl["OP2"])), (False, None),
+               f"{label}: the kicked socket's tx_hb revives nothing")
+        finally:
+            if hb:
+                hb.stop()
+            raw.close()
+
+
 # -- T23: TOT=OFF needs admin + confirm; critical writes audited ---------------------------------------------------
 @test("tx")
 def t23_tot_off_and_critical_writes(ctx):
@@ -630,6 +679,51 @@ def t70_connect_pins(ctx):
     eq(r.status, 200, "ADMIN connects (re-pins sim)")
     eq(json.loads((srv.tmp / "config.json").read_text(encoding="utf-8"))["radio_transports"]["ic9700"],
        {"transport": "sim"}, "re-pinned")
+
+
+# -- T70c: no pin, no operator connect (F20, AR-23) ----------------------------------------------------------------------------
+@test("tx")
+def t70c_operator_connect_needs_a_pin(ctx):
+    """Fresh / upgraded install (v1 never stored last_radio): before any admin connect an operator
+    cannot connect anything. A pin with last_radio unset allows only that radio on its pin, and an
+    operator can never disconnect and then connect a different radio."""
+    srv, cl = setup(ctx, users=(("OP1", "operator"),), connect=False)
+    op = cl["OP1"]
+    st = op.get("/api/status").json()
+    eq((st["connected"], st["last_radio"], st["pinned_transport"]), (False, None, None), "fresh install: nothing pinned")
+    for rid in ("ic9700", "ft991a"):
+        r = op.post("/api/connect", {"transport": "sim", "radio": rid})
+        eq((r.status, _err(r), r.json().get("reason")), (403, "admin_required", "transport_not_pinned"),
+           f"F20 OP1 sim {rid} before any admin connect {r!r}")
+        check("ask an admin" in (r.json().get("message") or "").lower(), f"no-pin message: {r.json()}")
+    eq(op.get("/api/status").json()["connected"], False, "nothing connected")
+    eq([x for x in harness.audit_records(srv.tmp, "audit.log") if x.get("ev") == "radio_connect"], [],
+       "no connect audited")
+
+    # A pin set in Admin -> Radio & audio (A5) with last_radio unset: that radio, on its pin, only.
+    cfgp = srv.tmp / "config.json"
+    cfg = json.loads(cfgp.read_text(encoding="utf-8")) if cfgp.exists() else {}
+    cfg.pop("last_radio", None)
+    cfg["radio_transports"] = {"ic9700": {"transport": "sim"}}
+    cfgp.write_text(json.dumps(cfg), encoding="utf-8")
+    time.sleep(0.7)
+    eq(op.get("/api/status").json()["last_radio"], None, "last_radio still unset")
+    r = op.post("/api/connect", SIM)
+    eq(r.status, 200, f"OP1 connects the pinned radio on its pin {r!r}")
+    eq(op.post("/api/disconnect", {}).status, 200, "OP1 disconnects")
+    r = op.post("/api/connect", {"transport": "sim", "radio": "ft991a"})
+    eq((r.status, _err(r), r.json().get("reason")), (403, "admin_required", "transport_not_pinned"),
+       f"OP1 cannot follow a disconnect with another (unpinned) radio {r!r}")
+
+    # After an admin connect (last_radio + pin): disconnect then another radio -> switch_radio.
+    eq(cl["ADMIN"].post("/api/connect", SIM).status, 200, "ADMIN connects (pins, last_radio)")
+    eq(op.post("/api/disconnect", {}).status, 200, "OP1 disconnects")
+    r = op.post("/api/connect", {"transport": "sim", "radio": "ft991a"})
+    eq((r.status, _err(r), r.json().get("reason")), (403, "admin_required", "switch_radio"),
+       f"OP1 cannot switch the radio by disconnect + connect {r!r}")
+    st = op.get("/api/status").json()
+    eq((st["connected"], st["last_radio"]), (False, "ic9700"), "still disconnected; last_radio unchanged")
+    eq(op.post("/api/connect", SIM).status, 200, "OP1 reconnects the current radio on its pin")
 
 
 # -- T70b: disconnect rules ------------------------------------------------------------------------------------------------------

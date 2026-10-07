@@ -291,7 +291,23 @@ C("LAN host 'radio.lan' and an IPv6 literal accepted",
 SIMC = {"transport": "sim"}
 SER = {"transport": "serial", "port": "COM7", "baud": 38400}
 C("F20 admin is never limited", policy.connect_rule_error("admin", "ft991a", SER, "ic9700", {}), None)
-C("F20 fresh install (no last_radio, no pin) -> allowed", policy.connect_rule_error("operator", "ic9700", SIMC, None, {}), None)
+C("F20 fresh install (no last_radio, no pin) -> transport_not_pinned",
+  policy.connect_rule_error("operator", "ic9700", SIMC, None, {}), "transport_not_pinned")
+C("F20 fresh install: an operator serial connect (any COM port) -> transport_not_pinned",
+  policy.connect_rule_error("operator", "ft991a", {"transport": "serial", "port": "COM3", "baud": 38400}, None, {},
+                            P["ft991a"]), "transport_not_pinned")
+C("F20 fresh install: an operator LAN connect (any host) -> transport_not_pinned",
+  policy.connect_rule_error("operator", "ic9700", {"transport": "lan", "host": "10.0.0.1", "port": 50001}, None, {}),
+  "transport_not_pinned")
+C("F20 no last_radio, pins None / not a dict -> transport_not_pinned",
+  [policy.connect_rule_error("operator", "ic9700", SIMC, None, pins) for pins in (None, [], {"ic9700": "sim"})],
+  ["transport_not_pinned"] * 3)
+C("F20 no last_radio, but the radio is pinned (Admin -> Radio & audio) -> allowed on its pin",
+  policy.connect_rule_error("operator", "ic9700", SIMC, None, {"ic9700": SIMC}), None)
+C("F20 no last_radio, pinned radio, another transport -> transport_not_pinned",
+  policy.connect_rule_error("operator", "ft991a", SIMC, None, {"ft991a": SER}), "transport_not_pinned")
+C("F20 no last_radio: another radio without its own pin -> transport_not_pinned",
+  policy.connect_rule_error("operator", "ft991a", SIMC, None, {"ic9700": SIMC}), "transport_not_pinned")
 C("T70 operator, other radio -> switch_radio",
   policy.connect_rule_error("operator", "ft991a", SIMC, "ic9700", {"ic9700": SIMC}), "switch_radio")
 C("T70 operator, the pinned transport -> allowed",

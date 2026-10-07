@@ -17,7 +17,9 @@ Rules (see the table in §2.13):
   * The arbiter keeps its OWN monotonic session clock: a session holding ptt or vox is
     force-released SESSION_MAX (120 s) after it started, whatever the radio deadline says; cw and
     tune claims have caps (I18).
-  * The owner's socket closing, or 6 s without tx_hb from the owner, releases (I5).
+  * The owner's socket closing or being kicked (the server's kick hook; the watchdog checks it
+    too), or 6 s without tx_hb from the owner, releases (I5, I7). A kicked connection's tx_hb is
+    ignored.
   * Reconciliation: a claim not shown in radio state for 1 s after the key grace is dropped (the
     radio failsafe, a finished CW message, a start that silently did nothing).
   * EXTERNAL needs 0.6 s of persistent radio TX while idle; a session the radio ended is reattached
@@ -104,6 +106,12 @@ class TxArbiter:
             return self.radio().state or {}
         except Exception:
             return {}
+
+    def _alive(self, conn) -> bool:
+        try:
+            return bool(self.conn_alive(conn))
+        except Exception:
+            return False                              # fail safe: an unknown connection is gone
 
     def holds(self, conn_id, claim: str) -> bool:
         return self.owner is not None and self.owner == conn_id and claim in self.claims
@@ -323,11 +331,18 @@ class TxArbiter:
             self._flush()
 
     def on_tx_hb(self, conn) -> None:
-        """tx_hb: refresh the owner's heartbeat. Never calls the radio (I16); a no-op otherwise."""
+        """tx_hb: refresh the owner's heartbeat. Never calls the radio (I16); a no-op otherwise.
+        A kicked connection (`closing`: its close frame is out) never keeps a session alive, even
+        when its client ignores the close and keeps sending tx_hb."""
+        if getattr(conn, "closing", False):
+            return
         if self.owner is not None and self.owner == getattr(conn, "id", None):
             conn.last_hb = self.clock()
 
     def on_conn_closed(self, conn) -> None:
+        """The connection's socket closed, or the server kicked it (Hub.on_kick): if it owns TX,
+        release now (§2.13 "c's socket closes -> force_release immediately", I5, I7). Connection
+        ids are never reused, so this can never end another connection's session."""
         if self.owner is not None and self.owner == getattr(conn, "id", None):
             self.force_release("disconnect")
 
@@ -456,6 +471,11 @@ class TxArbiter:
                 self._end_session("radio", None)
             return
         # owned by a connection
+        oc = self.owner_conn
+        if oc is not None and not self._alive(oc):
+            # Backstop for the kick hook: the owner's socket was kicked or is gone (I5, I7).
+            self.force_release("disconnect")
+            return
         if (self.claims & {"ptt", "vox"}) and now >= self.session_start + SESSION_MAX:
             self.force_release("timeout")
             return
@@ -463,7 +483,6 @@ class TxArbiter:
             if k in self.claims and now >= self.claim_cap.get(k, float("inf")):
                 self.force_release("timeout")
                 return
-        oc = self.owner_conn
         if not lag and now > self.hb_grace_until and oc is not None \
                 and now - getattr(oc, "last_hb", 0.0) > HB_TIMEOUT:
             self._audit("tx_hb_timeout", user=self.owner_user, conn=self.owner,

@@ -16,7 +16,7 @@ import time
 from backend import policy, profiles, txarb
 from backend.audio_router import AudioRouter
 from backend.hostaudio import HostAudio
-from backend.hub import Conn
+from backend.hub import CTL_MAX, Conn, Hub
 from backend.lan import LanTransport
 from backend.radio import Radio
 from backend.transport import SimTransport
@@ -475,6 +475,112 @@ try:
 finally:
     real.disconnect()
 C("T41 simulator disconnected", (real.state["connected"], real._tp), (False, None))
+
+
+# -- a KICKED owner is released at once (I5, I7): tx_hb ignored, watchdog backstop, the Hub kick hook --------
+e = Env()
+a = e.conn(1)
+e.arb.claim(a, "ptt")
+a.closing = True                                     # kicked: its close frame is out, the client ignores it
+e.clock.t += 1.0
+hb0 = a.last_hb
+e.arb.on_tx_hb(a)
+C("tx_hb from a kicked (closing) owner is ignored", a.last_hb, hb0)
+e.radio.calls.clear()
+e.tick(0.1, 0.1)
+C("watchdog backstop: a kicked owner is force-released on the next tick", (e.arb.owner, e.radio.calls),
+  (None, [("set_ptt", False)]))
+C("... audit tx_end reason disconnect", [k["reason"] for k in e.evs("tx_end")], ["disconnect"])
+C("... no tx_revoked is queued to the closing socket", [f for _, f in e.sent if f.get("type") == "tx_revoked"], [])
+e = Env()
+a = e.conn(1)
+e.arb.claim(a, "ptt")
+e.arb.conn_alive = lambda c: (_ for _ in ()).throw(RuntimeError("boom"))
+e.tick(0.1, 0.1)
+C("a conn_alive that raises counts as gone (fail safe): released", (e.arb.owner, e.radio.state["ptt"]), (None, False))
+
+
+class _KickWS:
+    def __init__(self, block=False):
+        self.closed = None
+        self.gate = asyncio.Event()
+        if not block:
+            self.gate.set()
+
+    async def send_text(self, t):
+        await self.gate.wait()
+
+    async def send_bytes(self, b):
+        await self.gate.wait()
+
+    async def close(self, code=1000, reason=None):
+        self.closed = (code, reason)
+
+
+async def _settle(n=30):
+    for _ in range(n):
+        await asyncio.sleep(0)
+
+
+async def kicked_owner():
+    """The server's wiring (server.py): hub.on_kick -> arb.on_conn_closed, conn_alive = open and
+    registered. The owner's client ignores the close frame and keeps sending tx_hb."""
+    hub = Hub()
+    hub.loop = asyncio.get_running_loop()
+    radio = FakeRadio()
+    audits = []
+    arb = txarb.TxArbiter(lambda: radio, send_to=lambda c, f: hub.send_to(c, f),
+                          broadcast=lambda f: hub.broadcast_control(f),
+                          audit=lambda ev, **kw: audits.append((ev, kw)),
+                          conn_alive=lambda c: c is not None and not c.closing and hub.conns.get(c.id) is c)
+    hub.on_kick = lambda c, code, reason: arb.on_conn_closed(c)
+    ws1, ws2 = _KickWS(), _KickWS()
+    op1, op2 = hub.add(ws1, user="OP1", role="operator"), hub.add(ws2, user="OP2", role="operator")
+    hub.start_sender(op1)
+    hub.start_sender(op2)
+    C("kick hook: OP1 keys", arb.claim(op1, "ptt"), "started")
+    hub.kick_user("OP2", 4401, "session_revoked")       # another user's kick never touches OP1's TX
+    await _settle()
+    C("kick hook: kicking a non-owner leaves the owner keyed", (arb.owner, radio.state["ptt"]), (op1.id, True))
+    hb_before = op1.last_hb
+    hub.kick_user("OP1", 4401, "session_revoked")      # gen bump / delete / role change
+    arb.on_tx_hb(op1)                                   # the client ignores the close and heartbeats
+    C("... a kicked owner's tx_hb does not refresh its heartbeat", op1.last_hb, hb_before)
+    await _settle()
+    arb.on_tx_hb(op1)
+    C("kick hook: the kicked owner is unkeyed at once (no wait for the receive loop or 6 s)",
+      (arb.owner, radio.state["ptt"], ws1.closed), (None, False, (4401, "session_revoked")))
+    C("... one tx_end, reason disconnect", [kw["reason"] for ev, kw in audits if ev == "tx_end"], ["disconnect"])
+    C("... its later tx_hb revives nothing", (arb.owner, op1.last_hb), (None, hb_before))
+    arb.on_conn_closed(op1)                             # the receive loop's finally, later: a no-op
+    C("... the later socket close is a no-op (no second tx_end)",
+      [ev for ev, kw in audits].count("tx_end"), 1)
+
+    # 1013 INSIDE an arbiter call: the tx frame of OP3's own claim overflows its control queue. The kick
+    # hook is deferred (call_soon), so the arbiter is never re-entered mid-claim: tx_start, then tx_end.
+    audits.clear()
+    radio.calls.clear()
+    ws3 = _KickWS(block=True)
+    op3 = hub.add(ws3, user="OP3", role="operator")
+    hub.start_sender(op3)
+    await _settle()
+    while len(op3.ctl) < CTL_MAX:
+        hub.send_to(op3, {"type": "busy", "action": "ptt"})
+    C("1013 in a claim: the claim itself completes", arb.claim(op3, "ptt"), "started")
+    C("... and the hook did not run inside it", (arb.owner, ws3.closed is None), (op3.id, True))
+    await _settle()
+    C("... then the slow consumer is closed 1013 and released",
+      (ws3.closed, arb.owner, radio.calls), ((1013, "slow_consumer"), None, [("set_ptt", True), ("set_ptt", False)]))
+    C("... audit order tx_start then tx_end(disconnect), once each",
+      [(ev, kw.get("reason")) for ev, kw in audits if ev in ("tx_start", "tx_end")],
+      [("tx_start", None), ("tx_end", "disconnect")])
+    for c in list(hub.conns.values()):
+        hub.remove(c)
+        if c.sender:
+            c.sender.cancel()
+    await _settle()
+
+asyncio.run(kicked_owner())
 
 
 # -- T68: the watchdog survives stalls (lag-aware) and failing ticks ----------------------------------------

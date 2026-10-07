@@ -136,7 +136,9 @@ def call(method, path, body=None):
     out.append([path, r.status, r.json()])
 SIM = {{"transport": "sim", "radio": "ic9700"}}
 call("POST", "/api/connect", {{"transport": "serial", "port": "COM99", "radio": "ic9700"}})
-call("POST", "/api/connect", dict(SIM, auto=True))      # allowed: autoconnect on, not spent
+call("POST", "/api/connect", dict(SIM, auto=True))      # F20: an operator, nothing pinned yet -> refused
+server._pin_transport("ic9700", {{"transport": "sim"}}, "test")   # what an admin connect records
+call("POST", "/api/connect", dict(SIM, auto=True))      # allowed: autoconnect on, not spent, on the pin
 call("POST", "/api/disconnect")                          # explicit disconnect spends it
 call("POST", "/api/connect", dict(SIM, auto=True))      # refused now
 call("POST", "/api/connect", SIM)                        # explicit still works
@@ -149,7 +151,8 @@ print("RESULT " + json.dumps(out))
 def autoconnect_spent_after_disconnect(ctx):
     """In-process ASGI calls in a child (no listening socket): TELERIG_SIM_ONLY=1 but auto-connect
     left ON, to show that an explicit disconnect spends the boot auto-connect. The child signs in as
-    an operator it creates in the scratch store."""
+    an operator it creates in the scratch store; with nothing pinned that operator may not connect
+    (F20), so the child then pins the simulator the way an admin connect does."""
     code = _CHILD.format(tests=str(harness.TESTS), repo=str(harness.REPO))
     r = harness.run_child(["-c", code], ctx.tmp(), timeout=120, sim_only=True, no_autoconnect=False)
     line = next((ln for ln in (r.stdout or "").splitlines() if ln.startswith("RESULT ")), None)
@@ -157,8 +160,10 @@ def autoconnect_spent_after_disconnect(ctx):
     res = json.loads(line[len("RESULT "):])
     got = [(p, s, (j or {}).get("error")) for p, s, j in res]
     eq(got, [("/api/connect", 403, "sim_only"),
+             ("/api/connect", 403, "admin_required"),
              ("/api/connect", 200, None),
              ("/api/disconnect", 200, None),
              ("/api/connect", 409, "autoconnect_disabled"),
              ("/api/connect", 200, None),
              ("/api/disconnect", 200, None)])
+    eq((res[1][2] or {}).get("reason"), "transport_not_pinned", "F20: no operator connect before a pin exists")

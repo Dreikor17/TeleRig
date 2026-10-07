@@ -161,6 +161,20 @@ audio.arb = arb
 hub.on_radio_state = lambda snap: arb.on_radio_state(snap)
 
 
+def _on_kick(conn, code: int, reason: str) -> None:
+    """Every kick (role/password change, delete, sign-out, revocation, expiry, lock, 1013 slow
+    consumer): a kicked TX owner is released NOW, not when its receive loop ends. A client that
+    ignores the close frame would otherwise keep the carrier up for the close timeout plus the
+    heartbeat timeout (I5, I7). Runs on the loop (Hub defers it with call_soon)."""
+    try:
+        arb.on_conn_closed(conn)
+    except Exception as e:
+        console(f"TeleRig: TX release on kick failed: {e!r}")
+
+
+hub.on_kick = _on_kick
+
+
 class _PolicyCtx:
     """What policy.evaluate() needs to know about the server (looked up at call time)."""
     @property
@@ -467,12 +481,16 @@ async def api_connect(request):
     connected = bool(radio.state.get("connected"))
     if info["auto"] and connected:                   # a page load never switches a connected radio
         return _connect_error(409, "already_connected", "A radio is already connected.")
-    if p.role != "admin":                            # F20 (AR-23)
-        why = policy.connect_rule_error(p.role, info["radio"], canon, settings.last_radio(),
-                                        settings.radio_transports(), profile)
+    if p.role != "admin":                            # F20 (AR-23): the current radio, on its pin only
+        pins = settings.radio_transports()
+        why = policy.connect_rule_error(p.role, info["radio"], canon, settings.last_radio(), pins, profile)
         if why:
-            msg = ("Only an admin can switch the radio." if why == "switch_radio" else
-                   "Only an admin can connect this radio on another port or transport.")
+            if why == "switch_radio":
+                msg = "Only an admin can switch the radio."
+            elif not isinstance((pins or {}).get(info["radio"]), dict):
+                msg = "Ask an admin to connect this radio once."       # no pin yet (§4.5)
+            else:
+                msg = "Only an admin can connect this radio on another port or transport."
             return _connect_error(403, "admin_required", msg, reason=why)
         if connected:
             return _connect_error(409, "already_connected", "The radio is already connected.")
@@ -726,8 +744,10 @@ def _on_text(conn, text: str) -> None:
 
     A kicked connection (`conn.closing`: its close frame is already out) and a locked server act on
     nothing but the fast path. A client that ignores the close frame can otherwise keep commanding
-    the radio until the close timeout drops it (about 10 s). The receive loop keeps running, so the
-    4403/4401 close code is not replaced."""
+    the radio until the close timeout drops it (about 10 s). The kick itself already released the
+    connection's TX (Hub.on_kick), and its tx_hb is ignored by the arbiter, so the fast path can
+    only stop TX, never keep it up. The receive loop keeps running, so the 4403/4401 close code is
+    not replaced."""
     try:
         if len(text) > WS_TEXT_MAX or len(text.encode("utf-8", "surrogatepass")) > WS_TEXT_MAX:
             if not conn.closing:

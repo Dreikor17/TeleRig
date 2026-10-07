@@ -740,17 +740,24 @@ def same_transport(canon: dict, pin: Optional[dict], profile=None) -> bool:
 def connect_rule_error(role: str, radio_id: str, canon: dict, last_radio: Optional[str],
                        pins: dict, profile=None) -> Optional[str]:
     """§2.10 step 4 (F20, AR-23): None when allowed, else the reason (switch_radio |
-    transport_not_pinned). Admins are never limited here."""
+    transport_not_pinned). Admins are never limited here.
+
+    A non-admin needs BOTH:
+      * the radio: equal to settings.last_radio (only while last_radio is unset may it be any
+        radio, e.g. one pinned in Admin -> Radio & audio before any admin connect), and
+      * a pin: settings.radio_transports[radio] must exist and the request must equal it.
+    With no pin there is nothing an operator may open: a fresh or upgraded install (v1 never
+    stored last_radio) refuses every operator connect until an admin connects once (§4.5 "Ask an
+    admin to connect this radio once"). Otherwise an operator could pick any COM port (pyserial
+    raises RTS/DTR on open, which keys an RTS-PTT interface) or aim LAN credentials anywhere."""
     if role == "admin":
         return None
     if last_radio is not None and radio_id != last_radio:
         return "switch_radio"
-    pin = (pins or {}).get(radio_id)
-    if pin is not None:
-        return None if same_transport(canon, pin, profile) else "transport_not_pinned"
-    if last_radio is not None:
+    pin = (pins or {}).get(radio_id) if isinstance(pins, dict) else None
+    if not isinstance(pin, dict):
         return "transport_not_pinned"
-    return None
+    return None if same_transport(canon, pin, profile) else "transport_not_pinned"
 
 
 # -- HTTP route policy (§2.10) ----------------------------------------------------------------

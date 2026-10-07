@@ -127,6 +127,9 @@ class Hub:
         self._ids = itertools.count(1)
         self.scope_packer: Optional[Callable[[Any], bytes]] = None   # server.py binds _pack_scope
         self.on_radio_state: Optional[Callable[[dict], None]] = None  # the TX arbiter's state hook
+        # Runs (on the loop, deferred with call_soon) for every connection the server kicks, so the
+        # TX arbiter releases a kicked owner at once instead of when its receive loop ends (I5, I7).
+        self.on_kick: Optional[Callable[[Conn, int, str], None]] = None
         # G-5: RX audio only to connections that subscribed with rx_audio (False = v1: everyone).
         self.rx_gating = True
 
@@ -297,6 +300,23 @@ class Hub:
                 pass
         if self.loop is not None:
             self.loop.create_task(close())
+        # A client may ignore the close frame and keep its socket open until the close timeout;
+        # the kick hook (the TX arbiter's release) must not wait for that. It is deferred with
+        # call_soon because a kick can happen INSIDE an arbiter call (a tx frame overflowing a slow
+        # consumer's control queue -> 1013), and the arbiter must never be re-entered.
+        hook = self.on_kick
+        if hook is not None:
+            if self.loop is not None:
+                self.loop.call_soon(self._run_kick_hook, hook, conn, code, reason)
+            else:
+                self._run_kick_hook(hook, conn, code, reason)
+
+    @staticmethod
+    def _run_kick_hook(hook: Callable, conn: Conn, code: int, reason: str) -> None:
+        try:
+            hook(conn, code, reason)
+        except Exception:
+            pass
 
     def kick(self, pred: Callable[[Conn], bool], code: int, reason: str) -> int:
         """Close every connection matching pred with (code, reason). Callable from any thread;

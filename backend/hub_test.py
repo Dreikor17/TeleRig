@@ -187,6 +187,58 @@ asyncio.run(main())
 C("RX gating is on by default (G-5: audio only to rx_audio subscribers)", Hub().rx_gating, True)
 
 
+# -- the kick hook (server.py wires it to the TX arbiter's release, I5/I7) ----------------------------
+async def kick_hook():
+    hub = Hub()
+    hub.loop = asyncio.get_running_loop()
+    calls, threads = [], []
+
+    def hook(c, code, reason):
+        calls.append((c.id, code, reason))
+        threads.append(threading.get_ident())
+    hub.on_kick = hook
+    ws = FakeWS()
+    c = hub.add(ws)
+    hub.start_sender(c)
+    hub.kick_conn(c, 4401, "session_revoked")
+    C("kick hook is deferred (call_soon), never run inside the kicking call", calls, [])
+    await settle()
+    C("... then runs once with (conn, code, reason)", calls, [(c.id, 4401, "session_revoked")])
+    hub.kick_conn(c, 4401, "session_revoked")
+    hub.kick_all(4403, "server_locked")
+    await settle()
+    C("a connection already closing is not kicked (or hooked) again", calls, [(c.id, 4401, "session_revoked")])
+    calls.clear()
+    threads.clear()
+    c2 = hub.add(FakeWS())
+    hub.start_sender(c2)
+    t = threading.Thread(target=lambda: hub.kick_user(None, 4401, "signed_out"))
+    t.start()
+    t.join()
+    await settle(60)
+    C("a kick from another thread runs the hook on the loop thread", (calls, threads), ([(c2.id, 4401, "signed_out")],
+                                                                                         [threading.get_ident()]))
+    hub.on_kick = lambda c, code, reason: (_ for _ in ()).throw(RuntimeError("boom"))
+    ws3 = FakeWS()
+    c3 = hub.add(ws3)
+    hub.start_sender(c3)
+    hub.kick_conn(c3, 1013, "slow_consumer")
+    await settle()
+    C("a hook that raises never breaks the kick", (c3.closing, ws3.closed), (True, (1013, "slow_consumer")))
+    for x in list(hub.conns.values()):
+        hub.remove(x)
+        if x.sender:
+            x.sender.cancel()
+    await settle(20)
+
+asyncio.run(kick_hook())
+_nl = Hub()
+_nl_calls = []
+_nl.on_kick = lambda c, code, reason: _nl_calls.append(reason)
+_nl._kick_now(Conn(1, FakeWS()), 4401, "expired")
+C("with no loop (unit use) the hook runs synchronously", _nl_calls, ["expired"])
+
+
 # -- Coalescer (AR-48) -------------------------------------------------------------------------------
 async def coalescer_tests():
     loop = asyncio.get_running_loop()
