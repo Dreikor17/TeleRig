@@ -747,13 +747,19 @@ body.arranging .cw-close{display:none}                          /* arrange mode 
 body[data-device=desktop] .tile-body{overscroll-behavior:contain}
 body[data-device=phone] .tile-body{overscroll-behavior:auto}   /* no scroll trap on phone (AR-37) */
 body[data-device=phone] .tile.fit .tile-body{overflow:visible} /* content-fit tiles: height follows content */
+/* ...unless the content is taller than the phone h_max (60 rows, e.g. Controls with every SET group open):
+   then the body scrolls, so nothing is clipped; overscroll-behavior stays auto (no scroll trap, AR-37) */
+body[data-device=phone] .tile.fit.fit-capped .tile-body{overflow:auto}
 .tile-fit{display:flow-root}
 .tile-fit>.grp{background:none;border:0;padding:0}             /* no double chrome */
 body.arranging .tile{outline:1px dashed var(--accent-line);outline-offset:-1px}
 body.arranging .tile-head{cursor:move;color:var(--accent-hi)}
 body.arranging .tile-body{opacity:.6}
 .grid-stack-placeholder>.placeholder-content{background:var(--accent-tint);border:1px dashed var(--accent);border-radius:var(--r-card)}
-.tile-head:focus-visible,.tile-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* the header fills the card's clip box (.tile overflow:hidden) edge to edge, so its ring is drawn INSIDE it;
+   an outset ring would be clipped on three sides and covered by the sticky Controls tab bar on the fourth */
+.tile-head:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.tile-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 @media (prefers-reduced-motion:reduce){.tile,.toast,.onair-dot{transition:none!important;animation:none!important}}
 .grid-stack-item.is-collapsed>.tile{bottom:auto;height:auto}     /* header-only card in its fixed 2-row slot (§3.11) */
 

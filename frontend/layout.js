@@ -493,7 +493,10 @@
       const fit = el.querySelector(".tile-fit");
       if (!fit || !fit.getClientRects().length) continue;
       const m = minFor("phone", id).h;
-      const h = clamp(Math.ceil((38 + fit.scrollHeight + 16 + 2 * 4 + 2) / 32), m, B.phone.h_max);
+      const want = Math.ceil((38 + fit.scrollHeight + 16 + 2 * 4 + 2) / 32);
+      const h = clamp(want, m, B.phone.h_max);
+      // content taller than h_max (Controls with every SET group open): the body scrolls instead of clipping
+      el.querySelector(":scope > .tile").classList.toggle("fit-capped", want > B.phone.h_max);
       fitH[id] = h;
       if (h !== n.h) gsUpdate(el, { h, minH: Math.min(m, h) });   // list mode reflows the tiles below (S0 v)
     }

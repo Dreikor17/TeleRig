@@ -281,6 +281,43 @@ def console_css_replaced_by_tiles(ctx):
     check(tile_rule and not re.search(r"transform|filter|contain", tile_rule.group(1)), "no transform/filter/contain on .tile")
 
 
+def _rule(body: str, selector: str):
+    m = re.search(r"(?:^|[}\n])\s*" + re.escape(selector) + r"\{([^}]*)\}", body)
+    return m.group(1) if m else None
+
+
+@test("unit")
+def tile_focus_ring_inside_clip_and_capped_fit_scrolls(ctx):
+    """B3 review round 1: (1) the header focus ring is drawn INSIDE the header, because .tile clips
+    (overflow:hidden) and the header fills its padding box; (2) a phone content-fit tile whose content
+    is taller than the phone h_max gets .fit-capped and its body scrolls instead of clipping."""
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    tile = _rule(body, ".tile")
+    check(tile and "overflow:hidden" in tile, ".tile clips (the reason the ring must be inset)")
+    head = _rule(body, ".tile-head:focus-visible")
+    check(head, ".tile-head:focus-visible has its own rule")
+    check("outline:2px solid var(--accent)" in head, "header ring: 2px accent outline")
+    m = re.search(r"outline-offset:(-?\d+)px", head)
+    check(m and int(m.group(1)) <= -2, f"header ring is inset (outline-offset <= -2px): {head}")
+    btn = _rule(body, ".tile-btn:focus-visible")
+    check(btn and "outline:2px solid var(--accent)" in btn, ".tile-btn keeps its own focus ring")
+    check(not re.search(r"\.tile-head:focus-visible\s*,", body), "no grouped rule gives the header an outset ring")
+    fit = _rule(body, "body[data-device=phone] .tile.fit .tile-body")
+    check(fit and "overflow:visible" in fit, "content-fit bodies follow their content on phone")
+    cap = _rule(body, "body[data-device=phone] .tile.fit.fit-capped .tile-body")
+    check(cap and "overflow:auto" in cap, "a capped content-fit body scrolls")
+    check("overscroll-behavior" not in cap, "the capped body keeps the phone overscroll-behavior:auto (no trap)")
+    ph = _rule(body, "body[data-device=phone] .tile-body")
+    check(ph and "overscroll-behavior:auto" in ph, "phone bodies: overscroll-behavior:auto (AR-37)")
+    src = (FRONT / "layout.js").read_text(encoding="utf-8")
+    fp = src.split("function fitPhone()", 1)
+    check(len(fp) == 2, "layout.js fitPhone()")
+    fp = fp[1].split("\n  }\n", 1)[0]
+    check('classList.toggle("fit-capped", want > B.phone.h_max)' in fp, "fitPhone marks content taller than h_max")
+    check("clamp(want, m, B.phone.h_max)" in fp, "the fitted height is still clamped to the phone h_max (AR-26)")
+
+
 @test("smoke")
 def index_serves_the_grid_assets(ctx):
     srv = ctx.server()
