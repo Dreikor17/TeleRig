@@ -318,6 +318,138 @@ def tile_focus_ring_inside_clip_and_capped_fit_scrolls(ctx):
     check("clamp(want, m, B.phone.h_max)" in fp, "the fitted height is still clamped to the phone h_max (AR-26)")
 
 
+def _css_rules(css: str) -> list:
+    """(at-rule context, selector list, declarations) for every style rule, comments removed. @media,
+    @container and @supports nest; other at-rules (@property, @keyframes) are skipped."""
+    body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    out = []
+
+    def walk(s: str, ctx: tuple) -> None:
+        i = 0
+        while True:
+            j = s.find("{", i)
+            if j < 0:
+                return
+            head = s[i:j].split(";")[-1].strip()
+            depth, k = 1, j + 1
+            while k < len(s) and depth:
+                depth += {"{": 1, "}": -1}.get(s[k], 0)
+                k += 1
+            inner = s[j + 1:k - 1]
+            if head.startswith(("@media", "@container", "@supports")):
+                walk(inner, ctx + (head,))
+            elif not head.startswith("@"):
+                decls = {}
+                for d in inner.split(";"):
+                    name, _, value = d.partition(":")
+                    if name.strip():
+                        decls[name.strip()] = value.strip()
+                out.append((ctx, [x.strip() for x in head.split(",")], decls))
+            i = k
+
+    walk(body, ())
+    return out
+
+
+READOUT_EM = 7.4      # the widest VFO readout, 12 characters (1296.200.000), in em (measured 7.04 em)
+FLOOR_PX = 16         # §4.2: the digits never go below 16 px
+
+
+def _vfo_digit_problems(css: str) -> list:
+    """Why the VFO digits could be clipped, overlapped or cut off (B3 review round 2), or [] if they can't."""
+    rules, probs = _css_rules(css), []
+
+    def get(sel, ctx_pred=lambda c: not c):
+        return [d for c, sels, d in rules if sel in sels and ctx_pred(c)]
+
+    # 1. nothing between the digits and the tile body hides overflow (the round-2 regression was
+    #    `#bands.dual .b-center{overflow:hidden}`): the digits column, the row, the band list, the fit box
+    #    (the readout itself: see 4, `.tile-vfo .b-center .band-freq{overflow:visible}`)
+    for c, sels, d in rules:
+        for s in sels:
+            if re.search(r"(\.b-center|\.bandrow(\.active)?|#bands(\.dual)?|\.bands|\.tile-vfo>\.tile-fit)$", s):
+                for prop in ("overflow", "overflow-x"):
+                    if d.get(prop) in ("hidden", "clip"):
+                        probs.append(f"{s} {{{prop}:{d[prop]}}} in {c or 'top level'} can cut the digits off")
+    # 2. the digits column is an inline-size container whose floor holds the widest readout at 16 px
+    bc = get(".tile-vfo .b-center")
+    if not bc or bc[-1].get("container-type") != "inline-size":
+        probs.append(".tile-vfo .b-center is not an inline-size container (the digits can't size to their column)")
+    else:
+        mw = bc[-1].get("min-width", "")
+        m = re.fullmatch(r"calc\(([\d.]+) \* ([\d.]+)px\)|([\d.]+)px", mw)
+        px = (float(m.group(1)) * float(m.group(2)) if m.group(1) else float(m.group(3))) if m else 0.0
+        if px + 1e-6 < READOUT_EM * FLOOR_PX:
+            probs.append(f".tile-vfo .b-center min-width {mw!r} < {READOUT_EM} em at {FLOOR_PX} px")
+    # 3. every container-sized digit font is capped by its own column (N cqw * 7.4 em <= 100 % of it),
+    #    keeps the §4.2 tile-width term (--vfo-wcap = 7.4cqw of the tile body) and the 16 px floor
+    want = {".b-center .band-freq", ".bandrow.active .b-center .band-freq", "#bands:not(.dual) .bandrow.active .b-center .band-freq"}
+    seen = set()
+    for c, sels, d in rules:
+        fs = d.get("font-size", "")
+        if "cq" not in fs or not any(s.endswith(".band-freq") for s in sels):
+            continue
+        seen.update(s for s in sels if s in want)
+        cqw = [float(x) for x in re.findall(r"([\d.]+)cqw", fs)]
+        if not cqw or max(cqw) * READOUT_EM > 100 + 1e-6:
+            probs.append(f"{sels} font-size {fs!r}: no column cap N cqw with N * {READOUT_EM} <= 100")
+        if "var(--vfo-wcap)" not in fs or f"clamp({FLOOR_PX}px," not in fs:
+            probs.append(f"{sels} font-size {fs!r}: the §4.2 width term or the {FLOOR_PX} px floor is missing")
+    if seen != want:
+        probs.append(f"digit font rules missing: {sorted(want - seen)}")
+    if not re.search(r'@property --vfo-wcap\{syntax:"<length>";inherits:true;', css):
+        probs.append("--vfo-wcap is not a registered <length> (it would resolve against the digits column)")
+    if [d.get("--vfo-wcap") for d in get("#bands")] != ["7.4cqw"]:
+        probs.append("#bands{--vfo-wcap:7.4cqw} (the §4.2 tile-width term) is missing")
+    # 4. a row is never narrower than its content and its side tracks never shrink below their content
+    row = get(".tile-vfo .bandrow")
+    if not any(d.get("min-width") == "min-content" for d in row):
+        probs.append(".tile-vfo .bandrow{min-width:min-content} is missing (a too-narrow tile must scroll, not overlap)")
+    if not any(d.get("grid-template-columns") == "minmax(min-content,auto) minmax(auto,1fr) minmax(min-content,auto)" for d in row):
+        probs.append(".tile-vfo .bandrow tracks: the mode box / side column can shrink below their content")
+    fq = get(".tile-vfo .b-center .band-freq")
+    if not fq or fq[-1].get("overflow") != "visible":
+        probs.append(".tile-vfo .b-center .band-freq{overflow:visible} is missing (the phone ellipsis rule would clip)")
+    # 5. one-line (short, dual watch) rows: the digits never shrink; when narrow, labels step aside
+    short = lambda c: any("max-height:120px" in x for x in c)
+    if not any(d.get("flex") == "0 0 auto" for d in get("#bands.dual .b-center .band-freq", short)):
+        probs.append("short dual rows: #bands.dual .b-center .band-freq{flex:0 0 auto} is missing")
+    hidden = {s for c, sels, d in rules if any("max-height:120px" in x and "max-width:320px" in x for x in c)
+              and d.get("display") == "none" for s in sels}
+    for s in ("#bands.dual .band-fil", "#bands.dual .b-vfo"):
+        if s not in hidden:
+            probs.append(f"short narrow (<= 320 px) dual rows: {s} does not step aside")
+    # 6. the TX/RX tag is never hidden by a layout rule; width-only queries never reach inside .b-center
+    for c, sels, d in rules:
+        if d.get("display") == "none" and any(re.search(r"(\.tx(?![-\w])|#txTag)", s) for s in sels):
+            probs.append(f"{sels} hides the TX/RX tag ({c})")
+        if any(x.startswith("@container") and "width" in x and "height" not in x for x in c) \
+                and any(re.search(r"\.(band-freq|ind-strip|ind)(?![-\w])", s) for s in sels):
+            probs.append(f"{sels} in a width-only {c}: inside .b-center that queries .b-center itself")
+    return probs
+
+
+@test("unit")
+def vfo_digits_fit_their_column_and_are_never_clipped(ctx):
+    """B3 review round 2: at 900-955 px windows the IC-9700 dual-watch VFO cut the last digits off
+    (`#bands.dual .b-center{overflow:hidden}` + side items keeping their room). The digits column is now an
+    inline-size container the digits size themselves to (never larger than the §4.2 formula), with a floor
+    that holds the widest readout at 16 px; rows never shrink below their content, so a too-narrow tile
+    scrolls in its body; nothing in the chain hides overflow; labels step aside, the TX/RX tag never does.
+    The pixel geometry (right edge of #mainFreq <= right edge of .b-center at 900x700 / 950x600 and 16 other
+    sizes) is asserted in the browser; see the B3 report (fix round 2)."""
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    probs = _vfo_digit_problems(css)
+    check(not probs, "VFO digits: " + "; ".join(probs))
+    # the parser and the checks see real rules (a self-test, so an empty list means something)
+    rules = _css_rules(css)
+    check(any(c and "max-height:120px" in c[-1] for c, _, _ in rules), "the parser sees the VFO container queries")
+    check(_vfo_digit_problems(css.replace(".tile-vfo .b-center{container-type:inline-size;", ".tile-vfo .b-center{"))
+          and _vfo_digit_problems(css + "\n@container (max-height:120px){#bands.dual .b-center{overflow:hidden}}")
+          and _vfo_digit_problems(css + "\n@container (max-width:300px){#bands .tx{display:none}}"),
+          "the checks catch a lost container, a hidden-overflow digits column and a hidden TX/RX tag")
+
+
 @test("smoke")
 def index_serves_the_grid_assets(ctx):
     srv = ctx.server()

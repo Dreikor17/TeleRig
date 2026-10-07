@@ -217,10 +217,16 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .ind.amber{background:rgba(251,191,36,.12);color:var(--tft-amber);border-color:rgba(251,191,36,.4)}
 .band-freq{white-space:nowrap}
 /* digit size follows the VFO tile body (container-type:size, §4.2): the operating VFO is full size,
-   the other one 0.72x; a single-receiver radio (#bands:not(.dual)) gets up to 72 px */
-.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(26cqh,7.4cqw),64px))}
-.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(26cqh,7.4cqw),64px)}
-#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(44cqh,7.4cqw),72px)}
+   the other one 0.72x; a single-receiver radio (#bands:not(.dual)) gets up to 72 px.
+   The §4.2 width term (7.4cqw of the tile body) is resolved on #bands (--vfo-wcap is a registered <length>,
+   so it computes there, against the tile body, and inherits as px). The digits column (.b-center) is an
+   inline-size container, so 13.5cqw (= 100 % / 7.4 em, the widest readout: 12 characters, 1296.200.000)
+   also keeps the digits inside their own column, beside the mode box and the side column (§3.1) */
+@property --vfo-wcap{syntax:"<length>";inherits:true;initial-value:64px}
+#bands{--vfo-wcap:7.4cqw}
+.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(26cqh,var(--vfo-wcap),13.5cqw),64px))}
+.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(26cqh,var(--vfo-wcap),13.5cqw),64px)}
+#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(44cqh,var(--vfo-wcap),13.5cqw),72px)}
 .b-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:58px}
 .b-vfo{font-size:11px;font-weight:700;color:var(--tft-pill-fg);background:var(--tft-pill-bg);padding:1px 6px;border-radius:var(--r-sm)}
 #rowSub .band-tag{color:var(--tft-sub)}
@@ -768,22 +774,47 @@ body.arranging .tile-body{opacity:.6}
 .tile-vfo>.tile-fit{height:100%}
 .tile-vfo .bands{height:100%}
 .tile-vfo .bandrow{flex:1 1 0;min-height:0}
+/* the digits are never clipped or overlapped (§3.1). The digits column is an inline-size container (its
+   width comes from the row, never from the digits, which size themselves to it) with a floor that holds the
+   widest readout at the 16 px minimum (7.4 em = 118.4 px); the mode box and the side column never shrink
+   below their content (a min-content track minimum: an `auto` minimum would stop at their 56/58 px
+   min-width); a row is never narrower than its content, so a tile made narrower than that scrolls in its
+   body instead. The phone ellipsis rules above do not apply inside the tile. */
+.tile-vfo .bandrow{min-width:min-content;grid-template-columns:minmax(min-content,auto) minmax(auto,1fr) minmax(min-content,auto)}
+.tile-vfo .b-center{container-type:inline-size;min-width:calc(7.4 * 16px)}
+.tile-vfo .b-center .band-freq{min-width:auto;overflow:visible;text-overflow:clip}
+.tile-vfo .band-mode,.tile-vfo .band-fil,.tile-vfo .tx,.tile-vfo .b-vfo,.tile-vfo .b-band{white-space:nowrap}
+/* a narrow VFO body (e.g. the 4-column default in a 900-1000 px window): tighter row chrome, a smaller mode
+   pill and no fixed column minimums (the mode box and side column are still never narrower than their own
+   content), so the digits keep their room. (A width-only query on an element INSIDE .b-center would query
+   .b-center itself; the queries below that reach in there also test the height, which only the tile body
+   can answer.) */
+@container (max-width:320px){
+  .bandrow{gap:6px;padding-left:8px;padding-right:8px}
+  .b-modebox,.b-side{min-width:min-content}
+  .b-modebox .band-mode{font-size:12px;padding:1px 6px}
+}
 /* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar) with BOTH receivers: each
-   receiver becomes one line (mode, digits, indicators, VFO) so neither is clipped */
+   receiver becomes one line (mode, digits, indicators, VFO). The indicators only take the room left in
+   the digits column, so they are the part that gets cut, never the digits. */
 @container (max-height:120px){
   #bands.dual{gap:4px}
   #bands.dual .bandrow{padding:2px 8px;gap:8px}
-  #bands.dual .b-modebox{flex-direction:row;gap:5px;min-width:0}
+  #bands.dual .b-modebox{flex-direction:row;gap:5px;min-width:min-content}
   #bands.dual .b-modebox .band-mode{font-size:12px;width:auto;padding:1px 6px}
   #bands.dual .b-center{flex-direction:row;align-items:center;gap:8px}
-  #bands.dual .ind-strip{order:2;flex-wrap:nowrap;overflow:hidden;min-height:0}
-  #bands.dual .b-side{flex-direction:row;align-items:center;gap:6px;min-width:0}
+  #bands.dual .b-center .band-freq{flex:0 0 auto}
+  #bands.dual .ind-strip{order:2;flex:1 1 0;min-width:0;flex-wrap:nowrap;overflow:hidden;min-height:0}
+  #bands.dual .b-side{flex-direction:row;align-items:center;gap:6px;min-width:min-content}
   #bands.dual .b-band{flex-direction:row;align-items:baseline;gap:4px}
-  #bands.dual .b-center{overflow:hidden}
 }
 /* ...and when that short body is also narrow, the digits win: indicators and band name step aside */
 @container (max-height:120px) and (max-width:460px){
   #bands.dual .ind-strip,#bands.dual .b-band{display:none}
+}
+/* ...and at <= 320 px the filter and VFO labels step aside too: mode, digits and the TX/RX tag stay */
+@container (max-height:120px) and (max-width:320px){
+  #bands.dual .band-fil,#bands.dual .b-vfo{display:none}
 }
 .tile:has(#bands){border-color:rgba(16,185,129,.30)}
 .tile:has(#bands.sub-active){border-color:rgba(59,130,246,.35)}
