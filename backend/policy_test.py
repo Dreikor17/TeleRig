@@ -61,6 +61,22 @@ C("A2 unknown action has no row", policy.WS_POLICY.get("host_rx") is None and po
 C("A2 non-placeholder rule is denied (never allow by default)",
   policy.evaluate(policy.Rule("x"), None, {"action": "x"}).kind, "deny")
 
+# ---- fast-path classifier (§2.12): the only frames a kicked/locked connection still acts on ----
+fast = [{"action": "ptt", "tx": False}, {"action": "cw_stop"}, {"action": "tx_hb"}, {"action": "tx_stop"},
+        {"action": "rx_func", "name": "vox", "on": False}, {"action": "mic", "on": False},
+        {"action": "ptt", "tx": False, "auto": True, "extra": 1}]
+not_fast = [{"action": "ptt", "tx": True}, {"action": "ptt", "tx": 0}, {"action": "ptt", "tx": "false"},
+            {"action": "ptt", "tx": None}, {"action": "ptt", "tx": []}, {"action": "ptt"},
+            {"action": "cw_tx", "text": "CQ", "wpm": 20}, {"action": "tune_atu"},
+            {"action": "rx_func", "name": "vox", "on": True}, {"action": "rx_func", "name": "vox", "on": 0},
+            {"action": "rx_func", "name": "VOX", "on": False}, {"action": "rx_func", "name": ["vox"], "on": False},
+            {"action": "rx_func", "name": "nb", "on": False}, {"action": "rx_func", "on": False},
+            {"action": "mic", "on": True}, {"action": "mic", "on": 0}, {"action": "mic"},
+            {"action": "set_freq", "hz": 145000000}, {"action": "PTT", "tx": False}, {"action": 5},
+            {"tx": False}, [], None, "ptt"]
+C("is_fast: the unkey/heartbeat frames", [c for c in fast if not policy.is_fast(c)], [])
+C("is_fast: strict types, nothing that can start TX", [c for c in not_fast if policy.is_fast(c)], [])
+
 # ---- TX-safety menu flags (§1 file map, §2.12 menu_write) -----------------------------------
 def items(pid):
     return {it.num: it for it in profiles.PROFILES[pid].menu}

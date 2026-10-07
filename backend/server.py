@@ -370,10 +370,16 @@ def _deny(conn, action, reason: str) -> None:
 
 def _on_text(conn, text: str) -> None:
     """One client text frame: size cap, JSON parsed inside try, dict + string-action check, then
-    the policy table (§2.12). Never raises, so a bad frame can never kill the socket."""
+    the policy table (§2.12). Never raises, so a bad frame can never kill the socket.
+
+    A kicked connection (`conn.closing`: its close frame is already out) and a locked server act on
+    nothing but the fast-path stops (policy.is_fast). A client that ignores the close frame can
+    otherwise keep commanding the radio until the close timeout drops it (about 10 s). The stops
+    still go through, so a kick or a lock never swallows an unkey (AR-17). The receive loop keeps
+    running, so the 4403/4401 close code is not replaced."""
     try:
         if len(text) > WS_TEXT_MAX or len(text.encode("utf-8", "surrogatepass")) > WS_TEXT_MAX:
-            _deny(conn, "*", "too_large")
+            _deny(conn, "*", "too_large")            # a no-op on a closing connection
             return
         try:
             cmd = json.loads(text)
@@ -381,6 +387,8 @@ def _on_text(conn, text: str) -> None:
             return
         if not isinstance(cmd, dict) or not isinstance(cmd.get("action"), str):
             return
+        if (conn.closing or _locked is not None) and not policy.is_fast(cmd):
+            return                                   # kicked or locked: dropped, nothing answered
         a = cmd["action"]
         rule = policy.WS_POLICY.get(a)
         if rule is None:                             # unknown, or REMOVED (host_rx / host_tx)
@@ -403,8 +411,11 @@ def _dispatch(conn, v) -> None:
 
 
 def _on_bytes(conn, data: bytes) -> None:
-    """Binary frame = browser mic PCM (v1 path; A4 gates it to the TX owner, §2.14)."""
+    """Binary frame = browser mic PCM (v1 path; A4 gates it to the TX owner, §2.14). A kicked
+    (closing) connection or a locked server feeds nothing to the transmitter."""
     try:
+        if conn.closing or _locked is not None:
+            return
         if host_audio.tx_device is not None:
             host_audio.write(data)                   # serial radio: mic -> host TX sound card
         else:

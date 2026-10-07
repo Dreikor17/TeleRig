@@ -65,6 +65,32 @@ def deny(action: str, reason: str) -> Verdict:
     return Verdict("deny", action, reason=reason)
 
 
+def is_fast(cmd: Any) -> bool:
+    """The §2.12 fast-path classifier: tx_hb, tx_stop, ptt{tx:false}, cw_stop,
+    rx_func{name:"vox", on:false}, mic{on:false}. Every one of them only stops TX or keeps a claim
+    alive; none can start TX. Strict types (I20): `tx`/`on` must be the bool False and `name` the
+    exact string "vox", so a value that only looks like "off" (0, "false", null, ...) is not a
+    fast-path stop.
+
+    A2 uses it to let only these frames through from a kicked (closing) connection or while the
+    server is locked, so neither can swallow an unkey (AR-17, §2.4). tx_hb, tx_stop and mic have
+    no rows until A4 and are still denied `unknown_action`. A4 dispatches them via
+    evaluate_fast()."""
+    if not isinstance(cmd, dict):
+        return False
+    a = cmd.get("action")
+    if a in ("tx_hb", "tx_stop", "cw_stop"):
+        return True
+    if a == "ptt":
+        return cmd.get("tx") is False
+    if a == "rx_func":
+        n = cmd.get("name")
+        return type(n) is str and n == "vox" and cmd.get("on") is False
+    if a == "mic":
+        return cmd.get("on") is False
+    return False
+
+
 def evaluate(rule: Rule, conn: Any, cmd: dict, ctx: Any = None) -> Verdict:
     """Decide one message. A2: placeholder rows pass the command through unchanged (allow-all);
     anything else is denied `invalid` until A4 implements it. Never raises."""

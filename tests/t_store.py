@@ -93,6 +93,62 @@ def t26a_unparsable_config_locks_the_server(ctx):
     check(srv.alive(), "server died")
 
 
+@test("store")
+def t26a_kicked_client_that_ignores_the_close_is_inert(ctx):
+    """A2 review fix: a runtime corruption kicks every socket with 4403 server_locked. A client
+    that ignores that close frame keeps a CLOSING socket open until the close timeout (about 10 s).
+    Nothing it sends in that time may reach the radio, while locked or after the unlock. Only
+    set_freq is sent; no TX command."""
+    tmp = ctx.tmp()
+    cfg = tmp / "config.json"
+    srv = ctx.server(tmp)
+    c = srv.client()
+    eq(c.post("/api/connect", SIM).status, 200, "sim connect")
+    base_hz = 145100000
+    with harness.RawWS(c) as raw:
+        eq(raw.recv_json(type="state").get("connected"), True, "raw client: first state frame")
+        raw.send({"action": "set_freq", "hz": base_hz})          # control: this client really works
+        end = time.monotonic() + 5
+        while raw.recv_json(type="state").get("freq") != base_hz:
+            check(time.monotonic() < end, "the raw client's set_freq was not applied")
+
+        atomic_write(cfg, b'{"broken": ')
+        eq(raw.wait_close_frame(timeout=6), (4403, "server_locked"), "close frame after the corruption")
+        t_close = time.monotonic()
+        sent_locked = 0
+        for i in range(6):                                       # never answer the close; keep commanding
+            try:
+                raw.send({"action": "set_freq", "hz": 145333000 + i})
+                raw.send_text("{bad")
+                raw.send({"action": "no_such_action"})
+            except OSError:
+                break
+            sent_locked += 1
+            time.sleep(0.25)
+        check(sent_locked >= 3, f"the server dropped TCP {time.monotonic() - t_close:.1f}s after its close frame "
+                                f"({sent_locked} frames sent): this test needs a socket that stays CLOSING")
+        eq(c.get("/login").status, 503, "still locked while the kicked client sends")
+
+        atomic_write(cfg, b"{}")
+        eq(wait_status(c, "/login", 200), 200, "unlocked after the fix")
+        sent_after = 0
+        for i in range(3):                                       # unlocking does not revive the socket
+            try:
+                raw.send({"action": "set_freq", "hz": 145444000 + i})
+            except OSError:
+                break
+            sent_after += 1
+            time.sleep(0.2)
+        ctx.log(f"frames sent into the closing socket: {sent_locked} while locked, {sent_after} after the "
+                f"unlock ({time.monotonic() - t_close:.1f}s after the close frame)")
+        time.sleep(0.3)
+        with c.ws() as ws:
+            eq(ws.recv_json(type="state").get("freq"), base_hz,
+               "a frame from the kicked client changed the frequency")
+    eq(c.post("/api/disconnect", None).status, 200)
+    check(srv.alive(), "server died")
+
+
 _T36 = r"""
 import json, os, sys
 from pathlib import Path

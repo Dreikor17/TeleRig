@@ -18,12 +18,14 @@ backend runs in a child process with scratch_env().
 from __future__ import annotations
 
 import asyncio
+import base64
 import getpass
 import http.client
 import http.cookiejar
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -506,6 +508,135 @@ class WS:
             pass
 
     def __enter__(self) -> "WS":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
+class RawWS:
+    """A hand-rolled WebSocket client on a plain socket that does NOT follow the close handshake.
+    It never answers the server's close frame and never answers pings, so a test can keep sending
+    into a socket the server is closing. Client frames are masked; no extensions are negotiated.
+    TX-capable sends go through assert_sim(client) first, every time, exactly like WS."""
+
+    def __init__(self, client: Any, path: str = "/ws", *, origin: Any = _DEFAULT, timeout: float = 5.0):
+        self.client = client
+        port = check_port(client.port)
+        o = client.origin if origin is _DEFAULT else origin
+        self._buf = b""
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+        key = base64.b64encode(os.urandom(16)).decode()
+        lines = [f"GET {path} HTTP/1.1", f"Host: {client.host}:{port}", "Upgrade: websocket",
+                 "Connection: Upgrade", f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
+        if o is not None:
+            lines.append(f"Origin: {o}")
+        if client.jar:
+            lines.append(f"Cookie: {client.cookie_header()}")
+        self.sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+        while b"\r\n\r\n" not in self._buf:
+            chunk = self.sock.recv(4096)
+            if not chunk:
+                self.sock.close()
+                raise HarnessError("WebSocket handshake: connection closed")
+            self._buf += chunk
+        head, self._buf = self._buf.split(b"\r\n\r\n", 1)
+        status = head.split(b"\r\n", 1)[0]
+        if b" 101 " not in status + b" ":
+            self.sock.close()
+            raise WSRejected(int(status.split()[1]) if len(status.split()) > 1 else 0)
+
+    def _read(self, n: int, deadline: float) -> bytes:
+        while len(self._buf) < n:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TimeoutError("no frame in time")
+            self.sock.settimeout(left)
+            try:
+                chunk = self.sock.recv(65536)
+            except socket.timeout:
+                raise TimeoutError("no frame in time") from None
+            if not chunk:
+                raise EOFError("the server closed the TCP connection")
+            self._buf += chunk
+        out, self._buf = self._buf[:n], self._buf[n:]
+        return out
+
+    def recv_frame(self, timeout: float = 5.0) -> tuple:
+        """(opcode, payload) of the next frame from the server (unmasked, unfragmented)."""
+        deadline = time.monotonic() + timeout
+        h = self._read(2, deadline)
+        op, n = h[0] & 0x0F, h[1] & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", self._read(2, deadline))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", self._read(8, deadline))[0]
+        if h[1] & 0x80:
+            mask = self._read(4, deadline)
+            data = self._read(n, deadline)
+            return op, bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+        return op, self._read(n, deadline)
+
+    def recv_json(self, timeout: float = 5.0, type: Optional[str] = None) -> dict:
+        end = time.monotonic() + timeout
+        while True:
+            op, data = self.recv_frame(timeout=max(0.01, end - time.monotonic()))
+            if op == 8:
+                raise WSClosed(*self._close_payload(data))
+            if op == 1:
+                obj = json.loads(data.decode("utf-8"))
+                if type is None or (isinstance(obj, dict) and obj.get("type") == type):
+                    return obj
+
+    @staticmethod
+    def _close_payload(data: bytes) -> tuple:
+        if len(data) < 2:
+            return 1005, ""
+        return struct.unpack(">H", data[:2])[0], data[2:].decode("utf-8", "replace")
+
+    def wait_close_frame(self, timeout: float = 5.0) -> tuple:
+        """Read until the server's close frame; return (code, reason). It is NOT answered."""
+        end = time.monotonic() + timeout
+        while True:
+            op, data = self.recv_frame(timeout=max(0.01, end - time.monotonic()))
+            if op == 8:
+                return self._close_payload(data)
+
+    def _send_frame(self, op: int, payload: bytes) -> None:
+        n = len(payload)
+        if n < 126:
+            hdr = bytes([0x80 | op, 0x80 | n])
+        elif n < 65536:
+            hdr = bytes([0x80 | op, 0x80 | 126]) + struct.pack(">H", n)
+        else:
+            hdr = bytes([0x80 | op, 0x80 | 127]) + struct.pack(">Q", n)
+        mask = os.urandom(4)
+        self.sock.sendall(hdr + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+    def send_text(self, text: str) -> None:
+        try:
+            obj = json.loads(text)
+        except Exception:
+            obj = None
+        if is_tx_command(obj):
+            assert_sim(self.client)
+        self._send_frame(0x1, text.encode("utf-8"))
+
+    def send(self, obj: dict) -> None:
+        self.send_text(json.dumps(obj))
+
+    def send_bytes(self, data: bytes) -> None:
+        assert_sim(self.client)                    # binary frames are mic audio -> the TX path
+        self._send_frame(0x2, bytes(data))
+
+    def close(self) -> None:
+        """Drop the TCP connection (no close frame)."""
+        try:
+            self.sock.close()
+        except Exception:
+            pass
+
+    def __enter__(self) -> "RawWS":
         return self
 
     def __exit__(self, *exc) -> None:
