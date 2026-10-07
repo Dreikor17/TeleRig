@@ -328,18 +328,45 @@ C("operator LAN other host -> transport_not_pinned",
 
 # ---- HTTP route policy (I2: every route declares one; startup aborts otherwise) ------------------
 C("every route of server.app carries __tr_policy__", policy.route_policy_errors(server.app.routes), [])
-pols = {getattr(r, "path", ""): getattr(getattr(r, "endpoint", r), "__tr_policy__") for r in server.app.routes}
+
+
+def _route_key(r):
+    ms = sorted(m for m in (getattr(r, "methods", None) or ()) if m != "HEAD")
+    return f"{'|'.join(ms) or 'ANY'} {getattr(r, 'path', '')}"
+
+
+pols = {_route_key(r): getattr(getattr(r, "endpoint", r), "__tr_policy__") for r in server.app.routes}
+paths = {getattr(r, "path", "") for r in server.app.routes}
+C("no (method, path) appears twice", len(pols), len(server.app.routes))
 C("public routes are exactly /login, /api/login, /api/auth_status",
-  sorted(p for p, pol in pols.items() if pol.public), ["/api/auth_status", "/api/login", "/login"])
+  sorted(p for p, pol in pols.items() if pol.public), ["GET /api/auth_status", "GET /login", "POST /api/login"])
 C("restricted_ok routes", sorted(p for p, pol in pols.items() if pol.restricted_ok),
-  ["/api/logout", "/api/me/password", "/change-password"])
+  ["GET /change-password", "POST /api/logout", "POST /api/me/password"])
 C("operator routes (incl. HTTP STOP, AR-15)", sorted(p for p, pol in pols.items() if pol.min_role == "operator"),
-  ["/api/connect", "/api/disconnect", "/api/ports", "/api/tx_stop"])
-C("admin routes", sorted(p for p, pol in pols.items() if pol.min_role == "admin"),
-  ["/api/admin/users", "/api/remote_status", "/api/tailscale_serve", "/api/tailscale_serve_off"])
-C("Serve ON needs admin + sudo + direct-local (F9)",
-  (pols["/api/tailscale_serve"].sudo, pols["/api/tailscale_serve"].local), (True, True))
-C("/api/set_password and /api/audio_devices are gone", ("/api/set_password" in pols, "/api/audio_devices" in pols), (False, False))
+  ["GET /api/ports", "POST /api/connect", "POST /api/disconnect", "POST /api/tx_stop"])
+ADMIN_ROUTES = {   # §2.17: (sudo, local)
+    "POST /api/admin/reauth": (False, False), "GET /api/admin/users": (False, False),
+    "POST /api/admin/users": (True, False), "PATCH /api/admin/users/{uid}": (True, False),
+    "DELETE /api/admin/users/{uid}": (True, False), "POST /api/admin/users/{uid}/reset_password": (True, False),
+    "POST /api/admin/users/{uid}/signout": (True, False), "POST /api/admin/users/{uid}/unlock": (False, False),
+    "DELETE /api/admin/users/{uid}/layout": (False, False), "GET /api/admin/sessions": (False, False),
+    "GET /api/admin/lockouts": (False, False), "POST /api/admin/lockouts/unlock_ip": (False, False),
+    "GET /api/admin/allowed_hosts": (False, False), "PUT /api/admin/allowed_hosts": (True, False),
+    "GET /api/admin/audio": (False, False), "PUT /api/admin/audio": (True, False),
+    "PUT /api/admin/radio_transport": (True, False), "GET /api/admin/remote_status": (False, False),
+    "POST /api/admin/tailscale_serve": (True, True), "POST /api/admin/tailscale_serve_off": (False, False),
+    "POST /api/admin/clear_behind_proxy": (True, False), "GET /api/admin/audit": (False, False)}
+C("admin routes (§2.17)", sorted(p for p, pol in pols.items() if pol.min_role == "admin"), sorted(ADMIN_ROUTES))
+C("admin routes: sudo / direct-local flags (F9: Serve ON = admin + sudo + local; OFF = admin only)",
+  {k: (pols[k].sudo, pols[k].local) for k in ADMIN_ROUTES if k in pols}, ADMIN_ROUTES)
+C("every /api/admin/ route is admin", sorted(p for p, pol in pols.items()
+                                             if "/api/admin/" in p and pol.min_role != "admin"), [])
+C("/api/me/layout GET/PUT/DELETE: viewer, not while restricted (T34)",
+  [(pols[f"{m} /api/me/layout"].min_role, pols[f"{m} /api/me/layout"].restricted_ok) for m in ("GET", "PUT", "DELETE")],
+  [("viewer", False)] * 3)
+C("removed routes are gone (404): set_password, audio_devices, the old Tailscale routes",
+  sorted(p for p in ("/api/set_password", "/api/audio_devices", "/api/remote_status", "/api/tailscale_serve",
+                     "/api/tailscale_serve_off") if p in paths), [])
 from starlette.routing import Route  # noqa: E402
 
 

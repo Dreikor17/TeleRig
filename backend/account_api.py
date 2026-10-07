@@ -1,6 +1,6 @@
-"""Account routes (spec §2.9-§2.10, §2.16): /login, /change-password, /api/login, /api/logout,
-/api/auth_status, /api/me, /api/me/password, /api/me/signout_all — plus read_json() and the
-session-cookie helpers the other routes share.
+"""Account routes (spec §2.9-§2.10, §2.16, §3.14): /login, /change-password, /api/login,
+/api/logout, /api/auth_status, /api/me, /api/me/password, /api/me/signout_all, /api/me/layout —
+plus read_json() and the session-cookie helpers the other routes share.
 
 Login verification is READ-ONLY (AR-53): the cookie is issued first; last_login and an scrypt
 re-hash are best-effort writes after the response. scrypt always runs in the threadpool under a
@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import accounts, audit, auth
+from . import accounts, audit, auth, layout_store
 from .policy import requires
 from .ratelimit import DIRECT_LOCAL, limiter
 from .store import StoreBusy, StoreError, console
@@ -325,6 +325,71 @@ def _store_password(name: str, new_hash: str):
         accounts._clear_setup_if_unused(d)
     accounts.store().mutate(fn)
     return accounts.get(c)
+
+
+LAYOUT_PUT_KEYS = frozenset({"device", "data", "scope_split", "base_rev"})
+
+
+@requires("viewer")
+async def api_me_layout_get(request):
+    """{layout|null, rev, layout_error} for the caller's own layout (§3.14)."""
+    p = request.state.principal
+    lay, bad = await run_in_threadpool(layout_store.get, p.user)
+    return JSONResponse({"layout": lay, "rev": (lay or {}).get("rev", 0), "layout_error": bad}, headers=NO_STORE)
+
+
+@requires("viewer")
+async def api_me_layout_put(request):
+    """PUT {device, data, scope_split?, base_rev?} -> {ok, rev, layout, scope_split}: the caller's own
+    layout for ONE device. Shape and type errors -> 400 {error:"invalid", field} (the client never
+    retries a 400); numbers are clamped and the stored layout is echoed (I22). Only this device's
+    split fraction is merged (AR-54). Body > 16 KB -> 413. Last write wins per device."""
+    p = request.state.principal
+    body = await read_json(request, max_bytes=layout_store.BODY_MAX)
+    if not isinstance(body, dict):
+        return body
+    for k in body:
+        if k not in LAYOUT_PUT_KEYS:
+            return err(400, "invalid", f"Unknown field {str(k)[:32]!r}.", field=str(k)[:32])
+    base = body.get("base_rev")
+    if base is not None and (type(base) is not int or base < 0):
+        return err(400, "invalid", "base_rev must be a whole number.", field="base_rev")
+    try:
+        lay = layout_store.validate(body.get("device"), body.get("data"))
+        ss = body.get("scope_split")
+        split = None if ss is None else layout_store.clamp_split(ss)
+    except layout_store.LayoutInvalid as e:
+        return err(400, "invalid", e.message, field=e.field)
+    res, fail = await _layout_write(layout_store.put, p.user, body["device"], lay, split)
+    if fail is not None:
+        return fail
+    return JSONResponse({"ok": True, **res}, headers=NO_STORE)
+
+
+async def _layout_write(fn, *a):
+    """A layout file write in the threadpool -> (result, None) or (None, 503/500). A layout file is
+    the user's own cosmetic data: its errors never lock the server (only auth.json/config.json do)."""
+    try:
+        return await run_in_threadpool(fn, *a), None
+    except StoreBusy:
+        return None, err(503, "store_busy", "The layout file is busy; try again.")
+    except (StoreError, OSError, ValueError) as e:
+        console(f"TeleRig: layout write failed: {e!r}")
+        return None, err(500, "store_error", "The layout could not be saved.")
+
+
+@requires("viewer")
+async def api_me_layout_delete(request):
+    """DELETE ?device=desktop|phone -> {ok, rev}: back to the defaults for that device (both when
+    no device is given)."""
+    p = request.state.principal
+    dev = request.query_params.get("device") or None
+    if dev is not None and dev not in layout_store.DEVICES:
+        return err(400, "invalid", "device is desktop or phone.", field="device")
+    rev, fail = await _layout_write(layout_store.reset, p.user, dev)
+    if fail is not None:
+        return fail
+    return JSONResponse({"ok": True, "rev": rev}, headers=NO_STORE)
 
 
 @requires("viewer")

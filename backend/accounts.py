@@ -679,16 +679,81 @@ def create_user(name, role: str = "viewer", password: Optional[str] = None, *, m
     return c, temp
 
 
-def delete_user(name) -> None:
-    """Remove the record. gen_seq is never lowered (I19)."""
+LAST_ADMIN = "There must be at least one admin."
+
+
+def _admins(d: dict) -> int:
+    return sum(1 for u in d["users"].values() if u.get("role") == "admin")
+
+
+def delete_user(name, *, keep_admin: bool = False) -> str:
+    """Remove the record; returns the deleted user's role. gen_seq is never lowered (I19).
+    keep_admin=True (the admin API): refuse to remove the last admin (AccountError last_admin),
+    decided under the store lock, so two admins deleting each other cannot both succeed."""
     c = canonical(name)
+    out = {}
 
     def fn(d):
         if c not in d["users"]:
             raise AccountError("not_found", "No such user.")
+        out["role"] = d["users"][c].get("role")
         del d["users"][c]
+        if keep_admin and out["role"] == "admin" and _admins(d) == 0:
+            raise AccountError("last_admin", LAST_ADMIN)
         _clear_setup_if_unused(d)
     store().mutate(fn)
+    return out["role"]
+
+
+class _NoChange(Exception):
+    pass
+
+
+def set_role(name, role: str) -> Optional[str]:
+    """The admin API's role change (§2.17): gen = ++gen_seq (the user's sessions end). Returns the
+    previous role, or None when the role was already `role` (nothing is written, no gen bump).
+    AccountError: not_found, invalid (role), last_admin (no admin would be left, counted after the
+    change, under the store lock)."""
+    if role not in ROLES:
+        raise AccountError("invalid", "Unknown role.", "role")
+    c = canonical(name)
+    out = {}
+
+    def fn(d):
+        u = d["users"].get(c)
+        if u is None:
+            raise AccountError("not_found", "No such user.")
+        if u.get("role") == role:
+            raise _NoChange()
+        out["old"] = u.get("role")
+        u["role"] = role
+        if _admins(d) == 0:
+            raise AccountError("last_admin", LAST_ADMIN)
+        u["gen"] = _next_gen(d)
+    try:
+        store().mutate(fn)
+    except _NoChange:
+        return None
+    return out["old"]
+
+
+def admin_set_password(name, new_hash: str, *, must_change: bool = True) -> User:
+    """An admin reset of another user's password (§2.17), with a hash computed by the caller (scrypt
+    runs under the server's semaphore): must_change as given, default_pw / migrated_v1 cleared,
+    gen = ++gen_seq (the user's sessions end), pw_changed = now. The setup code goes once no user
+    has the default password. AccountError not_found."""
+    parse_hash(new_hash)
+    c = canonical(name)
+
+    def fn(d):
+        u = d["users"].get(c)
+        if u is None:
+            raise AccountError("not_found", "No such user.")
+        u.update(hash=new_hash, must_change=bool(must_change), default_pw=False, migrated_v1=False,
+                 gen=_next_gen(d), pw_changed=now_iso())
+        _clear_setup_if_unused(d)
+    store().mutate(fn)
+    return get(c)
 
 
 def record_login(name: str, *, old_hash: Optional[str] = None, new_hash: Optional[str] = None,

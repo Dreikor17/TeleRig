@@ -4,8 +4,11 @@ TeleRig server.
 ASGI app (Starlette on uvicorn). Everyone signs in (per-user accounts, backend/accounts.py);
 every route declares its policy (@requires, backend/policy.py) and the Gate middleware checks
 locked mode, Host, Origin, JSON bodies and the session before any route runs (§2.9).
-  GET  /              -> the radio UI (+ the bootstrap JSON, §3.15)
-  /login, /change-password, /api/login|logout|auth_status|me* -> backend/account_api.py
+  GET  /              -> the radio UI (+ the bootstrap JSON incl. the user's layout, §3.15)
+  /login, /change-password, /api/login|logout|auth_status|me* (incl. /api/me/layout)
+                      -> backend/account_api.py
+  /api/admin/*        -> backend/admin_api.py (users, sessions, lockouts, allowed hosts, audio and
+                         transport pins, Tailscale Serve, audit)
   GET  /api/status    -> radio/connection status for this role (+ the TX owner)
   GET  /api/ports     -> {ports}: available COM ports (operator)
   POST /api/connect   -> {transport:"sim"|"serial"|"lan", radio, ...} (§2.10 rules, F20 pins)
@@ -53,8 +56,8 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket
 
-from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio, policy,
-               profiles, settings, tailscale, txarb)
+from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio,
+               layout_store, policy, profiles, settings, txarb)
 from .account_api import read_json
 from .audio_router import AudioRouter
 from .hub import AUDIO_RATE, Coalescer, Hub, MenuQueue  # noqa: F401  (AUDIO_RATE: hostaudio.RATE must match)
@@ -276,9 +279,11 @@ def status_for(p) -> dict:
     return out
 
 
-def notices_for(p) -> list:
-    """Banner keys for this principal (§3.15). A3: migrated_local_only (F17 remote session),
-    migrated_v1_password and lockouts (admins)."""
+def notices_for(p, port: Optional[int] = None) -> list:
+    """Banner keys for this principal (§3.15): migrated_local_only (F17 remote session); for admins
+    migrated_v1_password, lockouts, audio_default:<radio> (F22) and behind_proxy_stale (the flag is
+    set but Tailscale Serve is confirmed off for this port, AR-34; from the last known Tailscale
+    status, refreshed in the background, so a page load never waits for the CLI)."""
     out = []
     if p is None:
         return out
@@ -298,21 +303,28 @@ def notices_for(p) -> list:
                 out.append(f"audio_default:{radio.state.get('radio')}")
         except Exception:
             pass
+        try:
+            if port and settings.behind_proxy() and admin_api.serve_stale(port):
+                out.append("behind_proxy_stale")
+        except Exception:
+            pass
     return out
 
 
 def _boot_json(p, request) -> str:
+    port = auth.bound_port(request.scope)
+    layout, layout_error = layout_store.get(p.user)
     boot = {"v": 1, "user": p.user, "role": p.role, "perms": auth.perms_for(p.role),
-            "port": auth.bound_port(request.scope), "version": __version__,
+            "port": port, "version": __version__,
             "source": f"https://github.com/{_REPO}",
             "autoconnect": not no_autoconnect() and not _autoconnect_spent, "sim_only": sim_only(),
-            "layout": None, "layout_error": False, "layout_bounds": None,     # A5: layout_store
+            "layout": layout, "layout_error": layout_error, "layout_bounds": layout_store.BOUNDS,
             "status": status_for(p), "migrated_remote": p.migrated_remote,
             "radios": [{"id": pid, "name": pr.name,
                         "tile_caps": {"ptt": bool(pr.capabilities.ptt),
                                       "meters": not (pr.capabilities.meters == [])}}
                        for pid, pr in profiles.PROFILES.items()],
-            "notices": notices_for(p)}
+            "notices": notices_for(p, port)}
     payload = json.dumps(boot, separators=(",", ":"))
     return payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
@@ -1130,7 +1142,7 @@ def _on_accounts_change(old: dict, new: dict) -> None:
 accounts.add_listener(_on_accounts_change)
 account_api.kick_fp = lambda fp, code, reason: hub.kick_fp(fp, code, reason)
 account_api.kick_user = lambda user, code, reason: hub.kick_user(user, code, reason)
-admin_api.online_count = hub.count_user
+admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind())
 
 
 def _revalidate_conns() -> int:
@@ -1348,40 +1360,8 @@ class Gate(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# -- Tailscale Serve (interim location; A5 moves these under /api/admin/ with success-only
-#    behind_proxy writes and the bound port) -------------------------------------------------
-def _app_port(request) -> int:
-    return request.url.port or 8700
-
-
-@requires("admin")
-async def api_remote_status(request):
-    port = _app_port(request)
-    st = await run_in_threadpool(tailscale.status, port)
-    return JSONResponse({"tailscale": st, "auth_enabled": True, "behind_proxy": settings.behind_proxy(),
-                         "local": auth.direct_local(request.scope), "port": port})
-
-
-@requires("admin", sudo=True, local=True)              # F9: admin + fresh sudo + host-local
-async def api_tailscale_serve(request):
-    port = _app_port(request)
-    code, out, err = await run_in_threadpool(tailscale.serve_on, port)
-    st = await run_in_threadpool(tailscale.status, port)
-    if st.get("magicdns"):
-        settings.add_allowed_host(st["magicdns"])   # so the Origin/Host gate accepts the *.ts.net name
-    settings.set_behind_proxy(True, "tailscale")     # (A5: written only after a confirmed success)
-    if code != 0:
-        return JSONResponse({"ok": False, "error": (err or out or "tailscale serve failed").strip(),
-                             "tailscale": st}, status_code=400)
-    return JSONResponse({"ok": True, "tailscale": st})
-
-
-@requires("admin")                                     # F9: closing exposure needs no sudo
-async def api_tailscale_serve_off(request):
-    await run_in_threadpool(tailscale.serve_off)
-    settings.set_behind_proxy(False)
-    return JSONResponse({"ok": True, "tailscale": await run_in_threadpool(tailscale.status, _app_port(request))})
-
+# The Tailscale Serve routes moved to /api/admin/ (backend/admin_api.py): /api/remote_status,
+# /api/tailscale_serve and /api/tailscale_serve_off are gone (404), like /api/set_password.
 
 policy.mark(ws_endpoint, "viewer")                     # identity checked inside ws_endpoint (§2.11)
 _static = policy.mark(Mount("/static", StaticFiles(directory=str(FRONTEND)), name="static"), "viewer")
@@ -1396,11 +1376,11 @@ routes = [
     Route("/api/me", account_api.api_me),
     Route("/api/me/password", account_api.api_me_password, methods=["POST"]),
     Route("/api/me/signout_all", account_api.api_me_signout_all, methods=["POST"]),
-    Route("/api/admin/users", admin_api.api_users),
+    Route("/api/me/layout", account_api.api_me_layout_get, methods=["GET"]),
+    Route("/api/me/layout", account_api.api_me_layout_put, methods=["PUT"]),
+    Route("/api/me/layout", account_api.api_me_layout_delete, methods=["DELETE"]),
+    *admin_api.routes(),
     Route("/api/status", api_status),
-    Route("/api/remote_status", api_remote_status),
-    Route("/api/tailscale_serve", api_tailscale_serve, methods=["POST"]),
-    Route("/api/tailscale_serve_off", api_tailscale_serve_off, methods=["POST"]),
     Route("/api/radios", api_radios),
     Route("/api/version", api_version),
     Route("/api/ports", api_ports),

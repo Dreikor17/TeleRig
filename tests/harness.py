@@ -298,6 +298,9 @@ class Client:
     def put(self, path: str, body: Any = _EMPTY, **kw) -> Resp:
         return self.request("PUT", path, body, **kw)
 
+    def patch(self, path: str, body: Any = _EMPTY, **kw) -> Resp:
+        return self.request("PATCH", path, body, **kw)
+
     def delete(self, path: str, body: Any = None, **kw) -> Resp:
         return self.request("DELETE", path, body, **kw)
 
@@ -884,6 +887,23 @@ def mk_users(tmp: Any, specs: list) -> dict:
 def del_user(tmp: Any, name: str) -> None:
     accounts_child(tmp, f"accounts.delete_user({name!r})")
     time.sleep(STORE_PICKUP)
+
+
+def uid(name: str) -> str:
+    """The admin API's {uid} for a canonical user name (lowercase hex of its UTF-8)."""
+    return name.upper().encode("utf-8").hex()
+
+
+def api_mk_user(admin: "Client", name: str, role: str = "operator", password: Optional[str] = None,
+                must_change: bool = False) -> str:
+    """Create a user through the admin API (A5+): POST /api/admin/users with an admin client whose
+    sudo window is open. Returns the password (the given one, or the generated temp password)."""
+    body = {"user": name, "role": role, "must_change": must_change}
+    if password is not None or not must_change:
+        body["password"] = password or user_password(name)
+    r = admin.post("/api/admin/users", body)
+    check(r.status == 200 and r.json().get("ok"), f"create {name} via the admin API: {r!r}")
+    return body.get("password") or r.json()["temp_password"]
 
 
 class Heartbeat:

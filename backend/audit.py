@@ -80,6 +80,7 @@ class _Writer:
         self._cv = threading.Condition()
         self._thread: Optional[threading.Thread] = None
         self._dropped = 0
+        self.dropped_total = 0           # since start (Admin -> Activity shows it)
         self._busy = False
         self._agg: dict = {}             # (dir, key, ev, sub) -> entry being coalesced
         self._key_last: dict = {}        # key -> time of its last written security entry
@@ -91,6 +92,7 @@ class _Writer:
         with self._cv:
             if len(self._q) >= QUEUE_MAX:
                 self._dropped += 1
+                self.dropped_total += 1
                 return
             self._q.append((d, rec))
             self._start()
@@ -291,16 +293,27 @@ def flush(timeout: float = 2.0) -> bool:
         return False
 
 
+def stats() -> dict:
+    """{dropped: entries lost to a full queue since start} (Admin -> Activity)."""
+    return {"dropped": int(getattr(_w, "dropped_total", 0))}
+
+
 def tail(limit: int = 200, kind: str = "all") -> list:
-    """Newest first, from the current and rotated files of kind tx | security | all."""
+    """Newest first, from the current and rotated files of kind tx | security | all. Files are read
+    newest first (current, .1, .2, ...) and reading stops once `limit` entries of that kind are in
+    hand, so a short tail never parses the whole rotated history."""
     names = {"tx": [TX_FILE], "security": [SEC_FILE]}.get(kind, [TX_FILE, SEC_FILE])
+    limit = max(0, int(limit))
     out = []
+    if not limit:
+        return out
     try:
         d = _dir()
     except Exception:
         return out
     for name in names:
         keep = TX_KEEP if name == TX_FILE else SEC_KEEP
+        got = 0
         for i in range(0, keep + 1):
             p = d / (name if i == 0 else f"{name}.{i}")
             try:
@@ -309,8 +322,13 @@ def tail(limit: int = 200, kind: str = "all") -> list:
                 continue
             for line in text.splitlines():
                 try:
-                    out.append(json.loads(line))
+                    rec = json.loads(line)
                 except ValueError:
                     continue
+                if isinstance(rec, dict):
+                    out.append(rec)
+                    got += 1
+            if got >= limit:
+                break
     out.sort(key=lambda r: str(r.get("ts", "")), reverse=True)
-    return out[:max(0, int(limit))]
+    return out[:limit]
