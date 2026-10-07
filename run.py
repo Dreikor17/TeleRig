@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch the TeleRig server. Usage: python run.py [--host H] [--port P]"""
+"""Launch the TeleRig server. Usage: python run.py [--host H] [--port P] [--sim-only] [--no-autoconnect]"""
 import argparse
 import os
 import sys
@@ -27,7 +27,20 @@ def main() -> None:
     ap.add_argument("--ssl-keyfile", default=os.environ.get("TELERIG_SSL_KEY") or os.environ.get("RADIO_WEBOP_SSL_KEY"),
                     help="TLS private key (PEM) for --ssl-certfile (also reads TELERIG_SSL_KEY, or the older "
                          "RADIO_WEBOP_SSL_KEY).")
+    ap.add_argument("--sim-only", action="store_true",
+                    help="development/test guard: /api/connect accepts only the built-in simulator and "
+                         "refuses serial (COM) and LAN radios (also TELERIG_SIM_ONLY=1)")
+    ap.add_argument("--no-autoconnect", action="store_true",
+                    help="never connect a radio automatically when a page loads; the server refuses "
+                         "auto connects (also TELERIG_NO_AUTOCONNECT=1)")
     args = ap.parse_args()
+
+    # Dev guards travel in the environment and are set BEFORE uvicorn.run, so the server (and any
+    # --reload child process) inherits them. backend/server.py reads them per request.
+    if args.sim_only:
+        os.environ["TELERIG_SIM_ONLY"] = "1"
+    if args.no_autoconnect:
+        os.environ["TELERIG_NO_AUTOCONNECT"] = "1"
 
     # Serve HTTPS directly only if BOTH cert and key are given; otherwise plain HTTP.
     ssl_kw = {}
@@ -50,8 +63,22 @@ def main() -> None:
         print("  WARNING: no login — anyone who can reach this port can control the radio (incl. TX).")
         print("  Secure remote tip: bind --host 127.0.0.1 and front it with 'tailscale serve --bg "
               f"{args.port}' for tailnet-only HTTPS (mic/TX needs HTTPS). See docs/REMOTE-ACCESS.md.")
+    if _env_flag("TELERIG_SIM_ONLY"):
+        print("  SIM-ONLY: serial (COM) and LAN radios are refused; only the simulator can connect.")
+    if _env_flag("TELERIG_NO_AUTOCONNECT"):
+        print("  Auto-connect is OFF: no radio is connected automatically when a page loads.")
+    # proxy_headers=False: scope["client"] is always the real TCP peer. Forwarding headers are
+    # interpreted by the app itself, and only when that peer is loopback (never by uvicorn).
     uvicorn.run("backend.server:app", host=args.host, port=args.port,
-                reload=args.reload, log_level="info", **ssl_kw)
+                reload=args.reload, log_level="info",
+                ws_ping_interval=10, ws_ping_timeout=10, ws_max_size=1048576,
+                proxy_headers=False, **ssl_kw)
+
+
+def _env_flag(name: str) -> bool:
+    """Same rule as backend/server.py: any value except empty/0/false/no/off counts as ON."""
+    v = os.environ.get(name)
+    return v is not None and v.strip().lower() not in ("", "0", "false", "no", "off")
 
 
 if __name__ == "__main__":

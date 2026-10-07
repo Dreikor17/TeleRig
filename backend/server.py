@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import struct
 import threading
 import time
@@ -248,10 +249,49 @@ async def api_ports(request):
     })
 
 
+# -- dev guards (run.py --sim-only / --no-autoconnect) -------------------------
+def _env_flag(name: str) -> bool:
+    """TELERIG_SIM_ONLY / TELERIG_NO_AUTOCONNECT, exported by run.py before uvicorn starts.
+    Read per request. Any value except empty/0/false/no/off counts as ON (fail closed)."""
+    v = os.environ.get(name)
+    return v is not None and v.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def sim_only() -> bool:
+    return _env_flag("TELERIG_SIM_ONLY")
+
+
+def no_autoconnect() -> bool:
+    return _env_flag("TELERIG_NO_AUTOCONNECT")
+
+
+# Set by any explicit /api/disconnect since start: afterwards a page load (auto:true connect)
+# must not reconnect a radio someone deliberately disconnected.
+_autoconnect_spent = False
+
+
+def _connect_error(status: int, error: str, message: str) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": error, "message": message}, status_code=status)
+
+
 async def api_connect(request):
     global radio
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        body = None
+    if not isinstance(body, dict):
+        return _connect_error(400, "invalid_json", "The request body must be a JSON object.")
     kind = body.get("transport", "sim")
+    # Guards run before ANY side effect (audio stop, radio switch, port open).
+    # --sim-only: only the simulator may be connected; serial and LAN are refused (I13).
+    if sim_only() and kind != "sim":
+        return _connect_error(403, "sim_only",
+                              "This server runs with --sim-only: only the simulator can be connected.")
+    # auto (page-load) connects: refused with --no-autoconnect or after an explicit disconnect.
+    if body.get("auto") and (no_autoconnect() or _autoconnect_spent):
+        return _connect_error(409, "autoconnect_disabled",
+                              "Automatic connect is disabled; press Connect to connect a radio.")
     try:
         host_audio.stop()                   # drop any prior host sound-card streams on (re)connect
         profile = profiles.PROFILES.get(body.get("radio"), radio.profile)
@@ -285,6 +325,8 @@ async def api_connect(request):
 
 
 async def api_disconnect(request):
+    global _autoconnect_spent
+    _autoconnect_spent = True               # explicit disconnect: page loads no longer auto-connect
     host_audio.stop()                       # release the host sound cards with the radio
     radio.disconnect()
     return JSONResponse({"ok": True})
@@ -302,7 +344,7 @@ async def ws_endpoint(ws: WebSocket):
     host = ws.headers.get("host")
     if not auth.host_ok(host) or not auth.origin_ok(ws.headers.get("origin"), host):
         await ws.close(code=1008); return
-    if auth.auth_enabled() and not auth.local_exempt(ws.client.host if ws.client else None) \
+    if auth.auth_enabled() and not auth.local_exempt(_client_ip(ws)) \
             and not auth.valid_session(ws.cookies.get(auth.COOKIE_NAME)):
         await ws.close(code=1008); return
     await ws.accept()
@@ -504,8 +546,23 @@ _AUTH_EXEMPT = {"/login", "/api/login", "/api/auth_status"}
 _login_hits: dict = {}                  # ip -> [recent attempt times] (brute-force brake)
 
 
+# Headers a reverse proxy / tunnel adds (same set as the Phase 1 auth design, §2.8).
+_FWD_HEADERS = ("x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
+                "forwarded", "via", "x-real-ip", "tailscale-user-login", "tailscale-user-name",
+                "cf-connecting-ip", "true-client-ip")
+
+
 def _client_ip(req) -> str:
-    return req.client.host if req.client else ""
+    """The client address for the v1 loopback checks. uvicorn now runs with proxy_headers=False,
+    so req.client is always the TCP peer. A loopback peer that carries a forwarding header is a
+    proxied client: report the right-most X-Forwarded-For entry when it is a non-loopback
+    address, else the non-address "proxied" — never loopback, so it never counts as local."""
+    peer = req.client.host if req.client else ""
+    if auth.is_local(peer) and any(h in req.headers for h in _FWD_HEADERS):
+        xff = [p.strip() for p in req.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+        ip = xff[-1] if xff else ""
+        return ip if ip and not auth.is_local(ip) else "proxied"
+    return peer
 
 
 def _rate_limited(ip: str) -> bool:

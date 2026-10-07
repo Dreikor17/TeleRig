@@ -1601,7 +1601,7 @@
     }
     applyConnForRadio($("radioSel").value);        // restore this radio's last connection type + settings
     const body = buildConnectBody();               // and connect to it (silent on failure)
-    if (body.transport === "lan" && !body.host) doConnect({ transport: "sim", radio: $("radioSel").value }, true);
-    else doConnect(body, true);
+    if (body.transport === "lan" && !body.host) doConnect({ transport: "sim", radio: $("radioSel").value, auto: true }, true);
+    else doConnect({ ...body, auto: true }, true);   // auto: the server may refuse (--no-autoconnect / after a disconnect)
   });
 })();
