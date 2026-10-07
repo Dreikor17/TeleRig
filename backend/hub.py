@@ -97,10 +97,11 @@ class Conn:
         # audio flags (A4)
         self.rx_sub = False
         self.tx_audio = False
-        # limits (A4)
+        # limits
         self.bucket = TokenBucket(60, 30)
         self.cont_bucket = TokenBucket(60, 40)
-        self.pending: dict = {}
+        self.pending: dict = {}               # coalesced continuous setters (Coalescer)
+        self.flush_handle = None              # the Coalescer's pending loop.call_later handle
         self.menu_reads = RateWindow(5)
         self.audio_rate = RateWindow(65536)
         self.denied_at = 0.0
@@ -125,10 +126,9 @@ class Hub:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._ids = itertools.count(1)
         self.scope_packer: Optional[Callable[[Any], bytes]] = None   # server.py binds _pack_scope
-        self.on_radio_state: Optional[Callable[[dict], None]] = None  # A4: TX arbiter hook
-        # A4/G-5: RX audio only to connections that subscribed with rx_audio. Until that action
-        # exists, audio goes to every connection (v1 behaviour).
-        self.rx_gating = False
+        self.on_radio_state: Optional[Callable[[dict], None]] = None  # the TX arbiter's state hook
+        # G-5: RX audio only to connections that subscribed with rx_audio (False = v1: everyone).
+        self.rx_gating = True
 
     # -- registry ---------------------------------------------------------------------------
     def add(self, ws: Any, **ident) -> Conn:
@@ -147,6 +147,13 @@ class Hub:
 
     def count_user(self, user: str) -> int:
         return sum(1 for c in self.conns.values() if c.user == user)
+
+    def count_role(self, role: str) -> int:
+        return sum(1 for c in self.conns.values() if c.role == role)
+
+    def others_online(self, user: str) -> int:
+        """Distinct OTHER users with an open connection."""
+        return len({c.user for c in self.conns.values() if c.user != user and not c.closing})
 
     # -- threading ----------------------------------------------------------------------------
     def _on_loop(self) -> bool:
@@ -315,3 +322,161 @@ class Hub:
     def kick_fp(self, token_fp: str, code: int, reason: str) -> int:
         """Close every socket opened with this session token (logout revokes the token)."""
         return self.kick(lambda c: c.token_fp == token_fp, code, reason)
+
+
+# -- continuous setters (AR-48) ----------------------------------------------------------------------
+class Coalescer:
+    """Continuous setters (set_freq, tune, set_level, rit_freq, contour_freq, apf_freq) charge the
+    connection's own cont_bucket and are NEVER answered `rate_limited`. While the bucket is empty
+    only the latest value per key is kept (set_level per target; tune sums its deltas; a set_freq
+    supersedes pending tunes and later tunes fold into it), and the backlog is flushed with
+    loop.call_later as soon as a token is available, so the final value always reaches the radio.
+    `recheck(conn, cmd)` re-evaluates the X lock at flush time (False = drop it)."""
+
+    def __init__(self, apply: Callable[[Conn, dict], None], recheck: Callable[[Conn, dict], bool],
+                 loop_getter: Callable[[], Optional[asyncio.AbstractEventLoop]]):
+        self.apply = apply
+        self.recheck = recheck
+        self.loop_getter = loop_getter
+
+    @staticmethod
+    def key(cmd: dict):
+        a = cmd.get("action")
+        return (a, cmd.get("target")) if a == "set_level" else a
+
+    def submit(self, conn: Conn, cmd: dict) -> None:
+        if not conn.pending and conn.cont_bucket.take():
+            self.apply(conn, cmd)
+            return
+        self._merge(conn, cmd)
+        self._schedule(conn)
+
+    def _merge(self, conn: Conn, cmd: dict) -> None:
+        p = conn.pending
+        a = cmd.get("action")
+        if a == "set_freq":
+            p.pop("tune", None)
+            p.pop("set_freq", None)
+            p["set_freq"] = dict(cmd)
+        elif a == "tune":
+            if "set_freq" in p:
+                p["set_freq"]["hz"] = max(0, min(10_000_000_000, p["set_freq"]["hz"] + cmd["delta"]))
+            elif "tune" in p:
+                p["tune"]["delta"] += cmd["delta"]
+            else:
+                p["tune"] = dict(cmd)
+        else:
+            p[self.key(cmd)] = dict(cmd)          # replaces in place (keeps its queue position)
+
+    def _schedule(self, conn: Conn) -> None:
+        if conn.flush_handle is not None or not conn.pending:
+            return
+        loop = self.loop_getter()
+        if loop is None:                          # no loop (in-process tests): flush now
+            self.flush(conn, force=True)
+            return
+        delay = max(0.005, conn.cont_bucket.wait_time())
+        conn.flush_handle = loop.call_later(delay, self._flush_cb, conn)
+
+    def _flush_cb(self, conn: Conn) -> None:
+        conn.flush_handle = None
+        self.flush(conn)
+
+    def flush(self, conn: Conn, force: bool = False) -> None:
+        while conn.pending:
+            if conn.closing:
+                conn.pending.clear()
+                return
+            if not force and not conn.cont_bucket.take():
+                break
+            k = next(iter(conn.pending))
+            cmd = conn.pending.pop(k)
+            try:
+                if self.recheck(conn, cmd):
+                    self.apply(conn, cmd)
+            except Exception:
+                pass
+        if conn.pending:
+            self._schedule(conn)
+
+    def drop(self, conn: Conn) -> None:
+        h, conn.flush_handle = conn.flush_handle, None
+        if h is not None:
+            try:
+                h.cancel()
+            except Exception:
+                pass
+        conn.pending.clear()
+
+
+# -- the SET-menu read queue (AR-32) -----------------------------------------------------------------
+class MenuQueue:
+    """One FIFO per radio, coalesced per group: a group already queued or running is not queued
+    again (every requester gets the broadcast `menu` frames). Groups run one at a time; the next one
+    starts len(items)*0.03 + 0.5 s after the previous started (the radio's own read spacing). At
+    most PER_CONN pending groups per connection (queued + running) and TOTAL in all; beyond that
+    submit() returns RETRY_AFTER (the caller answers `busy {retry_after}`)."""
+    PER_CONN = 4
+    TOTAL = 16
+    RETRY_AFTER = 2
+    ITEM_DT = 0.03
+    GAP = 0.5
+
+    def __init__(self, run_group: Callable[[str], int],
+                 loop_getter: Callable[[], Optional[asyncio.AbstractEventLoop]]):
+        self.run_group = run_group                # starts reading a group; returns its item count
+        self.loop_getter = loop_getter
+        self.queue: deque = deque()               # (group, conn id)
+        self.running: Optional[str] = None
+        self.running_conn = None
+        self._handle = None
+        self.started: list = []                   # (group, monotonic) for tests / diagnostics
+
+    def pending_for(self, conn_id) -> int:
+        n = sum(1 for _, c in self.queue if c == conn_id)
+        return n + (1 if self.running is not None and self.running_conn == conn_id else 0)
+
+    def submit(self, conn_id, group: str) -> Optional[int]:
+        """None when queued (or coalesced); RETRY_AFTER when the queue is full for this caller."""
+        if group == self.running or any(g == group for g, _ in self.queue):
+            return None
+        total = len(self.queue) + (1 if self.running is not None else 0)
+        if self.pending_for(conn_id) >= self.PER_CONN or total >= self.TOTAL:
+            return self.RETRY_AFTER
+        self.queue.append((group, conn_id))
+        self._pump()
+        return None
+
+    def _pump(self) -> None:
+        if self.running is not None or not self.queue:
+            return
+        group, cid = self.queue.popleft()
+        self.running, self.running_conn = group, cid
+        self.started.append((group, time.monotonic()))
+        del self.started[:-64]
+        try:
+            n = int(self.run_group(group) or 0)
+        except Exception:
+            n = 0
+        delay = n * self.ITEM_DT + self.GAP
+        loop = self.loop_getter()
+        if loop is None:
+            self._done()
+            return
+        self._handle = loop.call_later(delay, self._done)
+
+    def _done(self) -> None:
+        self._handle = None
+        self.running, self.running_conn = None, None
+        self._pump()
+
+    def clear(self) -> None:
+        """Radio change: forget everything queued (the new radio has other groups)."""
+        h, self._handle = self._handle, None
+        if h is not None:
+            try:
+                h.cancel()
+            except Exception:
+                pass
+        self.queue.clear()
+        self.running, self.running_conn = None, None

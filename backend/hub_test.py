@@ -8,7 +8,7 @@ import asyncio
 import json
 import threading
 
-from backend.hub import CTL_MAX, DATA_MAX, Hub, RateWindow, TokenBucket, sanitize_state
+from backend.hub import CTL_MAX, DATA_MAX, Coalescer, Conn, Hub, MenuQueue, RateWindow, TokenBucket, sanitize_state
 
 _ok = True
 
@@ -150,6 +150,24 @@ async def main():
     C("without rx_gating, audio to everyone (v1)", (kinds(a).count("bytes"), kinds(b).count("bytes")), (2, 1))
     C("audio frame header: 'A', 1 channel, 16 kHz", a.sent[0][1][:4], b"\x41\x01\x80\x3e")
 
+    # -- T65 (AR-46): a saturated data queue never delays or drops the tx frame ------------------------------
+    ws6 = FakeWS(block=True)
+    c6 = hub.add(ws6)
+    hub.start_sender(c6)
+    await settle()
+    for i in range(500):                                   # synthetic scope frames flood the data queue
+        hub.broadcast_scope([i % 256] * 16)
+    await settle()
+    C("T65 data queue saturated but bounded", DATA_MAX - 1 <= len(c6.q) <= DATA_MAX, True)
+    hub.broadcast_control({"type": "tx", "owner": {"conn": c6.id, "user": "OP1", "claims": ["ptt"]}})
+    await settle()
+    ws6.gate.set()
+    await settle(400)
+    k6 = kinds(ws6)
+    C("T65 the tx frame naming OP1 is delivered", "tx" in k6, True)
+    C("T65 ... ahead of the queued scope backlog (at most the one frame in flight before it)", k6.index("tx") <= 1, True)
+    hub.remove(c6)
+
     # -- registry --------------------------------------------------------------------------------------------
     n = len(hub.conns)
     hub.remove(ca)
@@ -165,6 +183,96 @@ async def main():
 
 
 asyncio.run(main())
+
+C("RX gating is on by default (G-5: audio only to rx_audio subscribers)", Hub().rx_gating, True)
+
+
+# -- Coalescer (AR-48) -------------------------------------------------------------------------------
+async def coalescer_tests():
+    loop = asyncio.get_running_loop()
+    applied = []
+    co = Coalescer(lambda c, cmd: applied.append(dict(cmd)), lambda c, cmd: True, lambda: loop)
+    c = Conn(1, None, user="OP1", role="operator")
+    for i in range(300):                                   # 300 set_level af "in 1 s" (all at once)
+        co.submit(c, {"action": "set_level", "target": "af", "value": i % 256})
+    co.submit(c, {"action": "set_level", "target": "rf", "value": 7})
+    C("coalescer: the first ~60 go straight through (cont bucket)", 55 <= len(applied) <= 62, True)
+    await asyncio.sleep(0.3)
+    afs = [a["value"] for a in applied if a.get("target") == "af"]
+    C("coalescer: the FINAL af value reaches the radio", afs[-1], 299 % 256)
+    C("coalescer: the rf value too (separate key)", [a["value"] for a in applied if a.get("target") == "rf"], [7])
+    applied.clear()
+    c2 = Conn(2, None, user="OP1", role="operator")
+    for _ in range(300):
+        co.submit(c2, {"action": "tune", "delta": 10})
+    await asyncio.sleep(0.3)
+    C("coalescer: 300 x tune +10 -> net delta 3000 applied", sum(a["delta"] for a in applied), 3000)
+    C("coalescer: ... in far fewer radio calls", len(applied) < 100, True)
+    applied.clear()
+    c3 = Conn(3, None, user="OP1", role="operator")
+    c3.cont_bucket.tokens = 0
+    co.submit(c3, {"action": "tune", "delta": 5})
+    co.submit(c3, {"action": "set_freq", "hz": 7000000})       # an absolute value supersedes pending tunes
+    co.submit(c3, {"action": "tune", "delta": 100})            # ... later tunes fold into it
+    await asyncio.sleep(0.2)
+    C("coalescer: set_freq supersedes earlier tunes; later tunes fold in", applied, [{"action": "set_freq", "hz": 7000100}])
+    applied.clear()
+    blocked = Coalescer(lambda c, cmd: applied.append(cmd), lambda c, cmd: False, lambda: loop)
+    c4 = Conn(4, None, user="OP1", role="operator")
+    c4.cont_bucket.tokens = 0
+    blocked.submit(c4, {"action": "set_freq", "hz": 1})
+    await asyncio.sleep(0.2)
+    C("coalescer: the X lock re-checked at flush time can drop it", (applied, c4.pending), ([], {}))
+    c5 = Conn(5, None, user="OP1", role="operator")
+    c5.cont_bucket.tokens = 0
+    co.submit(c5, {"action": "set_freq", "hz": 1})
+    co.drop(c5)
+    await asyncio.sleep(0.2)
+    C("coalescer: drop() on close forgets the backlog", (applied, c5.pending, c5.flush_handle), ([], {}, None))
+
+asyncio.run(coalescer_tests())
+
+
+# -- MenuQueue (AR-32) -------------------------------------------------------------------------------
+class FakeLoop:
+    def __init__(self):
+        self.timers = []
+
+    def call_later(self, delay, fn, *a):
+        h = type("H", (), {"cancel": lambda s: None})()
+        self.timers.append((delay, fn, a))
+        return h
+
+    def fire(self):
+        delay, fn, a = self.timers.pop(0)
+        fn(*a)
+        return delay
+
+
+runs = []
+fl = FakeLoop()
+mq = MenuQueue(lambda g: runs.append(g) or {"A": 10, "B": 5}.get(g, 3), lambda: fl)
+C("menu queue: A starts at once", (mq.submit(1, "A"), runs), (None, ["A"]))
+C("menu queue: B queued behind A", (mq.submit(2, "B"), runs), (None, ["A"]))
+C("menu queue: A again (third conn) is coalesced, not queued twice", (mq.submit(3, "A"), list(mq.queue)), (None, [("B", 2)]))
+C("menu queue: B starts len(A)*0.03 + 0.5 s after A", round(fl.fire(), 3), 0.8)
+C("menu queue: ... in order, A read once", runs, ["A", "B"])
+fl.fire()
+C("menu queue: idle again", (mq.running, list(mq.queue)), (None, []))
+for g in ("G1", "G2", "G3", "G4"):
+    C(f"menu queue: conn 7 group {g} accepted", mq.submit(7, g), None)
+C("menu queue: a 5th pending group from one conn -> retry_after 2", mq.submit(7, "G5"), 2)
+C("menu queue: another conn is still served", mq.submit(8, "G5"), None)
+for i in range(11):
+    mq.submit(100 + i, f"H{i}")
+C("menu queue: at most 16 in total", (len(mq.queue) + 1, mq.submit(200, "Z")), (16, 2))
+mq.clear()
+C("menu queue: clear() on radio change", (mq.running, list(mq.queue)), (None, []))
+runs.clear()
+mq2 = MenuQueue(lambda g: runs.append(g) or 2, lambda: None)
+mq2.submit(1, "X")
+mq2.submit(1, "Y")
+C("menu queue without a loop runs synchronously", runs, ["X", "Y"])
 
 tb = TokenBucket(3, 1)
 C("token bucket: cap tokens then empty", [tb.take() for _ in range(4)], [True, True, True, False])

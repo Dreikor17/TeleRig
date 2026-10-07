@@ -81,8 +81,8 @@ def connect_guards(ctx):
 
     r = c.post("/api/connect", {**SIM_IC9700, "auto": True})           # A1 verify 3
     eq((r.status, _err(r)), (409, "autoconnect_disabled"), f"sim auto {r!r}")
-    r = c.post("/api/connect", {**SIM_IC9700, "auto": "false"})        # any truthy auto counts as auto
-    eq((r.status, _err(r)), (409, "autoconnect_disabled"), f"sim auto 'false' {r!r}")
+    r = c.post("/api/connect", {**SIM_IC9700, "auto": "false"})        # A4: strict types (auto is a bool)
+    eq((r.status, _err(r), r.json().get("field")), (400, "invalid", "auto"), f"sim auto 'false' {r!r}")
     eq(_state(c).get("connected"), False, "auto connect connected a radio")
 
     for bad in (b"{bad", b"[1,2]", b'"sim"'):                          # not a JSON object

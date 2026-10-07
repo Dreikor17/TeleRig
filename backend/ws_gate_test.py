@@ -14,7 +14,7 @@ created), and `server.hub.kick_conn` by a recorder.
 import json
 import time
 
-from backend import accounts, server
+from backend import accounts, profiles, server
 from backend.hub import Conn
 from backend.store import StoreCorrupt
 
@@ -54,6 +54,7 @@ rec = Recorder()
 audio = Recorder()
 server.radio = rec
 server.host_audio = audio
+server.audio.host = audio            # the audio router writes mic PCM to the (recorded) host card
 
 # fake account table: OP1 operator gen 3, V1 viewer gen 1, MIG migrated_v1 admin gen 2
 USERS = {n: accounts.User(n, "x", role, gen, False, False, mig, None, None, None, None)
@@ -101,12 +102,32 @@ def feed_bytes(conn, tx_device):
 
 
 # -- control: an open connection on an unlocked server reaches the (recorded) radio -----------------
+# The recorder pretends to be a connected IC-9700 so the policy's capability checks pass; it is still
+# only a list (nothing can transmit).
+rec.state = {"connected": True, "radio": "ic9700", "mode_name": "USB"}
+rec.profile = profiles.PROFILES["ic9700"]
 server._locked = None
 live = mk(1)
 C("open: set_freq reaches the radio", feed(live, TEXT["set_freq"]), [("set_freq", 145333000)])
-C("open: ptt false reaches the radio", feed(live, STOPS["ptt_off"][0]), [("set_ptt", False)])
-C("open: mic PCM -> the radio's modulator (LAN)", [c[0] for c in feed_bytes(live, None)], ["write_audio"])
-C("open: mic PCM -> the host TX card (serial)", [c[0] for c in feed_bytes(live, 3)], ["write"])
+C("open: ptt false with no TX owner runs the stop primitive", feed(live, STOPS["ptt_off"][0]), [("set_ptt", False)])
+C("open: mic PCM without a TX claim is dropped (I10)", feed_bytes(live, None), [])
+C("open: ptt true -> the arbiter keys once", feed(live, TEXT["ptt_on"]), [("set_ptt", True)])
+C("open: ... and owns TX", (server.arb.owner, sorted(server.arb.claims)), (1, ["ptt"]))
+C("open: owner + ptt but mic off: PCM dropped", feed_bytes(live, None), [])
+live.tx_audio = True
+C("open: owner + ptt + mic on: PCM -> the radio's modulator (LAN/sim path)",
+  [c[0] for c in feed_bytes(live, None) if c[0] != "flush_tx"], ["write_audio"])
+real_kind = server._transport_kind
+server._transport_kind = lambda: "serial"
+C("open: ... -> the host TX card (serial)", [c[0] for c in feed_bytes(live, 3)], ["write"])
+C("open: ... serial with no TX device open: dropped", feed_bytes(live, None), [])
+server._transport_kind = real_kind
+other = mk(30, "OP1", "operator", 3)
+other.tx_audio = True
+C("open: a non-owner's PCM is dropped even with its mic on", feed_bytes(other, None), [])
+C("open: the owner's ptt false releases (one unkey)", feed(live, STOPS["ptt_off"][0]), [("set_ptt", False)])
+C("open: ... and TX is free again", server.arb.owner, None)
+live.tx_audio = False
 
 
 def gated(label, conn):
@@ -130,6 +151,21 @@ gated("kicked", kicked)
 server._locked = StoreCorrupt("config.json", "test")
 gated("locked", mk(3))
 server._locked = None
+
+# -- A4: a locked server still lets the TX owner unkey; entering locked mode releases app-keyed TX ------
+own = mk(40)
+C("owner keys (unlocked)", feed(own, TEXT["ptt_on"]), [("set_ptt", True)])
+server._locked = StoreCorrupt("auth.json", "test")
+C("locked: the owner's ptt false still releases (fast path, AR-17)", feed(own, STOPS["ptt_off"][0]), [("set_ptt", False)])
+C("locked: ... TX free", server.arb.owner, None)
+server._locked = None
+feed(own, TEXT["ptt_on"])
+rec.state["ptt"] = True
+rec.calls.clear()
+server._enter_locked(StoreCorrupt("auth.json", "test"))
+C("entering locked mode force-releases app-keyed TX (I6)", (("set_ptt", False) in rec.calls, server.arb.owner), (True, None))
+server._locked = None
+rec.state["ptt"] = False
 
 # -- unlocking does not revive a kicked connection ---------------------------------------------------
 C("unlocked: the kicked connection still acts on nothing", feed(kicked, TEXT["set_freq"]), [])

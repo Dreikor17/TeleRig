@@ -384,8 +384,10 @@ def ws_connect(uri: str, *, origin: Optional[str], headers: Optional[dict] = Non
     from websockets.sync.client import connect
     kw = {"sock": sock} if sock is not None else {"proxy": None}
     try:
+        # close_timeout bounds close() when this test client has stopped reading (its queue full of
+        # scope frames): the closing handshake then waits for the server's reply.
         return connect(uri, origin=origin, additional_headers=headers or None,
-                       open_timeout=open_timeout, **kw)
+                       open_timeout=open_timeout, close_timeout=2, **kw)
     except InvalidStatus as e:
         if sock is not None:
             sock.close()
@@ -504,6 +506,20 @@ class WS:
     def close(self) -> None:
         try:
             self._c.close()
+        except Exception:
+            pass
+
+    def abort(self) -> None:
+        """Drop the TCP connection with no closing handshake (a crashed tab / lost network)."""
+        import socket as _socket
+        s = getattr(self._c, "socket", None)
+        try:
+            if s is not None:
+                try:
+                    s.shutdown(_socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                s.close()
         except Exception:
             pass
 
@@ -650,12 +666,18 @@ class Server:
     of the environment so only the CLI flags (always passed) enable the guards."""
 
     def __init__(self, tmp: Any, *, port: Optional[int] = None, env_flags: bool = True,
-                 wait: float = DEFAULT_WAIT):
+                 wait: float = DEFAULT_WAIT, extra_env: Optional[dict] = None):
         self.tmp = Path(tmp)
         check_config_path(self.tmp / "config.json")             # before anything is created
         check_scratch_home(self.tmp / "home")
         self._fixed_port = check_port(port) if port is not None else None
         self.env_flags = env_flags
+        # Only the server's test knobs (honoured by the server only with TELERIG_SIM_ONLY=1), e.g.
+        # TELERIG_TEST_AUDIT_WINDOW / TELERIG_TEST_SUDO_TTL. Nothing else may be injected.
+        self.extra_env = dict(extra_env or {})
+        bad = [k for k in self.extra_env if not k.startswith("TELERIG_TEST_")]
+        if bad:
+            raise HarnessError(f"extra_env may only set TELERIG_TEST_* knobs, not {bad}")
         self.wait = min(float(wait), DEFAULT_WAIT)
         self.port: Optional[int] = None
         self.proc: Optional[subprocess.Popen] = None
@@ -688,6 +710,7 @@ class Server:
     def _spawn(self, port: int) -> bool:
         self.port = check_port(port)
         env = scratch_env(self.tmp, sim_only=self.env_flags, no_autoconnect=self.env_flags)
+        env.update({k: str(v) for k, v in self.extra_env.items()})
         self.cmd = [sys.executable, str(REPO / "run.py"), "--host", "127.0.0.1", "--port", str(port),
                     "--sim-only", "--no-autoconnect", "--no-browser"]
         self.log_path = self.tmp / f"server-{port}.log"
@@ -847,9 +870,62 @@ def mk_user(tmp: Any, name: str, role: str = "operator", password: Optional[str]
     return pw
 
 
+def mk_users(tmp: Any, specs: list) -> dict:
+    """Create several users [(name, role), ...] in ONE child (faster than mk_user per user).
+    Returns {name: password}."""
+    pws = {name: user_password(name) for name, _ in specs}
+    body = "\n".join(f"accounts.create_user({n!r}, {r!r}, {pws[n]!r}, must_change=False, created_by='harness')"
+                     for n, r in specs)
+    accounts_child(tmp, body)
+    time.sleep(STORE_PICKUP)
+    return pws
+
+
 def del_user(tmp: Any, name: str) -> None:
     accounts_child(tmp, f"accounts.delete_user({name!r})")
     time.sleep(STORE_PICKUP)
+
+
+class Heartbeat:
+    """Sends {"action":"tx_hb"} on a WS every `interval` s from a background thread (the §2.13
+    heartbeat contract) until stop(). tx_hb never keys anything; it is not a TX command."""
+
+    def __init__(self, ws: Any, interval: float = 1.5):
+        import threading
+        self.ws, self.interval = ws, interval
+        self._stop = threading.Event()
+        self.sent = 0
+        self._t = threading.Thread(target=self._run, daemon=True, name="tr-test-hb")
+        self._t.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.ws.send({"action": "tx_hb"})
+                self.sent += 1
+            except Exception:
+                return
+            self._stop.wait(self.interval)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._t.join(timeout=3)
+
+
+def audit_records(tmp: Any, name: str = "audit-tx.log") -> list:
+    """Parsed JSON lines of a scratch audit file (empty when missing)."""
+    p = check_config_path(Path(tmp) / "config.json").parent / name
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out = []
+    for line in text.splitlines():
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            pass
+    return out
 
 
 def session_cookie(client: "Client") -> Optional[str]:

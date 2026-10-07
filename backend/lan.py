@@ -589,6 +589,11 @@ class LanTransport(Transport):
                 self._on_stream_error(f"audio tx: {exc}")
                 return
 
+    def flush_tx_audio(self) -> None:
+        """Drop buffered TX (mic) PCM not yet sent to the radio (AR-18; called by the audio router
+        when the last ptt/vox claim ends)."""
+        self._tx_audio_buf = bytearray()
+
     def _on_stream_error(self, msg: str) -> None:
         if self._error is None:
             self._error = msg

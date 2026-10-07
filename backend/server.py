@@ -6,11 +6,17 @@ every route declares its policy (@requires, backend/policy.py) and the Gate midd
 locked mode, Host, Origin, JSON bodies and the session before any route runs (§2.9).
   GET  /              -> the radio UI (+ the bootstrap JSON, §3.15)
   /login, /change-password, /api/login|logout|auth_status|me* -> backend/account_api.py
-  GET  /api/status    -> radio/connection status for this role
-  GET  /api/ports     -> available COM ports (+ "sim")
-  POST /api/connect   -> {transport:"sim"} or {transport:"serial",port,baud}
+  GET  /api/status    -> radio/connection status for this role (+ the TX owner)
+  GET  /api/ports     -> {ports}: available COM ports (operator)
+  POST /api/connect   -> {transport:"sim"|"serial"|"lan", radio, ...} (§2.10 rules, F20 pins)
   POST /api/disconnect
+  POST /api/tx_stop   -> STOP whoever transmits (operator; the HTTP twin of WS tx_stop)
   WS   /ws            -> hello + JSON state in/out + binary scope sweeps out
+
+Every WS text frame goes through the policy table (backend/policy.py): role, strict argument
+types, canonical commands, the TX locks. TX start/stop goes to the TX arbiter (backend/txarb.py);
+RX/mic audio to the audio router (backend/audio_router.py). _handle_cmd only ever receives
+canonical commands rebuilt from validated fields.
 
 Scope sweeps are pushed as a single self-contained binary frame:
   <BBBH IIIIII> header then N amplitude bytes (see _pack_scope).
@@ -48,9 +54,10 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket
 
 from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio, policy,
-               profiles, settings, tailscale)
+               profiles, settings, tailscale, txarb)
 from .account_api import read_json
-from .hub import AUDIO_RATE, Hub  # noqa: F401  (AUDIO_RATE re-exported: hostaudio.RATE must match it)
+from .audio_router import AudioRouter
+from .hub import AUDIO_RATE, Coalescer, Hub, MenuQueue  # noqa: F401  (AUDIO_RATE: hostaudio.RATE must match)
 from .lan import LanTransport
 from .policy import requires
 from .radio import Radio
@@ -141,6 +148,49 @@ def _bind_radio(r) -> None:
 _bind_radio(radio)
 
 
+# -- TX arbiter, audio router, continuous-setter coalescer, SET-menu queue (§2.12-§2.14) ----------
+def _conn_alive(c) -> bool:
+    return c is not None and not c.closing and hub.conns.get(c.id) is c
+
+
+audio = AudioRouter(hub, host_audio, lambda: radio, lambda: _transport_kind(), log=console)
+arb = txarb.TxArbiter(lambda: radio, send_to=lambda c, f: hub.send_to(c, f),
+                      broadcast=lambda f: hub.broadcast_control(f), audit=audit.log,
+                      flush_audio=lambda: audio.flush_tx(), conn_alive=_conn_alive, log=console)
+audio.arb = arb
+hub.on_radio_state = lambda snap: arb.on_radio_state(snap)
+
+
+class _PolicyCtx:
+    """What policy.evaluate() needs to know about the server (looked up at call time)."""
+    @property
+    def arb(self):
+        return arb
+
+    def radio(self):
+        return radio
+
+    def transition(self) -> bool:
+        return _radio_transition
+
+
+_ctx = _PolicyCtx()
+_radio_transition = False          # set while /api/connect or /api/disconnect switches the radio
+_connect_lock = asyncio.Lock()     # never waited on: a second caller gets 409 connecting
+
+
+def _menu_group_run(group: str) -> int:
+    """Start reading one SET-menu group (the radio spaces the reads on its own thread)."""
+    r = radio
+    n = sum(1 for it in (getattr(r.profile, "menu", None) or []) if it.group == group)
+    if n:
+        _handle_cmd({"action": "menu_read_group", "group": group})
+    return n
+
+
+menu_queue = MenuQueue(_menu_group_run, lambda: hub.loop)
+
+
 def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
     data = sweep.data[: civ.SCOPE_POINTS]
     header = struct.pack(
@@ -187,21 +237,20 @@ def _transport_kind() -> str:
 
 
 def status_for(p) -> dict:
-    """GET /api/status for this principal (G-6). Step A3 subset; A4 adds the TX arbiter snapshot,
-    the connect transition and the host-audio defaults. Operators and admins also get the full
-    transport label (incl. a LAN IP) and the current radio's transport pin (no credentials)."""
+    """GET /api/status for this principal (G-6): connection, transport kind, the connect
+    transition, host audio (pins and the F22 server-chosen defaults), the TX owner snapshot.
+    Operators and admins also get the full transport label (incl. a LAN IP) and the current
+    radio's transport pin (no credentials, F20)."""
     s = radio.state
     rid = s.get("radio") if s.get("connected") else None
     try:
         lr = settings.last_radio()
-        pins = settings.host_audio().get(rid or lr or "", {})
     except StoreCorrupt:
-        lr, pins = None, {}
+        lr = None
     out = {"connected": bool(s.get("connected")), "radio": rid, "last_radio": lr,
-           "transport_kind": _transport_kind(), "connecting": False,
-           "host_audio": {"available": hostaudio.available(), "rx_pinned": pins.get("rx"),
-                          "tx_pinned": pins.get("tx"), "rx_default": None, "tx_default": None},
-           "tx": {"owner": None},
+           "transport_kind": _transport_kind(), "connecting": bool(_radio_transition),
+           "host_audio": audio.status(),
+           "tx": arb.snapshot(),
            "autoconnect_allowed": not no_autoconnect() and not _autoconnect_spent,
            "sim_only": sim_only()}
     if p is not None and auth.rank(p.role) >= auth.ROLE_RANK["operator"]:
@@ -230,6 +279,11 @@ def notices_for(p) -> list:
             pass
         if limiter.lockouts()["users"]:
             out.append("lockouts")
+        try:
+            if audio.default_in_use():
+                out.append(f"audio_default:{radio.state.get('radio')}")
+        except Exception:
+            pass
     return out
 
 
@@ -292,12 +346,8 @@ async def api_version(request):
 
 @requires("operator")
 async def api_ports(request):
-    return JSONResponse({
-        "ports": available_ports(),
-        "connected": radio.state["connected"],
-        "transport": radio.state["transport"],
-        "radio": radio.state["radio"],
-    })
+    """{ports} only (connection status moved to /api/status, G-6); enumerated in a thread."""
+    return JSONResponse({"ports": await run_in_threadpool(available_ports)})
 
 
 # -- dev guards (run.py --sim-only / --no-autoconnect) -------------------------
@@ -321,71 +371,206 @@ def no_autoconnect() -> bool:
 _autoconnect_spent = False
 
 
-def _connect_error(status: int, error: str, message: str) -> JSONResponse:
-    return JSONResponse({"ok": False, "error": error, "message": message}, status_code=status)
+def _connect_error(status: int, error: str, message: str, **extra) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": error, "message": message, **extra}, status_code=status)
+
+
+def _do_connect(kind: str, profile, canon: dict, creds: dict) -> tuple:
+    """The v1 connect body (runs in the threadpool, so a LAN timeout never stalls the loop,
+    AR-16): pick the protocol stack, build the transport from the VALIDATED fields, connect."""
+    global radio
+    is_yaesu = getattr(profile, "protocol", "civ") == "yaesu"
+    # route to the matching protocol stack (Icom CI-V vs Yaesu CAT)
+    target = _yaesu if is_yaesu else _icom
+    if target is not radio:
+        radio.disconnect()
+        radio = target
+        _bind_radio(radio)
+    if kind == "serial":
+        # CAT port opens with control lines at their defaults (RTS high) so CAT works
+        # regardless of the radio's CAT-RTS setting. FT-991A CW keys on the SIBLING
+        # (Standard) port's DTR line, opened separately — never on this CAT port.
+        tp = SerialTransport(canon["port"], canon["baud"], stopbits=2 if is_yaesu else 1)
+    elif kind == "lan":
+        if is_yaesu:
+            raise ValueError("The FT-991A is COM-only (no network CAT)")
+        tp = LanTransport(canon["host"], canon["port"], creds.get("user", ""), creds.get("password", ""))
+    else:
+        tp = YaesuSimTransport(profile) if is_yaesu else SimTransport(profile)
+    radio.connect(tp, profile)
+    return radio.state["transport"], profile.id
+
+
+def _busy_owner_error(p, force: bool):
+    """§2.10 step 5: someone else owns TX. Non-admin -> 409 busy; admin -> 409 unless force, then
+    the owner is force-released (audited `admin_switch`). None when the caller may go on."""
+    if arb.owner is None or arb.owner_user == p.user:
+        return None
+    owner = arb.label()
+    if p.role != "admin":
+        return _connect_error(409, "busy", f"{owner} is transmitting.", owner=owner)
+    if not force:
+        return _connect_error(409, "busy", f"{owner} is transmitting; send force:true to stop it.",
+                              owner=owner)
+    arb.force_release("admin_switch", by=p.user, explicit=True)
+    return None
+
+
+def _pin_transport(rid: str, canon: dict, user: str) -> None:
+    """An admin's successful connect pins the radio and its transport for operators (F20)."""
+    def fn(d: dict) -> None:
+        d["last_radio"] = rid
+        rt = d.get("radio_transports")
+        if not isinstance(rt, dict):
+            rt = {}
+        rt[rid] = dict(canon)                      # never LAN credentials (R12, R35)
+        d["radio_transports"] = rt
+    try:
+        settings.mutate(fn, create=True)
+        audit.log("radio_transport_pinned", user=user, radio=rid, transport=dict(canon))
+    except Exception as e:
+        console(f"TeleRig: could not pin the radio transport: {e!r}")
 
 
 @requires("operator")
 async def api_connect(request):
-    global radio
+    """§2.10 connect rules, in order: strict types -> --sim-only (I13) -> auto (--no-autoconnect /
+    spent) -> transport fields (+ the COM port really exists) -> F20 for non-admins (current radio,
+    pinned transport, not already connected) -> TX owner (busy / admin force) -> connect_lock +
+    radio_transition, the connect itself in the threadpool -> admin auto-pin -> audit."""
+    global _radio_transition
+    p = request.state.principal
     body = await read_json(request)
     if not isinstance(body, dict):
         return body                                  # 400 invalid_json / 413 too_large
-    kind = body.get("transport", "sim")
+    field, info = policy.connect_shape(body, profiles.PROFILES)
+    if field:
+        return _connect_error(400, "invalid", f"Invalid connect request: {field}.", field=field)
+    kind = info["transport"]
     # Guards run before ANY side effect (audio stop, radio switch, port open).
     # --sim-only: only the simulator may be connected; serial and LAN are refused (I13).
     if sim_only() and kind != "sim":
         return _connect_error(403, "sim_only",
                               "This server runs with --sim-only: only the simulator can be connected.")
     # auto (page-load) connects: refused with --no-autoconnect or after an explicit disconnect.
-    if body.get("auto") and (no_autoconnect() or _autoconnect_spent):
+    if info["auto"] and (no_autoconnect() or _autoconnect_spent):
         return _connect_error(409, "autoconnect_disabled",
                               "Automatic connect is disabled; press Connect to connect a radio.")
-    try:
-        host_audio.stop()                   # drop any prior host sound-card streams on (re)connect
-        profile = profiles.PROFILES.get(body.get("radio"), radio.profile)
-        is_yaesu = getattr(profile, "protocol", "civ") == "yaesu"
-        # route to the matching protocol stack (Icom CI-V vs Yaesu CAT)
-        target = _yaesu if is_yaesu else _icom
-        if target is not radio:
-            radio.disconnect()
-            radio = target
-            _bind_radio(radio)
-        if kind == "serial":
-            baud = int(body.get("baud") or getattr(profile, "default_baud", 115200))
-            # CAT port opens with control lines at their defaults (RTS high) so CAT works
-            # regardless of the radio's CAT-RTS setting. FT-991A CW keys on the SIBLING
-            # (Standard) port's DTR line, opened separately — never on this CAT port.
-            tp = SerialTransport(body["port"], baud, stopbits=2 if is_yaesu else 1)
-        elif kind == "lan":
-            if is_yaesu:
-                raise ValueError("The FT-991A is COM-only (no network CAT)")
-            host = (body.get("host") or "").strip()
-            if not host:
-                raise ValueError("LAN host/IP is required")
-            tp = LanTransport(host, int(body.get("port", 50001)),
-                              body.get("user", ""), body.get("password", ""))
-        else:
-            tp = YaesuSimTransport(profile) if is_yaesu else SimTransport(profile)
-        radio.connect(tp, profile)
-        return JSONResponse({"ok": True, "transport": radio.state["transport"], "radio": profile.id})
-    except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    profile = profiles.PROFILES[info["radio"]]
+    field, canon, creds = policy.connect_canonical(body, profile)
+    if field:
+        return _connect_error(400, "invalid", f"Invalid connect request: {field}.", field=field)
+    if kind == "serial":
+        ports = await run_in_threadpool(available_ports)
+        if canon["port"] not in {pp.get("device") for pp in ports}:
+            return _connect_error(400, "invalid", f"No serial port {canon['port']!r} on this PC.", field="port")
+    connected = bool(radio.state.get("connected"))
+    if info["auto"] and connected:                   # a page load never switches a connected radio
+        return _connect_error(409, "already_connected", "A radio is already connected.")
+    if p.role != "admin":                            # F20 (AR-23)
+        why = policy.connect_rule_error(p.role, info["radio"], canon, settings.last_radio(),
+                                        settings.radio_transports(), profile)
+        if why:
+            msg = ("Only an admin can switch the radio." if why == "switch_radio" else
+                   "Only an admin can connect this radio on another port or transport.")
+            return _connect_error(403, "admin_required", msg, reason=why)
+        if connected:
+            return _connect_error(409, "already_connected", "The radio is already connected.")
+    err = _busy_owner_error(p, info["force"])
+    if err is not None:
+        return err
+    if _connect_lock.locked():
+        return _connect_error(409, "connecting", "A connect or disconnect is already in progress.")
+    async with _connect_lock:
+        _radio_transition = True
+        try:
+            if arb.owner is not None:
+                arb.force_release("radio_change", by=p.user)
+            menu_queue.clear()
+            await audio.on_radio_change()
+            try:
+                label, rid = await run_in_threadpool(_do_connect, kind, profile, canon, creds)
+            except Exception as exc:
+                return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        finally:
+            _radio_transition = False
+    if p.role == "admin":
+        _pin_transport(rid, canon, p.user)
+    audit.log("radio_connect", user=p.user, radio=rid, transport=kind, ip=auth.client_ip(request.scope))
+    _spawn(audio.after_connect())
+    return JSONResponse({"ok": True, "transport": label, "radio": rid})
 
 
 @requires("operator")
 async def api_disconnect(request):
-    global _autoconnect_spent
-    _autoconnect_spent = True               # explicit disconnect: page loads no longer auto-connect
-    host_audio.stop()                       # release the host sound cards with the radio
-    radio.disconnect()
+    """Same busy/force rule as connect; a non-admin needs confirm:true while other users are
+    online (the UI asks inline); then TX is released, audio stopped and the radio disconnected in
+    the threadpool (it joins threads and sleeps)."""
+    global _autoconnect_spent, _radio_transition
+    p = request.state.principal
+    body = await read_json(request)
+    if not isinstance(body, dict):
+        return body
+    for k in ("confirm", "force"):
+        if k in body and type(body[k]) is not bool:
+            return _connect_error(400, "invalid", f"Invalid disconnect request: {k}.", field=k)
+    err = _busy_owner_error(p, body.get("force") is True)
+    if err is not None:
+        return err
+    if p.role != "admin":
+        n = hub.others_online(p.user)
+        if n and body.get("confirm") is not True:
+            return _connect_error(409, "confirm_required",
+                                  f"{n} other user(s) are online; disconnecting affects them too.", online=n)
+    if _connect_lock.locked():
+        return _connect_error(409, "connecting", "A connect or disconnect is already in progress.")
+    rid = None
+    async with _connect_lock:
+        _radio_transition = True
+        try:
+            _autoconnect_spent = True       # explicit disconnect: page loads no longer auto-connect
+            arb.force_release("radio_disconnect", by=p.user)
+            menu_queue.clear()
+            await audio.on_radio_change()   # release the host sound cards with the radio
+            rid = radio.state.get("radio") if radio.state.get("connected") else None
+            await run_in_threadpool(radio.disconnect)
+        finally:
+            _radio_transition = False
+    if rid:
+        audit.log("radio_disconnect", user=p.user, radio=rid, ip=auth.client_ip(request.scope))
     return JSONResponse({"ok": True})
 
 
 @requires("operator")
-async def api_audio_devices(request):
-    """Host (server-side) sound cards, for a serial/USB radio's Radio RX / Radio TX pickers."""
-    return JSONResponse(hostaudio.list_devices())
+async def api_tx_stop(request):
+    """HTTP STOP (AR-15): stops whoever transmits (the owner's own claims, another user's TX, or a
+    front-panel key). Origin-checked like any POST (Gate); bodiless or {}; never rate limited."""
+    body = await read_json(request)
+    if not isinstance(body, dict):
+        return body
+    stopped = arb.stop(request.state.principal, explicit=True)
+    return JSONResponse({"ok": True, "stopped": bool(stopped)})
+
+
+_tasks: set = set()
+
+
+def _spawn(coro) -> None:
+    """Run a coroutine on the loop (fire and forget, reference kept); without a running loop
+    (in-process unit tests) run it to completion now."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        try:
+            asyncio.run(coro)
+        except Exception as e:
+            console(f"TeleRig: background task failed: {e!r}")
+        return
+    t = loop.create_task(coro)
+    _tasks.add(t)
+    t.add_done_callback(_tasks.discard)
 
 
 # -- WebSocket ---------------------------------------------------------------
@@ -394,13 +579,31 @@ DENY_INTERVAL = 0.5                    # at most 2 denial frames per second per 
 
 
 HB_INTERVAL, HB_TIMEOUT = 2, 6            # the TX heartbeat contract (§2.13), announced in hello
+WS_TOTAL_MAX = 32                         # sockets in all
+WS_VIEWER_MAX = 24                        # viewers never take the last 8 (AR-15)
+WS_USER_MAX = 8                           # per user; a migrated_v1 ADMIN shared by a club: 24 (AR-49)
+WS_USER_MAX_MIGRATED = 24
 
 
 def _hello(conn, p) -> dict:
     return {"type": "hello", "v": 1, "conn": conn.id, "user": p.user, "role": p.role,
             "perms": auth.perms_for(p.role), "migrated_remote": p.migrated_remote,
-            "status": status_for(p), "tx": {"owner": None}, "hb_interval": HB_INTERVAL,
+            "status": status_for(p), "tx": arb.snapshot(), "hb_interval": HB_INTERVAL,
             "hb_timeout": HB_TIMEOUT, "server_version": __version__, "sim_only": sim_only()}
+
+
+def _too_many(p) -> bool:
+    """§2.11 connection caps: 32 in all, 24 viewers, 8 per user (24 for a migrated_v1 ADMIN)."""
+    cap = WS_USER_MAX
+    try:
+        u = accounts.get(p.user)
+        if u is not None and u.migrated_v1 and u.role == "admin":
+            cap = WS_USER_MAX_MIGRATED
+    except StoreCorrupt:
+        pass
+    return (len(hub.conns) >= WS_TOTAL_MAX
+            or (p.role == "viewer" and hub.count_role("viewer") >= WS_VIEWER_MAX)
+            or hub.count_user(p.user) >= cap)
 
 
 async def ws_endpoint(ws: WebSocket):
@@ -421,6 +624,8 @@ async def ws_endpoint(ws: WebSocket):
         return await _ws_refuse(ws, 4401, "unauthenticated")
     if p.restricted:
         return await _ws_refuse(ws, 4403, "password_change_required")
+    if _too_many(p):
+        return await _ws_refuse(ws, 4429, "too_many_connections")
     conn = hub.add(ws, user=p.user, role=p.role, gen=p.gen, token=p.token, token_fp=p.token_fp,
                    ip=auth.client_ip(ws.scope), direct_local=auth.direct_local(ws.scope), exp=p.exp)
     hub.send_to(conn, _hello(conn, p))                                # first frame (control queue)
@@ -439,29 +644,24 @@ async def ws_endpoint(ws: WebSocket):
     except Exception:                                # WebSocketDisconnect, closed by a kick, ...
         pass
     finally:
-        # Each step on its own, so one failure never skips an unkey (AR-17).
-        # safety: PTT is a single shared radio state with one keyer, so the
-        # disconnecting client may be the one transmitting. Unkey on ANY client
-        # drop while keyed — not just the last one — since the client-side unkey
-        # can be lost when the socket is already closing. (A4: owner-scoped, §2.13.)
+        # Owner-scoped (F6, §2.13): only the TX OWNER's drop unkeys, immediately; other clients'
+        # drops never do. Each step on its own, in this order, so one failure never skips an
+        # unkey (AR-17): arbiter -> audio router -> hub.
         try:
-            if radio.state.get("ptt"):
-                radio.set_ptt(False)
+            arb.on_conn_closed(conn)
+        except Exception as e:
+            console(f"TeleRig: TX release on close failed: {e!r}")
+        try:
+            conn.rx_sub = conn.tx_audio = False      # this client's RX/mic refcounts only; the device
+            _spawn(audio.on_conn_closed(conn))       # close runs as its own task (never cancelled here)
         except Exception:
             pass
         try:
-            if radio.state.get("cw_tx"):              # stop an in-progress CW message too
-                radio.stop_cw()
-        except Exception:
-            pass
-        try:
-            host_audio.stop_tx()             # this client's mic feed ends -> stop playing to the radio
+            coalescer.drop(conn)
         except Exception:
             pass
         try:
             hub.remove(conn)
-            if not hub.conns:                # nobody left listening -> stop capturing the host RX card
-                host_audio.stop_rx()
         except Exception:
             pass
         if conn.sender is not None:
@@ -476,14 +676,41 @@ async def _ws_refuse(ws: WebSocket, code: int, reason: str) -> None:
         pass
 
 
-def _deny(conn, action, reason: str) -> None:
+def _deny(conn, action, reason: str, **extra) -> None:
     """`denied` to this connection only, on the control queue; at most 2/s per connection."""
+    _reply(conn, policy.deny(action if isinstance(action, str) else "*", reason, **extra))
+
+
+def _reply(conn, v) -> None:
+    """A deny / busy verdict: the frame to this connection only (control queue, at most 2 denial
+    frames per second per connection), and a coalesced audit entry (never one line per event)."""
+    a = (v.action if isinstance(v.action, str) else "*")[:64]
+    ex = v.extra or {}
+    if v.kind == "busy":
+        frame = {"type": "busy", "action": a, "owner": ex.get("owner")}
+        if ex.get("retry_after") is not None:
+            frame["retry_after"] = ex["retry_after"]
+    else:
+        frame = {"type": "denied", "action": a, "reason": v.reason or "invalid"}
+        if ex.get("need"):
+            frame["need"] = ex["need"]
+    if ex.get("req"):
+        frame["req"] = ex["req"]
     now = time.monotonic()
-    if now - conn.denied_at < DENY_INTERVAL:
-        return
-    conn.denied_at = now
-    a = action if isinstance(action, str) else "*"
-    hub.send_to(conn, {"type": "denied", "action": a[:64], "reason": reason})
+    if now - conn.denied_at >= DENY_INTERVAL:
+        conn.denied_at = now
+        hub.send_to(conn, frame)
+    try:
+        if v.kind == "busy" and ex.get("tx_denied"):
+            audit.log("tx_denied", key=conn.id, user=conn.user, conn=conn.id, action=a, owner=ex.get("owner"))
+        elif v.kind == "busy":
+            audit.log("denied", key=conn.id, user=conn.user, conn=conn.id, action=a, reason="busy")
+        elif v.reason == "rate_limited":
+            audit.log("rate_limited", key=conn.id, user=conn.user, conn=conn.id, action=a)
+        elif v.reason != "too_large" or not conn.closing:
+            audit.log("denied", key=conn.id, user=conn.user, conn=conn.id, action=a, reason=v.reason)
+    except Exception:
+        pass
 
 
 def _on_text(conn, text: str) -> None:
@@ -491,9 +718,11 @@ def _on_text(conn, text: str) -> None:
     the policy table (§2.12). Never raises, so a bad frame can never kill the socket.
 
     Fast path first (policy.is_fast: the unkey/heartbeat frames): decided with the connection's
-    LAST-KNOWN role and no store read, so a store error, a lock or a kick never swallows an unkey
-    (I4, AR-17). Everything else re-reads the user: a deleted user or a changed generation closes
-    the socket 4401 session_revoked, and the effective role is refreshed (F17).
+    LAST-KNOWN role and no store read or rate bucket, so a store error, a lock, a kick or a flood
+    never swallows an unkey (I4, AR-17). Everything else re-reads the user: a deleted user or a
+    changed generation closes the socket 4401 session_revoked, and the effective role is refreshed
+    (F17). Continuous setters go to the coalescer (never `rate_limited`, AR-48); everything else
+    that is not rate-exempt charges the connection's token bucket.
 
     A kicked connection (`conn.closing`: its close frame is already out) and a locked server act on
     nothing but the fast path. A client that ignores the close frame can otherwise keep commanding
@@ -501,7 +730,8 @@ def _on_text(conn, text: str) -> None:
     4403/4401 close code is not replaced."""
     try:
         if len(text) > WS_TEXT_MAX or len(text.encode("utf-8", "surrogatepass")) > WS_TEXT_MAX:
-            _deny(conn, "*", "too_large")            # a no-op on a closing connection
+            if not conn.closing:
+                _deny(conn, "*", "too_large")
             return
         try:
             cmd = json.loads(text)
@@ -510,7 +740,7 @@ def _on_text(conn, text: str) -> None:
         if not isinstance(cmd, dict) or not isinstance(cmd.get("action"), str):
             return
         if policy.is_fast(cmd):
-            _dispatch(conn, policy.evaluate_fast(conn, cmd))
+            _dispatch(conn, policy.evaluate_fast(conn, cmd, _ctx))
             return
         if conn.closing or _locked is not None:
             return                                   # kicked or locked: dropped, nothing answered
@@ -528,32 +758,107 @@ def _on_text(conn, text: str) -> None:
         if rule is None:                             # unknown, or REMOVED (host_rx / host_tx)
             _deny(conn, a, "unknown_action")
             return
-        _dispatch(conn, policy.evaluate(rule, conn, cmd))
+        v = policy.evaluate(rule, conn, cmd, _ctx)
+        if v.kind == "plain" and rule.continuous:
+            coalescer.submit(conn, v.cmd)            # AR-48: never "rate_limited"
+            return
+        if not rule.rate_exempt and not conn.bucket.take():
+            _deny(conn, a, "rate_limited")
+            return
+        _dispatch(conn, v)
     except Exception as e:                           # pragma: no cover - defensive
         console(f"TeleRig: WS message handling failed: {e!r}")
 
 
 def _dispatch(conn, v) -> None:
-    if v.kind == "deny":
-        _deny(conn, v.action, v.reason or "invalid")
-    elif v.kind == "ignore":
+    k = v.kind
+    if k in ("deny", "busy"):
+        _reply(conn, v)
+    elif k == "ignore":                              # e.g. a non-owner's auto release (G-1)
         return
-    elif v.kind == "plain":
-        _handle_cmd(v.cmd)
-    else:                                            # busy/new/claim/release/stop arrive in A4
+    elif k == "new":
+        NEW_HANDLERS[v.action](conn, v)
+    elif k == "claim":
+        arb.claim(conn, v.extra["claim"], args=v.extra.get("args"), seq=v.extra.get("seq"))
+    elif k == "release":
+        arb.release(conn, v.extra["claim"])
+    elif k == "stop":                                # tx_stop only (F18, I23)
+        arb.stop(conn, explicit=True)
+    elif k == "noowner_stop":                        # nobody owns TX: the stop primitive, as v1
+        arb.stop_idle(v.extra["claims"])
+    elif k == "plain":
+        _plain(conn, v)
+    else:                                            # pragma: no cover - never allow by default
         _deny(conn, v.action, "invalid")
 
 
+def _plain(conn, v) -> None:
+    a = v.action
+    ex = v.extra or {}
+    if a == "menu_read" and not conn.menu_reads.take():
+        return                                       # > 5/s per connection: silently dropped
+    if ex.get("audit") == "panel_lock":
+        audit.log("panel_lock", key=conn.id, user=conn.user, conn=conn.id, action="lock", on=v.cmd.get("on"))
+    if a == "menu_write" and ex.get("critical"):
+        it = ex.get("item")
+        r = radio
+        rid = r.state.get("radio")
+        old = (getattr(r, "_menu_vals", None) or {}).get(getattr(it, "num", None))
+        if ex.get("tot_off"):
+            audit.log("tot_off", user=conn.user, conn=conn.id, radio=rid, num=it.num, name=it.name)
+        audit.log("menu_critical", user=conn.user, conn=conn.id, radio=rid, num=it.num, name=it.name,
+                  old=old, new=v.cmd.get("value"), tx_route=ex.get("tx_route"))
+    _handle_cmd(v.cmd)
+
+
+def _h_tx_hb(conn, v) -> None:
+    arb.on_tx_hb(conn)                               # never calls the radio (I16)
+
+
+def _h_rx_audio(conn, v) -> None:
+    _spawn(audio.set_rx(conn, bool(v.cmd["on"])))
+
+
+def _h_mic(conn, v) -> None:
+    _spawn(audio.set_mic(conn, bool(v.cmd["on"])))
+
+
+def _h_menu_group(conn, v) -> None:
+    retry = menu_queue.submit(conn.id, v.cmd["group"])
+    if retry is not None:
+        _reply(conn, policy.busy("menu_read_group", None, retry_after=retry))
+
+
+NEW_HANDLERS = {"tx_hb": _h_tx_hb, "rx_audio": _h_rx_audio, "mic": _h_mic,
+                "menu_read_group": _h_menu_group}
+
+
+def _coalesced_apply(conn, cmd: dict) -> None:
+    _handle_cmd(cmd)
+
+
+def _coalesced_recheck(conn, cmd: dict) -> bool:
+    """The X lock re-evaluated when a coalesced setter is flushed (AR-48)."""
+    if conn.closing or _locked is not None or _radio_transition:
+        return False
+    x = policy._lock_x(cmd.get("action", "*"), conn, _ctx)
+    if x is not None:
+        _reply(conn, x)
+        return False
+    return True
+
+
+coalescer = Coalescer(_coalesced_apply, _coalesced_recheck, lambda: hub.loop)
+
+
 def _on_bytes(conn, data: bytes) -> None:
-    """Binary frame = browser mic PCM (v1 path; A4 gates it to the TX owner, §2.14). A kicked
-    (closing) connection or a locked server feeds nothing to the transmitter."""
+    """Binary frame = browser mic PCM: reaches the radio only from the TX owner holding ptt/vox
+    with its mic on (I10, audio_router.mic_in). A kicked (closing) connection or a locked server
+    feeds nothing to the transmitter."""
     try:
         if conn.closing or _locked is not None:
             return
-        if host_audio.tx_device is not None:
-            host_audio.write(data)                   # serial radio: mic -> host TX sound card
-        else:
-            radio.write_audio(data)                  # LAN: mic PCM -> the radio's modulator
+        audio.mic_in(conn, data)
     except Exception:
         pass
 
@@ -715,30 +1020,21 @@ def _store_problem() -> Optional[StoreCorrupt]:
     return None
 
 
-def _release_tx_for_lock() -> None:
-    """Entering locked mode releases app-keyed TX (A4: arb.force_release("server_locked"))."""
-    try:
-        if radio.state.get("ptt"):
-            radio.set_ptt(False)
-    except Exception:
-        pass
-    try:
-        if radio.state.get("cw_tx"):
-            radio.stop_cw()
-    except Exception:
-        pass
-
-
 def _enter_locked(e: StoreCorrupt) -> None:
+    """Entering locked mode (from any load or the watchdog) releases app-keyed TX (a front-panel
+    key is left alone), stops host audio and kicks every socket with 4403 server_locked (I6)."""
     global _locked
     entering = _locked is None
     _locked = e
     if not entering:
         return
     console("\n  " + _locked_message(e) + "\n")
-    _release_tx_for_lock()
     try:
-        host_audio.stop()
+        arb.force_release("server_locked")
+    except Exception as exc:
+        console(f"TeleRig: TX release on lock failed: {exc!r}")
+    try:
+        audio.stop_all()
     except Exception:
         pass
     hub.kick_all(4403, "server_locked")
@@ -857,7 +1153,7 @@ async def _ensure_accounts() -> None:
         pass
 
 
-# -- watchdog (store reload + locked re-check + session revalidation; A4 adds the TX duties) ----
+# -- watchdog (TX duties + store reload + locked re-check + session revalidation) -------------
 WATCHDOG_TICK = 0.5
 REVALIDATE_EVERY = 30.0
 _watchdog_task: Optional[asyncio.Task] = None
@@ -865,24 +1161,29 @@ _shutting_down = False
 _last_reval = 0.0
 
 
+async def _store_tick() -> None:
+    """The non-TX watchdog duties, after the arbiter tick (txarb.watchdog_loop)."""
+    global _last_reval
+    try:
+        _check_locked()              # reloads auth.json + config.json even with no traffic (I7)
+        if _locked is None:
+            await _ensure_accounts()
+            now = time.monotonic()
+            if now - _last_reval >= REVALIDATE_EVERY:
+                _last_reval = now
+                _revalidate_conns()
+                limiter.sweep()
+    except StoreCorrupt as exc:
+        _enter_locked(exc)
+
+
 async def _watchdog() -> None:
+    """Every 0.5 s: the TX arbiter tick (heartbeat timeout, 120 s session clock, claim caps,
+    reconciliation, EXTERNAL debounce; lag-aware, AR-16), then the store duties. Each step is
+    wrapped (log and keep ticking); a dead task is restarted by _watchdog_done."""
     global _last_reval
     _last_reval = time.monotonic()
-    while True:
-        await asyncio.sleep(WATCHDOG_TICK)
-        try:
-            _check_locked()          # reloads auth.json + config.json even with no traffic (I7)
-            if _locked is None:
-                await _ensure_accounts()
-                now = time.monotonic()
-                if now - _last_reval >= REVALIDATE_EVERY:
-                    _last_reval = now
-                    _revalidate_conns()
-                    limiter.sweep()
-        except StoreCorrupt as exc:
-            _enter_locked(exc)
-        except Exception as exc:     # log and keep ticking
-            console(f"TeleRig: watchdog tick failed: {exc!r}")
+    await txarb.watchdog_loop(arb, _store_tick, interval=WATCHDOG_TICK, log=console)
 
 
 def _watchdog_done(task: asyncio.Task) -> None:
@@ -922,6 +1223,19 @@ async def _lifespan(app):
         _shutting_down = True
         if _watchdog_task is not None:
             _watchdog_task.cancel()
+        # Shutdown never leaves the radio keyed (§2.13): explicit release, audio off, disconnect.
+        try:
+            arb.force_release("shutdown", explicit=True)
+        except Exception as e:
+            console(f"TeleRig: TX release at shutdown failed: {e!r}")
+        try:
+            audio.stop_all()
+        except Exception:
+            pass
+        try:
+            await run_in_threadpool(radio.disconnect)
+        except Exception:
+            pass
         audit.flush(1.0)
 
 
@@ -1070,9 +1384,9 @@ routes = [
     Route("/api/radios", api_radios),
     Route("/api/version", api_version),
     Route("/api/ports", api_ports),
-    Route("/api/audio_devices", api_audio_devices),
     Route("/api/connect", api_connect, methods=["POST"]),
     Route("/api/disconnect", api_disconnect, methods=["POST"]),
+    Route("/api/tx_stop", api_tx_stop, methods=["POST"]),
     WebSocketRoute("/ws", ws_endpoint),
     _static,
 ]

@@ -130,6 +130,12 @@ class HostAudio:
                 del self._buf[: len(self._buf) - RATE]
             self._buf.extend(pcm)
 
+    def flush_tx(self) -> None:
+        """Drop the queued playback PCM (up to ~1 s). The TX arbiter calls this whenever no ptt/vox
+        claim remains, so a buffered tail cannot re-key a radio with DATA VOX on (AR-18)."""
+        with self._lock:
+            self._buf.clear()
+
     def stop_tx(self) -> None:
         s, self._out = self._out, None
         self.tx_device = None

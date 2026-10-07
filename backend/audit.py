@@ -1,16 +1,23 @@
-"""Audit log (spec §2.19, I21) — step A3 minimum; A4 adds the TX events and per-connection caps.
+"""Audit log (spec §2.19, I21).
 
 Two JSON Lines files in config_dir(), UTF-8, ISO-8601 UTC timestamps with milliseconds:
-  audit-tx.log  TX accountability ONLY (tx_start, tx_end, ..., menu_critical, radio_connect, ...).
-                10 MiB per file, 10 files (current + .1 ... .9). Never coalesced or rate-limited,
-                and nothing else writes here, so a user cannot flood their own TX records out.
-  audit.log     security events (login_ok, login_fail, pw_changed, store_init, reset_admin, ...).
-                2 MiB per file, current + .1 + .2.
+  audit-tx.log  TX accountability ONLY (tx_start, tx_end, tx_reattach, tx_stop_forced,
+                tx_hb_timeout, tot_off, menu_critical, radio_connect, radio_disconnect,
+                radio_transport_pinned). 10 MiB per file, 10 files (current + .1 ... .9). Never
+                coalesced or rate-limited, and nothing else writes here, so a user cannot flood
+                their own TX records out.
+  audit.log     security events (login_ok, login_fail, pw_changed, store_init, reset_admin,
+                tx_denied, denied, panel_lock, rate_limited, ...). 2 MiB per file, current + .1 + .2.
 
 One daemon writer thread with a 10,000-entry queue: log() never blocks and never raises; dropped
 entries are counted and reported in the next written entry. Denial-type events (login_fail,
 denied, tx_denied, panel_lock, rate_limited) are coalesced per (key, event, action/reason) in
-60 s windows into one entry {ev, count, first, last, ...}. Secrets are never passed in.
+60 s windows into one entry {ev, count, first, last, ...}; the key is the connection (or the
+login source). After coalescing, at most one security entry per second is written per key; the
+excess is counted into that key's next entry ("suppressed"). Secrets are never passed in.
+
+Test hook: TELERIG_TEST_AUDIT_WINDOW=<s> shortens the coalescing window, honoured ONLY when
+TELERIG_SIM_ONLY=1 (like TELERIG_TEST_SUDO_TTL), so the harness can read coalesced entries.
 
 The target folder is resolved when an event is logged (never at import, I12).
 """
@@ -35,6 +42,26 @@ TX_EVENTS = frozenset({"tx_start", "tx_end", "tx_reattach", "tx_stop_forced", "t
                        "tot_off", "menu_critical", "radio_connect", "radio_disconnect",
                        "radio_transport_pinned"})
 COALESCED = frozenset({"login_fail", "denied", "tx_denied", "panel_lock", "rate_limited"})
+KEY_MIN_INTERVAL = 1.0           # at most one security entry per second per key (connection/source)
+DEFER_MAX = 32                   # entries a key may have waiting for the cap; beyond: counted
+
+
+def _env_on(name: str) -> bool:
+    v = os.environ.get(name)
+    return v is not None and v.strip().lower() not in ("", "0", "false", "no", "off")
+
+
+def coalesce_window() -> float:
+    """60 s; TELERIG_TEST_AUDIT_WINDOW overrides it ONLY when TELERIG_SIM_ONLY=1 (tests)."""
+    v = os.environ.get("TELERIG_TEST_AUDIT_WINDOW")
+    if v and _env_on("TELERIG_SIM_ONLY"):
+        try:
+            t = float(v)
+            if 0 < t <= COALESCE_WINDOW:
+                return t
+        except ValueError:
+            pass
+    return COALESCE_WINDOW
 
 
 def _ts(t: Optional[float] = None) -> str:
@@ -55,6 +82,9 @@ class _Writer:
         self._dropped = 0
         self._busy = False
         self._agg: dict = {}             # (dir, key, ev, sub) -> entry being coalesced
+        self._key_last: dict = {}        # key -> time of its last written security entry
+        self._key_suppressed: dict = {}  # key -> entries counted into the key's next entry
+        self._deferred: dict = {}        # key -> deque of entries waiting for the 1/s cap
 
     # -- producer side (any thread) -------------------------------------------------------------
     def put(self, d: Path, rec: dict) -> None:
@@ -72,7 +102,7 @@ class _Writer:
             k = (str(d), key, ev, sub)
             a = self._agg.get(k)
             if a is None:
-                self._agg[k] = {"dir": d, "t0": now,
+                self._agg[k] = {"dir": d, "t0": now, "key": key,
                                 "rec": {"ev": ev, **fields, "count": 1, "first": _ts(now), "last": _ts(now)}}
                 self._start()
                 self._cv.notify()
@@ -93,20 +123,25 @@ class _Writer:
     # -- consumer side ------------------------------------------------------------------------
     def _due(self, force: bool) -> list:
         now = time.time()
+        win = coalesce_window()
         out = []
-        for k in [k for k, a in self._agg.items() if force or now - a["t0"] >= COALESCE_WINDOW]:
+        for k in [k for k, a in self._agg.items() if force or now - a["t0"] >= win]:
             a = self._agg.pop(k)
-            out.append((a["dir"], a["rec"]))
+            rec = a["rec"]
+            if a.get("key"):
+                rec["_key"] = str(a["key"])
+            out.append((a["dir"], rec))
         return out
 
     def _run(self) -> None:
         while True:
             with self._cv:
                 if not self._q:
-                    self._cv.wait(timeout=1.0)
+                    self._cv.wait(timeout=0.5 if self._deferred else 1.0)
                 batch = list(self._q)
                 self._q.clear()
                 batch += self._due(force=False)
+                batch += self._release_deferred(force=False)
                 dropped, self._dropped = self._dropped, 0
                 self._busy = bool(batch)
             if batch:
@@ -117,11 +152,66 @@ class _Writer:
                 self._busy = False
                 self._cv.notify_all()
 
+    def _release_deferred(self, force: bool) -> list:
+        """Entries held back by the per-key 1/s cap whose key may write again (all when forced)."""
+        now = time.monotonic()
+        out = []
+        for key in list(self._deferred):
+            dq = self._deferred[key]
+            while dq and (force or now - self._key_last.get(key, -1e9) >= KEY_MIN_INTERVAL):
+                d, rec = dq.popleft()
+                rec["_key"] = key
+                rec["_forced"] = force
+                out.append((d, rec))
+                if not force:
+                    break
+            if not dq:
+                del self._deferred[key]
+        return out
+
+    def _cap(self, d, rec: dict, now: float) -> bool:
+        """The per-key cap: True = write now; False = held back (deferred, or counted into the
+        key's next entry when its backlog is full)."""
+        key = rec.pop("_key", None)
+        forced = rec.pop("_forced", False)
+        if not key:
+            return True
+        if not forced and now - self._key_last.get(key, -1e9) < KEY_MIN_INTERVAL:
+            dq = self._deferred.setdefault(key, deque())
+            sub = (rec.get("ev"), rec.get("action"), rec.get("reason"))
+            for _, w in dq:                       # same event already waiting: merge the counts
+                if (w.get("ev"), w.get("action"), w.get("reason")) == sub and "count" in w and "count" in rec:
+                    w["count"] += int(rec.get("count", 1) or 1)
+                    w["last"] = rec.get("last", w.get("last"))
+                    return False
+            if len(dq) < DEFER_MAX:
+                rec["_key"] = key
+                dq.append((d, rec))
+            else:
+                self._key_suppressed[key] = self._key_suppressed.get(key, 0) + int(rec.get("count", 1) or 1)
+            return False
+        self._key_last[key] = now
+        held = self._key_suppressed.pop(key, 0)
+        if held:
+            rec["suppressed"] = held
+        if len(self._key_last) > 4096:
+            for k in [k for k, t in self._key_last.items() if now - t > 120 and k not in self._deferred]:
+                self._key_last.pop(k, None)
+        return True
+
     def _write(self, batch: list) -> None:
         groups: dict = {}
+        now = time.monotonic()
         for d, rec in batch:
             rec.setdefault("ts", _ts())
             name = TX_FILE if rec.get("ev") in TX_EVENTS else SEC_FILE
+            if name == SEC_FILE:                  # <= 1 security entry / s per connection or source
+                with self._cv:
+                    if not self._cap(d, rec, now):
+                        continue
+            else:
+                rec.pop("_key", None)
+                rec.pop("_forced", None)
             groups.setdefault((str(d), name), []).append(rec)
         for (d, name), recs in groups.items():
             try:
@@ -135,6 +225,9 @@ class _Writer:
         end = time.monotonic() + timeout
         with self._cv:
             for d, rec in self._due(force=True):
+                rec["_forced"] = True
+                self._q.append((d, rec))
+            for d, rec in self._release_deferred(force=True):
                 self._q.append((d, rec))
             if self._q:
                 self._start()
