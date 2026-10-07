@@ -765,13 +765,13 @@ def t71_tx_route_write(ctx):
         d = wa.wait_for(lambda m: m.get("type") == "denied", timeout=5)
         eq(d["reason"], "tx_route_confirm", "T71 RTS without confirm")
         time.sleep(DENY_GAP)
-        f = key(w1)                                   # the FT-991A sim reports TX0, so this claim is short
+        f = key(w1)                                   # the FT-991A sim now reports TX1 while keyed (B1)
         eq(f["type"], "tx", f"OP1 keyed {f}")
         wa.send({"action": "menu_write", "num": 110, "value": "RTS", "confirm": "tx_route"})
         b = wa.wait_for(lambda m: m.get("type") in ("busy", "denied"), timeout=5)
         eq((b["type"], b.get("owner")), ("busy", "OP1"), "T71 with confirm while OP1 keyed -> busy")
+        w1.send({"action": "ptt", "tx": False})       # the owner releases (the claim no longer drops on its own)
         check(wait_until(lambda: tx_owner(cl["ADMIN"]) is None, timeout=8), "TX idle again")
-        w1.send({"action": "ptt", "tx": False})
         time.sleep(DENY_GAP)
         wa.send({"action": "menu_write", "num": 110, "value": "RTS", "confirm": "tx_route"})
         m = wa.wait_for(lambda m: m.get("type") == "menu" and "110" in m.get("values", {}), timeout=5)
@@ -781,3 +781,62 @@ def t71_tx_route_write(ctx):
     finally:
         wa.close()
         w1.close()
+
+
+# -- B1: the FT-991A simulator reports the keyed state (TX1;), so a claim is not dropped -------------------
+@test("tx")
+def t_b1_ft991a_sim_keeps_ptt(ctx):
+    """Before B1 the Yaesu simulator always answered TX0; and reconciliation dropped a PTT claim about
+    2.5 s after keying. Now it tracks TX1;/TX0;: the claim holds while the owner heartbeats, and the
+    owner's release ends it. (assert_sim runs before each ptt send, harness.WS.)"""
+    srv, cl = setup(ctx, users=(("OP1", "operator"),), radio="ft991a")
+    w1, h1 = open_ws(cl["OP1"])
+    hb = None
+    try:
+        f = key(w1, seq=1)
+        hb = harness.Heartbeat(w1, interval=1.5)
+        eq((f["type"], f["owner"]["user"], f["owner"]["claims"]), ("tx", "OP1", ["ptt"]), "FT-991A sim claim")
+        time.sleep(5.0)                               # well past the old ~2.5 s reconciliation drop
+        eq(((tx_owner(cl["ADMIN"]) or {}).get("user"), radio_state(cl["ADMIN"])["ptt"]), ("OP1", True),
+           "still keyed after 5 s with heartbeats (the sim answers TX1)")
+        eq([r for r in harness.audit_records(srv.tmp) if r.get("ev") == "tx_end"], [], "no tx_end yet")
+        w1.send({"action": "ptt", "tx": False})
+        w1.wait_for(lambda m: m.get("type") == "tx" and m.get("owner") is None, timeout=5)
+        check(wait_until(lambda: radio_state(cl["ADMIN"])["ptt"] is False, timeout=3), "unkeyed after the release")
+        ends = audit_wait(srv.tmp, lambda r: r.get("ev") == "tx_end")
+        eq((ends[-1]["reason"], ends[-1]["radio"]), ("owner", "ft991a"), "tx_end reason owner")
+    finally:
+        if hb:
+            hb.stop()
+        w1.close()
+
+
+# -- B1: tests/drive_tx.py (the sim-only TX driver for manual UI observation) ------------------------------
+@test("tx")
+def t_b1_drive_tx(ctx):
+    """drive_tx.py refuses 8700/8722 before asking for anything; with --password-stdin it signs in,
+    keys PTT on the SIMULATOR (assert_sim before each TX command) with heartbeats, releases, and
+    never prints the password. No TX command is sent by this test itself."""
+    import subprocess
+    import sys as _sys
+    script = str(harness.TESTS / "drive_tx.py")
+    for bad in (8700, 8722):
+        r = subprocess.run([_sys.executable, script, "--port", str(bad), "--user", "OP1", "--password-stdin"],
+                           input="never-read\n", capture_output=True, text=True, timeout=30)
+        eq(r.returncode, 2, f"drive_tx --port {bad} exit code ({r.stdout}{r.stderr})")
+        check("REFUSING" in r.stdout and "never-read" not in r.stdout + r.stderr, f"refusal text: {r.stdout!r}")
+    srv, cl = setup(ctx, users=(("OP1", "operator"),))
+    pw = harness.user_password("OP1")
+    r = subprocess.run([_sys.executable, script, "--port", str(srv.port), "--user", "OP1", "--seconds", "3",
+                        "--password-stdin"], input=pw + "\n", capture_output=True, text=True, timeout=60)
+    out = r.stdout + r.stderr
+    eq(r.returncode, 0, f"drive_tx exit code:\n{out}")
+    check(pw not in out, "the password never appears in drive_tx's output")
+    check("ptt claimed" in out and "released: TX free" in out, f"drive_tx log:\n{out}")
+    eq((tx_owner(cl["ADMIN"]), radio_state(cl["ADMIN"])["ptt"]), (None, False), "TX free and unkeyed afterwards")
+    ends = audit_wait(srv.tmp, lambda r: r.get("ev") == "tx_end" and r.get("user") == "OP1")
+    check(ends and ends[-1]["reason"] == "owner" and ends[-1]["dur_s"] >= 2.5, f"audited session {ends}")
+    r = subprocess.run([_sys.executable, script, "--port", str(srv.port), "--user", "OP1", "--seconds", "2",
+                        "--password-stdin"], input="Wrong-pw-2026!\n", capture_output=True, text=True, timeout=60)
+    eq(r.returncode, 1, "a wrong password -> exit 1")
+    check("Wrong-pw-2026!" not in r.stdout + r.stderr, "a wrong password is not echoed either")

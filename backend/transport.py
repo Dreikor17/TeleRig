@@ -506,6 +506,11 @@ class YaesuSimTransport(Transport):
                      "SH0": "00", "CO00": "0000", "CO01": "0300", "CO02": "0000", "CO03": "0025",
                      "ML0": "000", "ML1": "030", "PR0": "1", "PR1": "1", "TS": "0",
                      "BI": "0", "KR": "0", "KS": "020", "KP": "40", "CS": "0", "SC": "0", "FS": "0"}
+        # Simulated TX state, answered on the TX; poll like the real radio: "0" receive, "1" keyed
+        # by CAT (TX1;), "2" keyed from the radio itself (front panel / mic PTT). Without this the
+        # sim always answered TX0; and the TX arbiter's reconciliation dropped every PTT claim on
+        # the FT-991A profile about 2.5 s after keying. Nothing is ever keyed: this is a number.
+        self.tx = "0"
 
     @property
     def name(self) -> str:
@@ -555,7 +560,9 @@ class YaesuSimTransport(Transport):
             v = int(70 + 80 * abs(math.sin((time.time() - self._t0) * (0.6 + int(p1) * 0.13))))
             out = f"RM{p1}{min(255, max(0, v)):03d};"
         elif cmd == "TX":
-            out = "TX0;"
+            out = f"TX{self.tx};"
+        elif len(cmd) == 3 and cmd.startswith("TX") and cmd[2] in "012":
+            self.tx = cmd[2]                       # TX0; unkey / TX1; CAT key / TX2; radio-side key
         elif cmd == "ID":
             out = "ID0670;"
         elif cmd == "IF":
@@ -607,5 +614,6 @@ class YaesuSimTransport(Transport):
 
     def stop(self) -> None:
         self._stop.set()
+        self.tx = "0"
         if self._thread:
             self._thread.join(timeout=1.0)

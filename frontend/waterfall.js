@@ -55,19 +55,32 @@
     }
 
     resize() {
-      const w = Math.max(320, Math.floor(this.wrap.clientWidth));
+      const cw = Math.floor(this.wrap.clientWidth), ch = Math.floor(this.wrap.clientHeight);
+      // Parked or collapsed (0x0): keep everything as it is. Only the FIRST call (the constructor,
+      // possibly on a hidden scope) takes the fallbacks below, so W/rowBuf/specH/wfH always exist.
+      if (this._sized && (cw === 0 || ch === 0)) return;
+      const w = Math.max(120, cw);
       const dpr = window.devicePixelRatio || 1;
       // read the laid-out heights so the waterfall fills its pane (falls back to fixed)
-      const specH = Math.max(80, Math.floor(this.spec.clientHeight) || 150);
-      const wfH = Math.max(120, Math.floor(this.wf.clientHeight) || 240);
+      const specH = Math.max(40, Math.floor(this.spec.clientHeight) || 150);
+      const wfH = Math.max(40, Math.floor(this.wf.clientHeight) || 240);
       // overlay spans the FULL scope incl. the split gap so canvas-Y == display-Y;
       // otherwise the band-plan strip (drawn at the spectrum bottom) bleeds onto the
       // split handle that sits between the spectrum and waterfall.
-      const scopeH = Math.max(specH + wfH, Math.floor(this.wrap.clientHeight) || 0);
+      const scopeH = Math.max(specH + wfH, ch || 0);
       // Mobile browsers fire window 'resize' when the address bar shows/hides while
       // scrolling. Rebuilding here wipes the waterfall, so bail when nothing changed.
       if (this._sized && w === this.W && specH === this.specH && wfH === this.wfH &&
           scopeH === this.scopeH && dpr === this._dpr) return;
+      // Keep the waterfall history across a resize: copy it aside, then stretch it horizontally
+      // to the new width (rows stay 1:1, so a shorter waterfall keeps the newest rows).
+      let old = null;
+      if (this._sized && this.wf.width > 0 && this.wf.height > 0) {
+        old = document.createElement("canvas");
+        old.width = this.wf.width; old.height = this.wf.height;
+        old.getContext("2d").drawImage(this.wf, 0, 0);
+      }
+      const oldMax = this.maxHold;
       this._sized = true; this._dpr = dpr;
       this.W = w; this.specH = specH; this.wfH = wfH; this.scopeH = scopeH;
       for (const [c, h] of [[this.spec, this.specH], [this.ov, this.scopeH]]) {
@@ -77,11 +90,23 @@
       // waterfall stays 1:1 so putImageData rows line up crisply
       this.wf.width = w; this.wf.height = this.wfH;
       this.wctx.fillStyle = "#020c14"; this.wctx.fillRect(0, 0, w, this.wfH);
+      if (old) this.wctx.drawImage(old, 0, 0, old.width, old.height, 0, 0, w, old.height);
       this.rowBuf = this.wctx.createImageData(w, 1);
       this.maxHold = null;
+      if (oldMax && oldMax.length > 1) {             // resample the max-hold trace to the new width
+        const mh = new Float32Array(w), k = (oldMax.length - 1) / Math.max(1, w - 1);
+        for (let x = 0; x < w; x++) {
+          const f = x * k, i = Math.floor(f), t = f - i;
+          mh[x] = oldMax[i] * (1 - t) + oldMax[Math.min(oldMax.length - 1, i + 1)] * t;
+        }
+        this.maxHold = mh;
+      }
       if (this.lastData) this.drawSpectrum(this.lastData);
       this.drawOverlay();
     }
+
+    // No drawing work (and no TypeError) while the scope is parked or collapsed.
+    _hidden() { return !this.rowBuf || this.wrap.clientWidth === 0; }
 
     setOpMode(m) { if (m) { this.opMode = m; this.drawOverlay(); } }
 
@@ -177,12 +202,14 @@
     pushSweep(meta, data) {
       this.meta = meta;
       this.lastData = data;
+      if (this._hidden()) return;
       this.scrollWaterfall(data);
       this.drawSpectrum(data);
       this.drawOverlay();
     }
 
     scrollWaterfall(data) {
+      if (this._hidden()) return;
       const w = this.W, ctx = this.wctx;
       ctx.drawImage(this.wf, 0, 1);              // shift history down 1px
       const row = this.rowBuf.data;
@@ -197,6 +224,7 @@
     }
 
     drawSpectrum(data) {
+      if (this._hidden()) return;
       const ctx = this.sctx, w = this.W, h = this.specH, n = data.length || 1;
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = "#020c14"; ctx.fillRect(0, 0, w, h);

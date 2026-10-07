@@ -1,23 +1,15 @@
-/* TeleRig — UI controller */
+/* TeleRig — UI controller (the session layer, permissions and close codes live in tr.js) */
 (function () {
   "use strict";
-  // Renamed from Radio WebOp: carry browser settings saved under the old "radiowebop." keys
-  // across once, so the theme, band-plan toggle and per-radio connections survive the rename.
-  try {
-    for (const k of ["theme", "bandplan", "conns", "conn"]) {
-      const nk = "telerig." + k, ok = "radiowebop." + k;
-      if (localStorage.getItem(nk) === null && localStorage.getItem(ok) !== null)
-        localStorage.setItem(nk, localStorage.getItem(ok));
-    }
-  } catch (_) {}
   const $ = (id) => document.getElementById(id);
+  const TR = window.TR;                           // tr.js loads first (index.html script order)
+  const Layout = () => window.RadioLayout;        // the tr.js stub until layout.js (B3) replaces it
 
   const scope = new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"));
 
   let ws = null, state = {}, step = 25000;
   let blanked = false;                            // after a radio change: VFO zeroed + waterfall cleared until reconnect
   let radios = [], currentRadio = null;          // radio profiles from /api/radios
-  let pttIntended = false, pttKeyedAt = 0;       // PTT toggle state + time keyed
   const LEVELS = ["af", "rf", "sql", "rfpwr", "nb_level", "nr_level", "pbt1", "pbt2", "mnotch_pos",
                   "mic", "comp_level", "vox_gain", "mon_level", "cw_pitch", "keyer_speed"];
 
@@ -32,33 +24,275 @@
   }
 
   // ---- websocket ----
+  // Close codes (4401 / 4403 / 4429 / link lost) are handled by tr.js; this only (re)opens.
   function connectWS() {
+    if (TR._leaving) return;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.binaryType = "arraybuffer";
-    ws.onmessage = onMessage;
-    ws.onclose = (e) => {
-      if (e.code === 1008) { location.replace("/login"); return; }   // auth required/expired -> sign in
-      setTimeout(connectWS, 1200);
+    const sock = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = sock;
+    sock.binaryType = "arraybuffer";
+    sock.onmessage = onMessage;
+    sock.onclose = (e) => {
+      if (ws !== sock) return;
+      ws = null;
+      txOnSocketClosed();
+      TR.handleClose(e.code, e.reason, connectWS);
     };
   }
 
+  // Actions a viewer may send: the heartbeat, menu reads (F23), its own RX audio, mic off. A viewer's
+  // radio action would only draw `denied role`, so it is never sent at all (the server decides anyway).
+  const VIEWER_OK = new Set(["tx_hb", "menu_read", "menu_read_group", "rx_audio"]);
+  function viewerMay(o) { return VIEWER_OK.has(o.action) || (o.action === "mic" && o.on === false); }
+
+  function rawSend(obj) {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return true; }
+    return false;
+  }
   function send(obj) {
-    if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+    if (!obj || typeof obj.action !== "string") return false;
+    if (!TR.can("operate") && !viewerMay(obj)) return false;
+    const k = claimOf(obj);
+    if (k) return txSendClaim(obj, k);           // TX claims: seq + heartbeats (G-1)
+    return rawSend(obj);
   }
 
   function onMessage(ev) {
     if (typeof ev.data === "string") {
-      const msg = JSON.parse(ev.data);
-      if (msg.type === "state") updateState(msg);
-      else if (msg.type === "meter") updateMeter(msg);
-      else if (msg.type === "menu") updateMenu(msg.values || {});
-      else if (msg.type === "host_audio") { if (msg.error) alert("Host audio — " + msg.error); }
+      let msg = null;
+      try { msg = JSON.parse(ev.data); } catch (_) { return; }
+      handleFrame(msg);
       return;
     }
     const tag = new Uint8Array(ev.data, 0, 1)[0];
     if (tag === 0x53) parseScope(ev.data);        // 'S' scope sweep
     else if (tag === 0x41) playAudio(ev.data);    // 'A' RX audio
+  }
+  function handleFrame(msg, meta) {
+    if (!msg || typeof msg !== "object") return;
+    switch (msg.type) {
+      case "state": updateState(msg); break;
+      case "meter": updateMeter(msg); break;
+      case "menu": updateMenu(msg.values || {}); break;
+      case "hello": onHello(msg, meta); break;
+      case "tx": onTxFrame(msg); break;
+      case "tx_revoked": onTxRevoked(msg); break;
+      case "busy": onBusy(msg); break;
+      case "denied": onDenied(msg); break;
+      case "error": onErrorFrame(msg); break;
+      default: break;
+    }
+  }
+  TR._onFrame = handleFrame;                      // TR._inject (sim-only) feeds frames here
+
+  // ---- hello: this connection's identity, role, status and the TX owner (§2.11) ----
+  function onHello(m, meta) {
+    const injected = !!(meta && meta.injected);
+    if (typeof m.conn === "number") TR.myConn = m.conn;
+    if (typeof m.user === "string") TR.user = m.user;
+    if (m.role) TR.setRole(m.role, m.perms);
+    if (m.status && typeof m.status === "object") TR.status = m.status;
+    if (typeof m.hb_interval === "number" && m.hb_interval > 0) hbMs = Math.max(500, Math.min(5000, m.hb_interval * 1000));
+    if (!injected) TR.linkUp();
+    if (m.tx && typeof m.tx === "object") {     // authoritative snapshot: nothing of ours is pending now
+      pendingClaims.clear(); pttPending = null; heldTx = null;
+      applyTx({ type: "tx", owner: m.tx.owner || null });
+    }
+    if (!injected) {
+      if (wasOwnedAtDrop) { wasOwnedAtDrop = false; TR.toast("Transmission ended (connection lost)", "warn"); }
+      // RX audio and the mic are per connection on the server: re-assert them on the new socket.
+      // Never re-key (G-1 g): a claim is only ever sent by an operator's own click.
+      if ($("audioBtn") && $("audioBtn").classList.contains("active")) send({ action: "rx_audio", on: true });
+      if (micOn) send({ action: "mic", on: true });
+    }
+    applyStatusUi();
+  }
+
+  // ---- TX: server-derived ownership (G-1, AR-8), claim seq + heartbeats (§2.13, AR-46) ----
+  // Ownership comes ONLY from the server's tx frames. A claim sent by this tab is "pending" until a
+  // tx/busy/denied frame answers it (req.seq >= its seq) or for 3 s. tx frames that predate the
+  // answer are held back, so a stale frame can never flip the button and make a click re-key.
+  let txSeq = 0;
+  const pendingClaims = new Map();               // seq -> {kind, at}
+  let pttPending = null;                         // {seq, at}: this tab's PTT claim awaiting its answer
+  let answeredSeq = 0;                           // highest req.seq of ours the server has answered
+  let heldTx = null;                             // the newest tx frame that arrived while a claim was pending
+  let txSince = 0;                               // performance.now() when the current TX session started
+  let hbTimer = 0, hbMs = 2000;
+  let wasOwnedAtDrop = false;
+  let failsafeSent = false;
+
+  function nextSeq() { return ++txSeq; }
+  function claimOf(o) {
+    if (o.action === "ptt" && o.tx === true) return "ptt";
+    if (o.action === "cw_tx") return "cw";
+    if (o.action === "tune_atu") return "tune";
+    if (o.action === "rx_func" && o.name === "vox" && o.on === true) return "vox";
+    return null;
+  }
+  function txOwner() { return (TR.tx && TR.tx.owner) || null; }
+  function holds(k) {
+    const o = txOwner();
+    return TR.isTxOwner() && !!o && Array.isArray(o.claims) && o.claims.includes(k);
+  }
+  function ownedPtt() { return holds("ptt"); }
+  function ownedOrPending() { return TR.isTxOwner() || pendingClaims.size > 0; }
+  function otherOwner() { const o = txOwner(); return o && !TR.isTxOwner() ? o : null; }
+  function ownerName(o) { return o ? (o.external ? "FRONT PANEL" : (o.user || "someone")) : ""; }
+  function isMine(req) {
+    return !!req && TR.myConn != null && req.conn === TR.myConn && typeof req.seq === "number";
+  }
+
+  function txSendClaim(obj, k) {
+    if (holds(k)) return false;                  // never re-send a held claim (F2, F19, I17)
+    if (!ws || ws.readyState !== 1) return false;
+    const seq = (typeof obj.seq === "number" && obj.seq > 0) ? obj.seq : nextSeq();
+    if (seq > txSeq) txSeq = seq;
+    const now = performance.now();
+    pendingClaims.set(seq, { kind: k, at: now });
+    if (k === "ptt") pttPending = { seq, at: now };
+    rawSend(Object.assign({}, obj, { seq }));
+    startHb();                                   // tx_hb from the moment the claim is sent (AR-46)
+    renderTx();
+    return true;
+  }
+  function resolvePending(seq) {
+    if (seq > answeredSeq) answeredSeq = seq;
+    for (const s of [...pendingClaims.keys()]) if (s <= seq) pendingClaims.delete(s);
+    if (pttPending && pttPending.seq <= seq) pttPending = null;
+  }
+  function flushHeld() {
+    if (!pendingClaims.size && heldTx) { const f = heldTx; heldTx = null; applyTx(f); }
+  }
+  function expirePending() {
+    const now = performance.now();
+    let changed = false;
+    for (const [s, p] of pendingClaims) if (now - p.at > 3000) { pendingClaims.delete(s); changed = true; }
+    if (pttPending && now - pttPending.at > 3000) { pttPending = null; changed = true; }
+    if (changed) { flushHeld(); renderTx(); }
+  }
+
+  function onTxFrame(m) {
+    const req = m.req;
+    if (isMine(req) && req.seq < answeredSeq) return;            // older than an answer we already have
+    if (pendingClaims.size) {
+      const oldest = Math.min(...pendingClaims.keys());
+      if (!(isMine(req) && req.seq >= oldest)) { heldTx = m; return; }   // predates our claim (AR-8)
+      resolvePending(req.seq);
+      heldTx = null;
+    } else if (isMine(req) && req.seq > answeredSeq) {
+      answeredSeq = req.seq;
+    }
+    applyTx(m);
+  }
+  function answerFromReply(m) {                  // a busy / denied frame answering one of our claims
+    if (!isMine(m.req) || m.req.seq < answeredSeq) return;
+    resolvePending(m.req.seq);
+    flushHeld();
+    renderTx();
+  }
+  function applyTx(m) {
+    const o = m.owner && typeof m.owner === "object" ? m.owner : null;
+    TR.tx = { owner: o };
+    txSince = o ? performance.now() - Math.max(0, +o.elapsed_ms || 0) : 0;
+    if (!ownedPtt()) failsafeSent = false;
+    if (TR.isTxOwner()) startHb();
+    renderTx();
+    document.dispatchEvent(new CustomEvent("tr:tx", { detail: TR.tx }));
+  }
+  function onTxRevoked(m) {
+    const by = m.by ? " by " + m.by : "";
+    const why = {
+      stopped: "Your transmission was stopped" + by + ".",
+      heartbeat: "Transmission ended — the link to the server stalled.",
+      timeout: "Transmission ended — the 120 s limit was reached.",
+      radio_change: "Transmission ended — the radio was switched" + by + ".",
+      radio_disconnect: "Transmission ended — the radio was disconnected" + by + ".",
+      admin_switch: "Transmission ended — an admin switched the radio" + by + ".",
+      server_locked: "Transmission ended — the server is locked.",
+      shutdown: "Transmission ended — the server is shutting down.",
+    }[m.reason] || "Transmission ended.";
+    TR.toast(why, "warn", { force: true });
+    TR.srLive(why);
+  }
+  function txOnSocketClosed() {
+    if (ownedOrPending()) wasOwnedAtDrop = true;   // the server released our claims with the socket
+    pendingClaims.clear(); pttPending = null; heldTx = null; answeredSeq = 0;
+    TR.myConn = null;
+    TR.tx = { owner: null };
+    txSince = 0;
+    stopHb();
+    renderTx();
+  }
+
+  function startHb() { if (!hbTimer) hbTimer = setInterval(hbTick, hbMs); }
+  function stopHb() { if (hbTimer) { clearInterval(hbTimer); hbTimer = 0; } }
+  function hbTick() {
+    expirePending();
+    if (pendingClaims.size || TR.isTxOwner()) rawSend({ action: "tx_hb" });   // never touches the radio (I16)
+    else stopHb();
+  }
+
+  // The owner's STOP (top-bar chip, FAB): unkey what this tab holds. A claim still pending is
+  // released with auto:true, which the server ignores if the claim lost (busy).
+  function txStop() {
+    const o = txOwner(), claims = (TR.isTxOwner() && o && o.claims) || [];
+    if (claims.includes("ptt")) send({ action: "ptt", tx: false });
+    else if (pttPending) send({ action: "ptt", tx: false, auto: true });
+    if (claims.includes("cw")) send({ action: "cw_stop" });
+    if (claims.includes("vox")) send({ action: "rx_func", name: "vox", on: false });
+    if (claims.includes("tune")) send({ action: "tx_stop" });   // tune has no stop primitive
+    pttPending = null;
+    renderTx();
+  }
+  // Leaving the page or hiding the tab while transmitting releases (auto) and stops the local mic.
+  function autoRelease() {
+    let did = false;
+    if (ownedPtt() || pttPending) { send({ action: "ptt", tx: false, auto: true }); did = true; }
+    if (holds("cw")) { send({ action: "cw_stop", auto: true }); did = true; }
+    if (holds("vox")) { send({ action: "rx_func", name: "vox", on: false, auto: true }); did = true; }
+    pttPending = null;
+    if (did && micOn) { stopMic(); $("micBtn").classList.remove("on"); send({ action: "mic", on: false }); }
+    if (did) renderTx();
+  }
+
+  // ---- denied / busy / error frames (control queue, to this connection only) ----
+  const DENY_TEXT = {
+    role: "Not permitted for your role.",
+    not_connected: "Connect a radio first.",
+    connecting: "The radio is switching — try again in a moment.",
+    unsupported: "This radio doesn't support that.",
+    critical_admin: "Only an admin can change this setting.",
+    rate_limited: "Too many commands — slow down a little.",
+    not_owner: "Key PTT first — this works only while you transmit.",
+    invalid: "The server rejected that command.",
+  };
+  function onBusy(m) {
+    answerFromReply(m);
+    document.dispatchEvent(new CustomEvent("tr:busy", { detail: m }));
+    if (m.action === "menu_read_group") { menuBusyRetry(m.retry_after); return; }
+    if (m.action === "menu_write") revertPendingMenu();
+    const o = m.owner;
+    TR.toast(o === "FRONT PANEL" ? "The radio is keyed from its front panel."
+             : (o ? o + " is on the air — try again when they finish." : "Busy — try again in a moment."), "warn");
+  }
+  function onDenied(m) {
+    answerFromReply(m);
+    document.dispatchEvent(new CustomEvent("tr:denied", { detail: m }));
+    if (m.action === "menu_write" && handleMenuDenied(m)) return;
+    const t = DENY_TEXT[m.reason];
+    if (t) TR.toast(t, "warn");
+  }
+  function onErrorFrame(m) {
+    const code = String(m.code || "");
+    if (code.indexOf("rx_") === 0) {             // host RX capture refused / failed: RX is off for us
+      audioOn = false; stopAfScope();
+      $("audioBtn").classList.remove("active");
+    }
+    if ((code.indexOf("tx_device") === 0 || (code === "tx_failed" && /^could not open/i.test(m.message || ""))) && micOn) {
+      stopMic(); $("micBtn").classList.remove("on");
+    }
+    TR.toast(m.message || code || "Server error", "error");
   }
 
   function parseScope(buf) {
@@ -108,12 +342,21 @@
   }
   function updateState(s) {
     const justConnected = !state.connected && s.connected;
+    const connChanged = !!state.connected !== !!s.connected || (s.connected && state.radio !== s.radio);
     state = s;
     // A fresh connection un-blanks the readout here (not just in doConnect's .then): a minimal
     // radio (IC-728) emits state only ONCE on connect — no meter/scope stream to re-trigger a
     // render — so if this frame raced ahead of the connect handler, the guard below would drop
     // it and the freq would never appear. Clearing blanked on the connected frame itself is race-free.
     if (justConnected) { blanked = false; onMenuReconnect(); }   // drop stale menu cache + refresh open groups
+    // G-4: the SERVER's radio wins. Another user (an admin) switched the radio: render its profile.
+    if (s.connected && s.radio && radios.some(p => p.id === s.radio) && (!currentRadio || currentRadio.id !== s.radio)) {
+      $("radioSel").value = s.radio;
+      renderRadio(selectedRadio());
+      renderRadioHelp();
+    }
+    // connected / disconnected / switched: transport kind, pins and host audio follow the server (G-6)
+    if (connChanged) refreshStatus();
     // dual-watch band readout (MAIN/SUB); single-rx radios show MAIN only
     $("rowSub").style.display = s.dual_watch ? "" : "none";
     if (blanked) {                                  // radio just changed: keep VFOs zeroed until a fresh connect
@@ -158,18 +401,15 @@
     const on = !!s.connected;
     $("led").classList.toggle("on", on);
     $("connlabel").textContent = on ? (s.transport || "Connected") : "Disconnected";
-    $("audioAvail").textContent = s.audio ? "• available" : (currentTransportKind() === "serial" ? "• USB device" : "• LAN only");
+    applyAudioLabel();
     $("modelLabel").textContent = on ? (s.radio_name || "") : (currentRadio ? currentRadio.name : "");
+    applyRadioSelLock();
 
-    // PTT / TX tag (button label + countdown handled by tickPtt)
+    // TX tag = the RADIO's TX/RX. The PTT button follows the server's TX owner (tx frames, AR-60),
+    // never s.ptt: another user's transmission must not light this tab's PTT red.
     $("txTag").textContent = s.ptt ? "TX" : "RX";
     $("txTag").classList.toggle("on", !!s.ptt);
-    $("pttBtn").classList.toggle("on", !!s.ptt);
-    if (!!s.ptt !== pttIntended) {             // reconcile with the radio's real TX state
-      pttIntended = !!s.ptt;
-      if (pttIntended) pttKeyedAt = Date.now();
-    }
-    tickPtt();
+    renderPtt();
 
     // span + scope mode
     $("spanVal").textContent = s.span_label || "";
@@ -451,6 +691,7 @@
   document.addEventListener("click", (e) => {
     const b = e.target.closest("[data-act]");
     if (!b) return;
+    if (!TR.can("operate") || b.disabled) return;   // JS gate (cosmetic; the server is the authority)
     const act = b.dataset.act;
     if (act === "band") send({ action: "band", band: b.dataset.band });
     else if (act === "select_band") send({ action: "select_band", band: b.dataset.band });
@@ -527,92 +768,281 @@
     const mn = +el.min || 0, mx = +el.max || 100;
     el.style.setProperty("--p", Math.round((el.value - mn) / (mx - mn) * 100) + "%");
   }
-  for (const t of LEVELS) {
-    $(t).addEventListener("input", e => {
-      send({ action: "set_level", target: t, value: +e.target.value });
-      $(t + "Val").textContent = fmtLevel(t, +e.target.value);
-    });
+
+  // ---- rAF-coalesced senders (AR-48) ----
+  // While a slider, a wheel or a drag-tune moves, at most one message per animation frame goes out
+  // (latest value per key; tune deltas are summed). The trailing value is always sent: on `change`,
+  // on pointerup and at the wheel's end. A timeout backs up rAF (it pauses in background tabs).
+  const rafPending = new Map();                  // key -> latest message
+  let tuneAcc = 0, rafId = 0, rafTimer = 0;
+  function scheduleFlush() {
+    if (!rafId) rafId = requestAnimationFrame(flushSoon);
+    if (!rafTimer) rafTimer = setTimeout(flushSoon, 120);
   }
-  // drive the visual fill (--p) for every slider, incl. VOL
+  function flushSoon() {
+    if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+    if (rafTimer) { clearTimeout(rafTimer); rafTimer = 0; }
+    flushTune();
+    const msgs = [...rafPending.values()];
+    rafPending.clear();
+    for (const m of msgs) send(m);
+  }
+  function sendSoon(key, msg) { rafPending.set(key, msg); scheduleFlush(); }
+  function sendNow(key, msg) { rafPending.delete(key); send(msg); }
+  function flushKey(key) { if (rafPending.has(key)) sendNow(key, rafPending.get(key)); }
+  function queueTune(delta) { tuneAcc += delta; scheduleFlush(); }
+  function flushTune() { if (tuneAcc) { const d = tuneAcc; tuneAcc = 0; send({ action: "tune", delta: d }); } }
+
+  for (const t of LEVELS) {
+    const el = $(t);
+    el.addEventListener("input", () => {
+      $(t + "Val").textContent = fmtLevel(t, +el.value);
+      sendSoon("lvl:" + t, { action: "set_level", target: t, value: +el.value });
+    });
+    el.addEventListener("change", () => sendNow("lvl:" + t, { action: "set_level", target: t, value: +el.value }));
+  }
+  // every slider (incl. VOL): the visual fill, and the wheel only when the slider is focused AND
+  // hovered (§3.17); leaving it with no button pressed blurs it, so the next wheel scrolls the page.
+  // RF power never takes the wheel.
   document.querySelectorAll(".sl input[type=range]").forEach(el => {
     setFill(el);
     el.addEventListener("input", () => setFill(el));
-    el.addEventListener("wheel", e => {                 // only the clicked (focused) slider takes the wheel;
-      if (document.activeElement !== el) return;        // otherwise let the wheel scroll the settings panel
+    el.addEventListener("pointerleave", (e) => { if (!e.buttons && document.activeElement === el) el.blur(); });
+    if (el.id === "rfpwr") return;
+    let wheelEnd = 0;
+    el.addEventListener("wheel", e => {
+      if (document.activeElement !== el || !el.matches(":hover")) return;
+      if (!TR.can("operate") && el.closest('[data-gate~="operate"]')) return;
       e.preventDefault();
       const span = (+el.max || 100) - (+el.min || 0);
       const d = Math.max(1, Math.round(span / 64)) * (e.deltaY < 0 ? 1 : -1);
       el.value = Math.max(+el.min, Math.min(+el.max, (+el.value) + d));
       el.dispatchEvent(new Event("input"));
+      clearTimeout(wheelEnd);
+      wheelEnd = setTimeout(() => el.dispatchEvent(new Event("change")), 250);   // the trailing value
     }, { passive: false });
   });
 
-  // PTT — tap to toggle (works on touch + mouse). Latched TX auto-releases on
-  // screen-lock / app-switch, page unload, and the failsafe time-out (which the
-  // server independently enforces too). The button shows the countdown.
+  // ---- PTT (G-1): owner-aware, from the server's tx frames ----
+  // Mouse and keyboard: click toggles. Touch: hold 300 ms to key (a scroll, cancel or early release
+  // keys nothing); when owned, touching unkeys at once; the compat click after a touch is swallowed.
+  // When this tab owns ptt, a click sends ptt:false and never ptt:true again.
   const ptt = $("pttBtn");
-  function setPtt(tx) {
-    pttIntended = !!tx;
-    if (pttIntended) pttKeyedAt = Date.now();
-    send({ action: "ptt", tx: pttIntended });
-    tickPtt();
+  function pttLeft() {
+    const since = ownedPtt() ? txSince : (pttPending ? pttPending.at : performance.now());
+    return (state.ptt_tot || 120) - Math.floor((performance.now() - since) / 1000);
   }
-  function tickPtt() {
-    if (!pttIntended) { ptt.textContent = "PTT"; return; }
-    const left = (state.ptt_tot || 120) - Math.floor((Date.now() - pttKeyedAt) / 1000);
-    if (left <= 0) { setPtt(false); return; }       // client failsafe (server enforces too)
-    ptt.textContent = "ON AIR " + left + "s — STOP";
+  function renderPtt() {
+    if (!ptt) return;
+    const o = txOwner(), mine = TR.isTxOwner(), keyed = ownedPtt() || !!pttPending;
+    ptt.classList.remove("on");                  // the red .on look never comes from the radio's state (AR-60)
+    ptt.classList.toggle("tx-mine", ownedPtt());
+    ptt.classList.toggle("tx-busy", !!o && !mine && !o.external);
+    ptt.classList.toggle("tx-external", !!o && !mine && !!o.external);
+    ptt.setAttribute("aria-pressed", keyed ? "true" : "false");
+    let label = "PTT";
+    if (keyed) label = "ON AIR " + Math.max(0, pttLeft()) + "s — STOP";
+    else if (o && !mine) label = o.external ? "RADIO TX" : "BUSY · " + (o.user || "?");
+    if (ptt.textContent !== label) ptt.textContent = label;
   }
-  setInterval(tickPtt, 400);
-  ptt.addEventListener("click", () => setPtt(!pttIntended));
-  document.addEventListener("visibilitychange", () => { if (document.hidden && pttIntended) setPtt(false); });
-  window.addEventListener("pagehide", () => { if (pttIntended) setPtt(false); });
+  function pttRelease() {
+    if (ownedPtt()) send({ action: "ptt", tx: false });
+    else if (pttPending) send({ action: "ptt", tx: false, auto: true });   // ignored if our claim lost
+    pttPending = null;
+    renderTx();
+  }
+  function pttClick() {
+    if (ownedPtt() || pttPending) { pttRelease(); return; }
+    const o = otherOwner();
+    if (o) {
+      TR.toast((o.external ? "The radio is keyed from its front panel" : o.user + " is transmitting") +
+               " — use STOP in the top bar.", "warn");
+      return;
+    }
+    if (!TR.can("tx")) return;
+    send({ action: "ptt", tx: true });           // seq + heartbeats added by send() (txSendClaim)
+  }
+  function tickTx() {
+    if (ownedPtt() && !failsafeSent && pttLeft() <= 0) {   // client failsafe (the server enforces too)
+      failsafeSent = true;
+      send({ action: "ptt", tx: false, auto: true });
+    }
+    renderPtt(); renderOnAir(); renderFab();
+  }
+  setInterval(tickTx, 400);
+  if (ptt) {
+    let touchTimer = 0, touchHeld = false, swallowClickUntil = 0;
+    const cancelHold = () => { touchHeld = false; clearTimeout(touchTimer); };
+    ptt.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "touch") return;
+      swallowClickUntil = performance.now() + 1000;
+      if (ownedPtt() || pttPending || otherOwner()) { pttClick(); return; }   // unkey at once / busy hint
+      cancelHold();
+      touchHeld = true;
+      touchTimer = setTimeout(() => { const go = touchHeld; touchHeld = false; if (go) pttClick(); }, 300);
+    });
+    ptt.addEventListener("pointerup", cancelHold);
+    ptt.addEventListener("pointercancel", cancelHold);
+    ptt.addEventListener("pointerleave", cancelHold);
+    window.addEventListener("scroll", cancelHold, { capture: true, passive: true });
+    ptt.addEventListener("click", (e) => {
+      if (performance.now() < swallowClickUntil) { e.preventDefault(); return; }   // compat click after touch
+      pttClick();
+    });
+  }
+  document.addEventListener("visibilitychange", () => { if (document.hidden) autoRelease(); });
+  window.addEventListener("pagehide", autoRelease);
+
+  // ---- ON-AIR chip, two-tap STOP and the STOP FAB (§4.5) ----
+  function fmtMmSs(ms) {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+  }
+  let stopArmed = 0;
+  function disarmStop() {
+    if (stopArmed) { clearTimeout(stopArmed); stopArmed = 0; }
+    const b = $("onAirStop"), l = $("onAirStopLbl");
+    if (b) b.classList.remove("armed");
+    if (l) l.textContent = "STOP";
+  }
+  function renderOnAir() {
+    const chip = $("onAir");
+    if (!chip) return;
+    const o = txOwner();
+    if (!o) { if (!chip.hidden) chip.hidden = true; disarmStop(); return; }
+    chip.hidden = false;
+    chip.classList.toggle("mine", TR.isTxOwner());
+    const who = TR.isTxOwner() ? "YOU" : ownerName(o);
+    const w = $("onAirWho"), t = $("onAirTime");
+    if (w && w.textContent !== " · " + who) w.textContent = " · " + who;
+    if (t) t.textContent = " · " + fmtMmSs(performance.now() - txSince);
+  }
+  if ($("onAirStop")) $("onAirStop").addEventListener("click", () => {
+    const o = txOwner();
+    if (!o) return;
+    if (TR.isTxOwner()) { disarmStop(); txStop(); return; }          // the owner: one tap
+    if (!TR.can("tx")) return;
+    if (stopArmed) { disarmStop(); send({ action: "tx_stop" }); return; }   // second tap: STOP (F18)
+    $("onAirStop").classList.add("armed");
+    const l = $("onAirStopLbl");
+    if (l) l.textContent = "Tap again to stop " + ownerName(o);
+    TR.srLive("Tap STOP again within 3 seconds to stop " + ownerName(o));
+    stopArmed = setTimeout(disarmStop, 3000);
+  });
+  let pttVisible = true;                          // the IntersectionObserver's view of #pttBtn
+  if (ptt && "IntersectionObserver" in window) {
+    new IntersectionObserver((entries) => {
+      for (const en of entries) pttVisible = en.isIntersecting && en.intersectionRatio >= 0.5;
+      renderFab();
+    }, { threshold: [0, 0.5, 1] }).observe(ptt);
+  }
+  function renderFab() {
+    const f = $("txStopFab");
+    if (!f) return;
+    const show = TR.isTxOwner() && !pttVisible;   // PTT off-screen, parked or collapsed
+    if (f.hidden === show) f.hidden = !show;
+    const t = $("txStopFabTime");
+    if (show && t) t.textContent = fmtMmSs(performance.now() - txSince);
+  }
+  if ($("txStopFab")) $("txStopFab").addEventListener("click", () => txStop());
+  // While someone else owns TX, the TX toggles are disabled (F18): the only way to stop them is
+  // the two-tap STOP. (#cwTx is handled by cwtool.js, which keeps its two-tap STOP for CW.)
+  function renderTxLocks() {
+    const o = otherOwner();
+    const els = [$("voxBtn"), $("tuneBtn"), ...document.querySelectorAll("#atasTune .atas-btn")];
+    for (const el of els) {
+      if (!el) continue;
+      if (el.dataset.trTitle === undefined) el.dataset.trTitle = el.title || "";
+      el.disabled = !!o;
+      el.title = o ? (o.external ? "The radio is keyed from its front panel" : o.user + " is transmitting")
+                   : el.dataset.trTitle;
+    }
+  }
+  function renderTx() { renderPtt(); renderOnAir(); renderTxLocks(); renderFab(); }
+
+  // ---- wheel and touch guards (§3.17, G-12, G-13) ----
+  let lastScrollTs = 0;
+  window.addEventListener("scroll", () => { lastScrollTs = performance.now(); }, { capture: true, passive: true });
+  function scrollableAncestor(el) {
+    for (let p = el.parentElement; p; p = p.parentElement) {
+      const oy = getComputedStyle(p).overflowY;
+      if ((oy === "auto" || oy === "scroll") && p.scrollHeight > p.clientHeight + 1) return p;
+    }
+    const se = document.scrollingElement;
+    return se && se.scrollHeight > se.clientHeight + 1 ? se : null;
+  }
+  // Inside something that scrolls, the wheel tunes only after the pointer rested 400 ms on the
+  // element with no scrolling, so a quick wheel over the scope keeps scrolling the page.
+  function hoverIntent(el) {
+    if (!scrollableAncestor(el)) return true;
+    const t = performance.now();
+    return el._hoverSince > 0 && t - el._hoverSince >= 400 && t - lastScrollTs >= 400;
+  }
+  function trackHover(el) {
+    if (!el) return;
+    el._hoverSince = 0;
+    el.addEventListener("pointerenter", () => { el._hoverSince = performance.now(); });
+    el.addEventListener("pointerleave", () => { el._hoverSince = 0; });
+  }
 
   // ---- tuning on the scope: tap to select a frequency, drag/slide to spin ----
+  // Positions are scaled from CSS pixels to the scope's drawing width (scope.W), and a tap uses the
+  // scope's own pixel->frequency map, so the edges tune to exactly the edge labels.
   const wrap = $("scopeWrap");
-  let scDown = false, scStartX = 0, scLastX = 0, scMoved = 0, scAccum = 0;
-  function scBounds() {
-    const m = scope.meta;
-    if (m.mode === 1 && m.lower && m.upper) return [m.lower, m.upper];
-    return [m.center - m.span / 2, m.center + m.span / 2];
+  trackHover(wrap);
+  let scDown = false, scStartPx = 0, scLastPx = 0, scLastCss = 0, scMoved = 0, scAccum = 0;
+  let scDownAt = 0, scType = "mouse";
+  function scopePos(e) {
+    const r = $("overlay").getBoundingClientRect();
+    return { px: (e.clientX - r.left) * scope.W / (r.width || 1), css: e.clientX - r.left };
   }
   wrap.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || !e.isPrimary || !TR.can("operate") || Layout().arranging()) return;
+    if (e.pointerType === "touch" && performance.now() - lastScrollTs < 300) return;   // a scroll, not a tap
+    if (e.pointerType === "mouse") e.preventDefault();
+    scDownAt = performance.now(); scType = e.pointerType || "mouse";
+    const p = scopePos(e);
     scDown = true; scMoved = 0; scAccum = 0;
-    const r = wrap.getBoundingClientRect();
-    scStartX = scLastX = e.clientX - r.left;
+    scStartPx = scLastPx = p.px; scLastCss = p.css;
     try { wrap.setPointerCapture(e.pointerId); } catch (_) {}
   });
   wrap.addEventListener("pointermove", (e) => {
     if (!scDown) return;
-    const r = wrap.getBoundingClientRect();
-    const x = e.clientX - r.left, dx = x - scLastX; scLastX = x; scMoved += Math.abs(dx);
+    const p = scopePos(e);
+    const dx = p.px - scLastPx;
+    scMoved += Math.abs(p.css - scLastCss);
+    scLastPx = p.px; scLastCss = p.css;
     if (scMoved > 6) {                                // a drag -> pan the frequency
-      const b = scBounds();
-      scAccum += -(dx / scope.W) * (b[1] - b[0]);     // drag right -> tune down (content follows finger)
+      const [lo, hi] = scope.visibleRange();
+      scAccum += -(dx / scope.W) * (hi - lo);         // drag right -> tune down (content follows finger)
       const n = (scAccum / step) | 0;
-      if (n !== 0) { send({ action: "tune", delta: n * step }); scAccum -= n * step; }
+      if (n !== 0) { queueTune(n * step); scAccum -= n * step; }
     }
   });
   function scEnd(e) {
     if (!scDown) return; scDown = false;
     try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (scMoved <= 6) {                               // a tap -> tune to where you clicked
-      const b = scBounds();
-      const freq = b[0] + (scStartX / scope.W) * (b[1] - b[0]);
-      const SNAP = 100;                               // fine snap so it lands at the click, not the coarse step
-      send({ action: "set_freq", hz: Math.round(freq / SNAP) * SNAP });
-    }
+    if (scMoved > 6) { flushTune(); return; }         // the trailing drag delta
+    // A touch tap must be short (a long press is not a tap); mouse and pen keep any duration (AR-59).
+    if (scType === "touch" && performance.now() - scDownAt >= 600) return;
+    const hz = Math.round(scope.freqAtX(scStartPx) / 100) * 100;   // fine snap: lands where you tapped
+    if (hz > 0) send({ action: "set_freq", hz });
   }
   wrap.addEventListener("pointerup", scEnd);
-  wrap.addEventListener("pointercancel", () => { scDown = false; });
+  wrap.addEventListener("pointercancel", () => { scDown = false; flushTune(); });
+  let scWheelEnd = 0;
   wrap.addEventListener("wheel", (e) => {
+    if (!TR.can("operate") || Layout().arranging() || !hoverIntent(wrap)) return;   // the page scrolls
     e.preventDefault();
-    send({ action: "tune", delta: (e.deltaY < 0 ? 1 : -1) * step });
+    queueTune((e.deltaY < 0 ? 1 : -1) * step);
+    clearTimeout(scWheelEnd);
+    scWheelEnd = setTimeout(flushTune, 150);          // the wheel's end: the trailing delta
   }, { passive: false });
 
   // ---- per-digit VFO tuning (click the readout digits up/down, or scroll them) ----
   const bandsEl = $("bands");
-  function digitDelta(d, up) {
+  trackHover(bandsEl);
+  function digitDelta(d, up, viaWheel) {
     const place = +d.dataset.place || 0;
     if (!place) return;
     const row = d.closest(".bandrow");
@@ -622,27 +1052,68 @@
     }
     const hz = Math.max(0, (state.freq || 0) + (up ? place : -place));
     state.freq = hz;                                  // optimistic so rapid clicks/scrolls accumulate
-    send({ action: "set_freq", hz });
+    if (viaWheel) sendSoon("freq", { action: "set_freq", hz });
+    else sendNow("freq", { action: "set_freq", hz });
   }
   if (bandsEl) {
+    let digitWheelEnd = 0;
     bandsEl.addEventListener("click", (e) => {
       const d = e.target.closest(".fd"); if (!d) return;
       e.stopPropagation();                            // don't also fire the row's band-select
-      digitDelta(d, e.offsetY < d.clientHeight / 2);
+      if (!TR.can("operate") || Layout().arranging()) return;
+      digitDelta(d, e.offsetY < d.clientHeight / 2, false);
     });
     bandsEl.addEventListener("wheel", (e) => {
       const d = e.target.closest(".fd"); if (!d) return;
+      if (!TR.can("operate") || Layout().arranging() || !hoverIntent(bandsEl)) return;
       e.preventDefault();
-      digitDelta(d, e.deltaY < 0);
+      digitDelta(d, e.deltaY < 0, true);
+      clearTimeout(digitWheelEnd);
+      digitWheelEnd = setTimeout(() => flushKey("freq"), 150);
     }, { passive: false });
   }
 
-  // ---- draggable spectrum / waterfall split ----
+  // ---- spectrum / waterfall split (§3.16) ----
+  // The split is a FRACTION of the scope height, clamped to BOUNDS.split before it is applied or
+  // saved, per device. It is applied only where the waterfall flexes to fill a layout-sized scope;
+  // where the scope's height follows its content (phone in this layout) the fraction would feed
+  // back into the height, so there the spectrum keeps its CSS / dragged pixel height.
+  const SPLIT_BOUNDS = (TR.boot.layout_bounds && Array.isArray(TR.boot.layout_bounds.split))
+    ? TR.boot.layout_bounds.split : [0.15, 0.85];
+  function clampSplit(f) {
+    f = +f;
+    if (!isFinite(f) || f <= 0) f = 0.38;
+    return Math.min(SPLIT_BOUNDS[1], Math.max(SPLIT_BOUNDS[0], f));
+  }
+  function splitDevice() { return matchMedia("(min-width: 900px)").matches ? "desktop" : "phone"; }
+  const splitByDev = (function () {
+    const s = ((TR.boot.layout || {}).scope_split) || {};
+    return { desktop: clampSplit(s.desktop), phone: clampSplit(s.phone) };
+  })();
+  let specSetBy = null;                           // "apply" | "drag" | null: who set the inline height
+  function splitApplies() {
+    const wf = $("waterfall");
+    return !!wf && parseFloat(getComputedStyle(wf).flexGrow) > 0;
+  }
+  function applySplit() {
+    const sw = $("scopeWrap"), spec = $("spectrum");
+    if (!sw || !spec) return;
+    if (!splitApplies()) {
+      if (specSetBy === "apply") { spec.style.height = ""; specSetBy = null; }
+      return;
+    }
+    const H = sw.clientHeight;
+    if (!H) return;                               // parked / collapsed: nothing to fit
+    const px = Math.max(60, Math.min(H - 110, Math.round(H * clampSplit(splitByDev[splitDevice()]))));
+    spec.style.height = px + "px";
+    specSetBy = "apply";
+  }
   (function () {
-    const split = $("scopeSplit"), spec = $("spectrum"), wrap = $("scopeWrap");
-    if (!split || !spec || !wrap) return;
+    const split = $("scopeSplit"), spec = $("spectrum"), sw = $("scopeWrap");
+    if (!split || !spec || !sw) return;
     let down = false;
     split.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
       down = true; split.classList.add("drag");
       try { split.setPointerCapture(e.pointerId); } catch (_) {}
       // keep this gesture on the split: don't let the wrap's tuning handler also
@@ -652,18 +1123,44 @@
     split.addEventListener("pointermove", (e) => {
       if (!down || !(e.buttons & 1)) return;   // ignore plain hover moves after release
       e.stopPropagation();
-      const r = wrap.getBoundingClientRect();
-      spec.style.height = Math.max(60, Math.min(r.height - 110, e.clientY - r.top)) + "px";
-      scope.resize();
+      const r = sw.getBoundingClientRect();
+      spec.style.height = Math.max(60, Math.min(r.height - 110, e.clientY - r.top)) + "px";   // height only
+      specSetBy = "drag";
     });
     const end = (e) => {
       if (!down) return; down = false; split.classList.remove("drag");
       try { split.releasePointerCapture(e.pointerId); } catch (_) {}
-      scope.resize();
+      const H = sw.clientHeight;
+      if (H > 0) {
+        const f = clampSplit(spec.offsetHeight / H);   // clamped BEFORE it is applied or saved (AR-26)
+        splitByDev[splitDevice()] = f;
+        applySplit();
+        try { Layout().setScopeSplit(f); } catch (_) {}
+      }
+      scope.resize();                                  // once, at the end of the drag
     };
     split.addEventListener("pointerup", end);
     split.addEventListener("pointercancel", end);
     split.addEventListener("lostpointercapture", end);   // safety: capture lost -> stop dragging
+  })();
+  // Re-fit the scope when its box changes (150 ms trailing debounce); a tile resize gesture reports
+  // its final size at tr:resizestop, so the observer is paused in between (§3.16).
+  (function () {
+    let t = 0, paused = false;
+    const refit = () => { applySplit(); scope.resize(); };
+    document.addEventListener("tr:resizestart", () => { paused = true; });
+    document.addEventListener("tr:resizestop", () => { paused = false; refit(); });
+    document.addEventListener("tr:layout", () => {
+      refit();
+      if (afTimer && rxBus) startAfScope(rxBus);       // the FFT size follows the scope width
+    });
+    if ("ResizeObserver" in window && $("scopeWrap")) {
+      new ResizeObserver(() => {
+        if (paused) return;
+        clearTimeout(t);
+        t = setTimeout(refit, 150);
+      }).observe($("scopeWrap"));
+    }
   })();
 
   // ---- day / night theme ----
@@ -774,7 +1271,8 @@
     root.appendChild(title);
     for (const g of order) {
       const sec = document.createElement("div"); sec.className = "menu-grp"; sec.dataset.group = g;
-      const head = document.createElement("button"); head.className = "menu-ghead"; head.type = "button";
+      // gate-exempt: viewers may open groups and read the values (F23); the inputs stay gated
+      const head = document.createElement("button"); head.className = "menu-ghead gate-exempt"; head.type = "button";
       head.innerHTML = `<span>${rhEsc(g)}</span><span class="menu-count">${byGroup[g].length}</span>`;
       const body = document.createElement("div"); body.className = "menu-gbody hide";
       head.addEventListener("click", () => toggleMenuGroup(g, sec, body, byGroup[g]));
@@ -788,12 +1286,22 @@
     if (!body._built) { for (const it of items) body.appendChild(buildMenuItem(it)); body._built = true; }
     if (state.connected) send({ action: "menu_read_group", group: g });   // lazy: read this group only
   }
+  // Menu gating (§4.6, F8, AR-13, AR-14): critical items are admin-only (locked with "admin only" for
+  // everyone else); writing TX TOT = OFF asks twice and sends confirm:"tot_off"; routing PTT to an
+  // RTS/DTR line warns and sends confirm:"tx_route". The server decides all of it again.
+  const LOCK_SVG = '<svg class="mi-lock" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" ' +
+    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/>' +
+    '<path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+  function menuLocked(it) { return !TR.can("menu") || (!!it.critical && !TR.can("menu_critical")); }
   function buildMenuItem(it) {
     const row = document.createElement("div");
-    row.className = "menu-item" + (it.critical ? " critical" : "");
+    const locked = menuLocked(it);
+    row.className = "menu-item" + (it.critical ? " critical" : "") + (locked && it.critical ? " locked" : "");
     row.dataset.num = it.num;
     const name = document.createElement("div"); name.className = "mi-name";
-    name.innerHTML = `<span>${rhEsc(it.name)}${it.critical ? ' <span class="mi-warn" title="connection / transmit-sensitive">&#9888;</span>' : ''}</span>` +
+    const adminOnly = it.critical && !TR.can("menu_critical")
+      ? ' <span class="mi-admin" title="Only an admin can change this setting">' + LOCK_SVG + "admin only</span>" : "";
+    name.innerHTML = `<span>${rhEsc(it.name)}${it.critical ? ' <span class="mi-warn" title="connection / transmit-sensitive">&#9888;</span>' : ''}${adminOnly}</span>` +
                      `<span class="mi-num">${String(it.num).padStart(3, "0")}</span>`;
     if (it.note) name.title = it.note;
     row.appendChild(name);
@@ -808,6 +1316,7 @@
         if (/reserved/i.test(it.options[i])) o.disabled = true;   // documented index gap — not selectable
         sel.appendChild(o);
       }
+      sel.disabled = locked;
       sel.addEventListener("change", () => writeMenu(it, +sel.value));
       ctl.appendChild(sel); row.appendChild(ctl);
     } else {
@@ -815,6 +1324,7 @@
       const r = document.createElement("input"); r.type = "range"; r.dataset.role = "input";
       r.min = it.min; r.max = it.max; r.step = it.step || 1;
       r.value = (it.kind === "signed-int") ? Math.max(it.min, Math.min(it.max, 0)) : it.min;
+      r.disabled = locked;
       const val = document.createElement("span"); val.className = "mi-val"; val.dataset.role = "val"; val.textContent = "—";
       const show = () => { val.textContent = r.value + (it.unit ? " " + it.unit : ""); };
       r.addEventListener("input", show);
@@ -824,12 +1334,66 @@
     if (it.num in menuCache) applyMenuValue(it, row, menuCache[it.num]);
     return row;
   }
-  function writeMenu(it, value) {
-    if (!state.connected || (it.critical && !confirm(`Change "${it.name}" (menu ${String(it.num).padStart(3, "0")})?\n` +
-        (it.note || "This is a connection / transmit-sensitive setting.")))) {
-      revertMenuItem(it); return;          // disconnected or cancelled -> restore the real value
+  function menuOption(it, value) {
+    const o = it.kind === "enum" ? (it.options || [])[value] : undefined;
+    return String(o === undefined ? value : o);
+  }
+  function isTotOff(it, value) {                 // the server decides by the encoded bytes; this asks first
+    return !!it.tx_tot && (it.kind === "enum" ? menuOption(it, value).trim().toUpperCase() === "OFF" : +value === 0);
+  }
+  function routesToLine(it, value) {
+    return !!it.tx_route && it.kind === "enum" && /RTS|DTR/i.test(menuOption(it, value));
+  }
+  const NNN = (it) => String(it.num).padStart(3, "0");
+  const TOT_Q = (it) => `Turn "${it.name}" (menu ${NNN(it)}) OFF? The radio's own transmit time-out is the ` +
+    "hardware backstop if a transmission ever sticks.";
+  const ROUTE_Q = (it, value) => `Set "${it.name}" to ${menuOption(it, value)}? Routing PTT to RTS/DTR can key ` +
+    "the radio immediately while TeleRig holds its serial port open.";
+  let pendingMenu = null;                        // {it, value, confirm, at}: the last write, until answered
+  async function writeMenu(it, value) {
+    if (!state.connected || menuLocked(it)) { revertMenuItem(it); return; }
+    let confirmTag = null;
+    if (it.critical && !(await TR.confirm(`Change "${it.name}" (menu ${NNN(it)})? ` +
+        (it.note || "This is a connection / transmit-sensitive setting."), { ok: "Change" }))) {
+      revertMenuItem(it); return;                // cancelled -> restore the real value
     }
-    send({ action: "menu_write", num: it.num, value: value });
+    if (isTotOff(it, value)) {                   // the second confirm (F8)
+      if (!(await TR.confirm(TOT_Q(it), { ok: "Turn it off", danger: true }))) { revertMenuItem(it); return; }
+      confirmTag = "tot_off";
+    }
+    if (routesToLine(it, value)) {
+      if (!(await TR.confirm(ROUTE_Q(it, value), { ok: "Set it", danger: true }))) { revertMenuItem(it); return; }
+      confirmTag = "tx_route";
+    }
+    sendMenuWrite(it, value, confirmTag);
+  }
+  function sendMenuWrite(it, value, confirmTag) {
+    const msg = { action: "menu_write", num: it.num, value: value };
+    if (confirmTag) msg.confirm = confirmTag;
+    pendingMenu = { it, value, confirm: confirmTag, at: Date.now() };
+    send(msg);
+  }
+  function revertPendingMenu() {
+    const p = pendingMenu;
+    pendingMenu = null;
+    if (p) revertMenuItem(p.it);
+  }
+  // A denied menu_write: the server asks for a confirm we did not send (its encoder decided the
+  // value is TOT=OFF / an RTS-DTR route) -> ask and resend once; anything else -> repaint the item.
+  function handleMenuDenied(m) {
+    const p = pendingMenu;
+    if (p && Date.now() - p.at < 10000 && !p.confirm &&
+        (m.reason === "tot_off_confirm" || m.reason === "tx_route_confirm")) {
+      pendingMenu = null;
+      const tag = m.reason === "tot_off_confirm" ? "tot_off" : "tx_route";
+      const q = tag === "tot_off" ? TOT_Q(p.it) : ROUTE_Q(p.it, p.value);
+      TR.confirm(q, { ok: tag === "tot_off" ? "Turn it off" : "Set it", danger: true }).then((ok) => {
+        if (ok && state.connected) sendMenuWrite(p.it, p.value, tag); else revertMenuItem(p.it);
+      });
+      return true;
+    }
+    revertPendingMenu();
+    return false;
   }
   function revertMenuItem(it) {
     if (it.num in menuCache) refreshMenuItem(it.num);                  // repaint from last known value
@@ -837,10 +1401,22 @@
   }
   function onMenuReconnect() {
     menuCache = {};                                                   // stale values from the old session
+    readOpenMenuGroups();
+  }
+  function readOpenMenuGroups() {
     document.querySelectorAll(".menu-grp.open").forEach(sec =>
       send({ action: "menu_read_group", group: sec.dataset.group }));   // refresh whatever is open
   }
+  // The menu queue answers busy {retry_after} when it is full (AR-32): retry the open groups ONCE.
+  let menuRetryTimer = 0, menuRetried = false;
+  function menuBusyRetry(after) {
+    if (menuRetryTimer || menuRetried) return;
+    const ms = Math.max(500, Math.min(10000, (+after || 2) * 1000));
+    menuRetryTimer = setTimeout(() => { menuRetryTimer = 0; menuRetried = true; readOpenMenuGroups(); }, ms);
+  }
   function updateMenu(values) {
+    menuRetried = false;                         // the queue is serving again
+    if (pendingMenu && String(pendingMenu.it.num) in values) pendingMenu = null;
     for (const k in values) { menuCache[+k] = values[k]; refreshMenuItem(+k); }
   }
   function refreshMenuItem(num) {
@@ -864,7 +1440,7 @@
 
   async function loadRadios() {
     try {
-      const j = await (await fetch("/api/radios")).json();
+      const j = await TR.api("/api/radios");
       radios = j.radios || [];
       const sel = $("radioSel"); sel.innerHTML = "";
       for (const p of radios) {
@@ -942,9 +1518,8 @@
     const canPtt = capHas("ptt", true);
     { const pb = $("pttBtn"); if (pb) pb.style.display = canPtt ? "" : "none"; }
     { const mb = $("micBtn"); if (mb) mb.style.display = canPtt ? "" : "none"; }
-    { const md = $("micDev"); if (md && md.closest(".sl")) md.closest(".sl").style.display = canPtt ? "" : "none"; }
     { const mid = $("micInDev"); if (mid && mid.closest(".sl")) mid.closest(".sl").style.display = canPtt ? "" : "none"; }
-    { const mm = document.querySelector(".scopepane .mic-meter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
+    { const mm = $("micMeter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
     // meter block: hide entirely when the rig exposes no meters over the control link (S-bar included)
     { const mtr = document.querySelector(".scopepane .meter");
       if (mtr) mtr.style.display = (Array.isArray(cap.meters) && cap.meters.length === 0) ? "none" : ""; }
@@ -971,8 +1546,55 @@
     syncExtPanel(state);         // show/hide the WIDTH/CONTOUR/APF/CW/ops groups for this radio+mode
     syncIcomCw(state);           // Icom CW/filter group visibility for this radio+mode
     applyTitles();
+    applyStatusUi();
+    try { Layout().setRadio(p); } catch (_) {}
   }
-  $("radioSel").addEventListener("change", () => {
+  // G-4 / F20: while a radio is connected, only an admin may switch it, and only after an inline
+  // confirm (it disconnects the radio for everyone). An operator's change is reverted before
+  // anything else happens.
+  async function othersOnline() {
+    try {
+      const j = await TR.api("/api/admin/sessions", { noRedirect: true });
+      return new Set((j.sessions || []).map((s) => s.user).filter((u) => u && u !== TR.user)).size;
+    } catch (_) { return null; }
+  }
+  async function adminDisconnect(confirmText) {
+    try {
+      await TR.api("/api/disconnect", { method: "POST", json: { confirm: true }, quiet: true });
+      return true;
+    } catch (e) {
+      if (e.status === 409 && e.code === "busy") {      // someone transmits: stopping them is explicit
+        const ok = await TR.confirm((e.body.owner || "Someone") + " is transmitting — stop them and " + confirmText + "?",
+                                    { ok: "Stop and continue", danger: true });
+        if (!ok) return false;
+        try { await TR.api("/api/disconnect", { method: "POST", json: { confirm: true, force: true } }); return true; }
+        catch (e2) { TR.toast(e2.message, "error"); return false; }
+      }
+      TR.toast("Disconnect failed: " + e.message, "error");
+      return false;
+    }
+  }
+  let radioSelBusy = false;
+  $("radioSel").addEventListener("change", async () => {
+    const sel = $("radioSel"), want = sel.value;
+    if (state.connected && currentRadio && want !== currentRadio.id) {
+      sel.value = currentRadio.id;                 // revert until (and unless) the switch is confirmed
+      if (!TR.can("switch_radio")) {
+        TR.toast("Only an admin can switch the radio while it's connected", "warn");
+        return;
+      }
+      if (radioSelBusy) return;
+      radioSelBusy = true;
+      try {
+        const n = await othersOnline();
+        const ok = await TR.confirm("Switching radio disconnects it for everyone" +
+                                    (n ? " (" + n + " other user" + (n === 1 ? "" : "s") + " online)" : "") + ". Continue?",
+                                    { ok: "Switch radio", danger: true });
+        if (!ok || !(await adminDisconnect("switch the radio"))) return;
+      } finally { radioSelBusy = false; }
+      sel.value = want;
+      $("conn").classList.add("open");             // reopen the connect controls so they can reconnect
+    }
     renderRadio(selectedRadio());
     renderRadioHelp();
     applyConnForRadio($("radioSel").value);         // restore THIS radio's last connection + settings + audio
@@ -983,10 +1605,7 @@
     renderFreq($("mainFreq"), 0, false);
     renderFreq($("subFreq"), 0, false);
     $("lblLeft").textContent = $("lblRight").textContent = "";
-    if (state.connected) {                          // switching radios -> drop the current connection
-      fetch("/api/disconnect", { method: "POST" });
-      $("conn").classList.add("open");              // reopen the connect controls so they can reconnect
-    }
+    applyStatusUi();
   });
 
   // ---- connection help popover ("?" beside the radio picker) ----
@@ -1024,13 +1643,13 @@
 
   // ---- connection controls ----
   async function loadPorts() {
+    if (!TR.can("connect")) return null;            // viewers have no connect form (operator route)
     try {
-      const r = await fetch("/api/ports");
-      const j = await r.json();
+      const j = await TR.api("/api/ports", { noRedirect: true });
       const sel = $("transport");
       sel.querySelectorAll("option:not([value='sim']):not([value='lan'])").forEach(o => o.remove());
       const lanOpt = sel.querySelector("option[value='lan']");
-      for (const p of j.ports) {
+      for (const p of (j.ports || [])) {
         const o = document.createElement("option");
         o.value = p.device; o.dataset.kind = "serial";
         // keep the DISTINGUISHING part of the description (e.g. "Enhanced COM Port") —
@@ -1046,31 +1665,128 @@
       return j;
     } catch (_) { return null; }
   }
-  function updateConnFields() {
-    const sel = $("transport");
-    const opt = sel.options[sel.selectedIndex];
-    const isSerial = opt && opt.dataset.kind === "serial";
-    const isLan = sel.value === "lan";
-    $("baud").hidden = !isSerial;
-    $("lanFields").hidden = !isLan;
-    const devs = $("audioDevs");
-    if (devs) {
-      devs.hidden = !(isSerial || isLan);            // COM: Radio RX/TX + Mic In; LAN: Mic In only; sim: none
-      devs.querySelectorAll(".usb-only").forEach((el) => { el.hidden = !isSerial; });  // radio channels are USB-only
-    }
-    if (isSerial || isLan) loadAudioDevices();
-    const note = $("audioAvail");
-    if (note) note.textContent = isSerial ? "• USB device" : (isLan ? "• network" : "");
-  }
-  $("transport").addEventListener("change", () => {
-    stopAllAudio();              // audio belongs to a transport; don't let a stream outlive a switch
-    updateConnFields(); saveConn();
-  });
 
-  // ---- per-radio connection memory (transport + settings, and COM audio devices) ----
+  // The LOCAL #transport select only builds connect requests. What is connected comes from the
+  // server (status.transport_kind, G-6 / AR-50): audio rows, the "• USB device" label, host audio.
+  function localTransportKind() {
+    const sel = $("transport"), opt = sel.options[sel.selectedIndex];
+    if (!opt) return "sim";
+    return opt.dataset.kind === "serial" ? "serial" : opt.value;
+  }
+  function currentTransportKind() {
+    const st = TR.status || {};
+    if (st.connected && st.transport_kind && st.transport_kind !== "none") return st.transport_kind;
+    return localTransportKind();
+  }
+  function updateConnFields() {                     // the connect form's own fields
+    const k = localTransportKind();
+    $("baud").hidden = k !== "serial";
+    $("lanFields").hidden = k !== "lan";
+    applyTransportUi();
+  }
+  let shownKind = null;
+  function applyTransportUi() {
+    const kind = currentTransportKind();
+    const devs = $("audioDevs");
+    if (devs) devs.hidden = !(kind === "serial" || kind === "lan");   // Mic In: COM + LAN radios; sim: none
+    if ((kind === "serial" || kind === "lan") && kind !== shownKind) loadAudioDevices();
+    shownKind = kind;
+    applyAudioLabel();
+    applyHostAudioInfo();
+  }
+  function applyAudioLabel() {
+    const note = $("audioAvail");
+    if (!note) return;
+    const kind = currentTransportKind();
+    const t = state.audio ? "• available" : (kind === "serial" ? "• USB device" : (kind === "lan" ? "• network" : ""));
+    if (note.textContent !== t) note.textContent = t;
+  }
+  // Host sound cards (serial radios): which card the server uses, the admin's pin or the server's
+  // automatic CODEC choice (F22); chosen by the server, never by this browser.
+  function applyHostAudioInfo() {
+    const el = $("hostAudioInfo");
+    if (!el) return;
+    if (currentTransportKind() !== "serial") { el.hidden = true; return; }
+    const ha = (TR.status && TR.status.host_audio) || {};
+    const rx = ha.rx_pinned || ha.rx_default;
+    el.textContent = rx ? "Host audio: " + rx + (ha.rx_pinned ? "" : " (automatic)")
+      : (TR.can("audio_pin") ? "Host audio not set up — choose the devices in Admin → Radio & audio"
+                             : "Host audio not set up — ask an admin");
+    el.hidden = false;
+  }
+  $("transport").addEventListener("change", () => { updateConnFields(); saveConn(); });
+
+  // ---- server status (G-6): bootstrap, then hello, then re-read on connect / disconnect ----
+  let statusSeq = 0;
+  async function refreshStatus() {
+    const my = ++statusSeq;
+    try {
+      const j = await TR.api("/api/status", { noRedirect: true });
+      if (my === statusSeq && j && typeof j === "object") { TR.status = j; applyStatusUi(); }
+    } catch (_) {}
+  }
+  function applyStatusUi() {
+    applyTransportUi();
+    applyOperatorForm();
+  }
+  function applyRadioSelLock() {                    // F20: only an admin switches a connected radio
+    const sel = $("radioSel");
+    if (!sel) return;
+    const lock = !!state.connected && !TR.can("switch_radio");
+    if (sel.disabled !== lock) sel.disabled = lock;
+    sel.title = lock ? "Only an admin can switch radios while connected" : "Radio model";
+  }
+  // F20 operator connect form: the current radio only, over the transport an admin pinned (shown
+  // read-only, pre-filled from status.pinned_transport, never credentials). Admins: unrestricted.
+  let connecting = false, lanPort = 50001;
+  function applyOperatorForm() {
+    applyRadioSelLock();
+    if (!TR.can("connect")) return;
+    const btn = $("connectBtn"), fields = ["transport", "baud", "lanHost"];
+    if (TR.can("switch_radio")) {
+      for (const id of fields) if ($(id)) $(id).disabled = false;
+      lanPort = 50001;
+      if (!connecting) { btn.disabled = false; btn.title = "Connect"; }
+      return;
+    }
+    const st = TR.status || {}, sel = $("radioSel");
+    const pin = st.pinned_transport && typeof st.pinned_transport === "object" ? st.pinned_transport : null;
+    const current = !!st.last_radio && sel.value === st.last_radio;
+    for (const id of fields) if ($(id)) $(id).disabled = true;
+    if (pin && current) prefillFromPin(pin);
+    if (!connecting) btn.disabled = !(pin && current && !state.connected);
+    btn.title = !pin ? "Ask an admin to connect this radio once"
+      : (!current ? "Only an admin can switch the radio"
+      : (state.connected ? "Already connected" : "Connect over the transport an admin set up"));
+  }
+  function prefillFromPin(pin) {
+    const sel = $("transport");
+    if (pin.transport === "serial" && pin.port) {
+      let o = [...sel.options].find((x) => x.dataset.kind === "serial" && x.value === pin.port);
+      if (!o) {                                     // not enumerated here: show it anyway (read-only)
+        o = document.createElement("option");
+        o.value = pin.port; o.dataset.kind = "serial"; o.textContent = pin.port + " (pinned)";
+        sel.insertBefore(o, sel.querySelector("option[value='lan']"));
+      }
+      sel.value = pin.port;
+      if (pin.baud) $("baud").value = pin.baud;
+    } else if (pin.transport === "lan") {
+      const lo = sel.querySelector("option[value='lan']");
+      if (lo) { lo.hidden = false; sel.value = "lan"; }
+      if (pin.host) $("lanHost").value = pin.host;
+      lanPort = +pin.port || 50001;
+    } else {
+      sel.value = "sim";
+    }
+    const k = localTransportKind();
+    $("baud").hidden = k !== "serial";
+    $("lanFields").hidden = k !== "lan";
+  }
+
+  // ---- per-radio connection memory (transport + settings + this browser's mic) ----
   const CONNS_KEY = "telerig.conns";
   let CONNS = { last: null, radios: {} };
-  let wantRxDev = null, wantMicDev = null, wantMicInDev = null;   // device IDs to restore once the lists populate
+  let wantMicInDev = null;                          // the Mic In device to restore once the list populates
   (function loadConns() {
     try { const v = JSON.parse(localStorage.getItem(CONNS_KEY)); if (v && v.radios) CONNS = v; } catch (_) {}
     if (!CONNS.radios) CONNS.radios = {};
@@ -1088,7 +1804,7 @@
     const sel = $("transport"), opt = sel.options[sel.selectedIndex];
     if (!opt || opt.value === "sim") return { transport: "sim", radio };
     if (opt.value === "lan") return {
-      transport: "lan", radio, host: $("lanHost").value.trim(), port: 50001,
+      transport: "lan", radio, host: $("lanHost").value.trim(), port: lanPort,
       user: $("lanUser").value, password: $("lanPass").value,
     };
     return { transport: "serial", radio, port: opt.value, baud: +$("baud").value || 115200 };
@@ -1101,7 +1817,6 @@
       port: serial ? opt.value : "",
       baud: $("baud").value,
       host: $("lanHost").value, user: $("lanUser").value, pass: $("lanPass").value,
-      rxDev: $("rxDev") ? $("rxDev").value : "", micDev: $("micDev") ? $("micDev").value : "",
       micInDev: $("micInDev") ? $("micInDev").value : "",
     };
   }
@@ -1109,7 +1824,7 @@
     const id = $("radioSel").value; if (!id) return;
     CONNS.radios[id] = currentConf(); CONNS.last = id; persistConns();
   }
-  // restore a radio's last-used connection type + settings (+ COM audio devices)
+  // restore a radio's last-used connection type + settings (+ this browser's Mic In)
   function applyConnForRadio(id) {
     const c = (CONNS.radios && CONNS.radios[id]) || {};
     if (c.host != null) $("lanHost").value = c.host;
@@ -1121,36 +1836,72 @@
     if (c.transport === "serial" && c.port && [...sel.options].some((o) => o.dataset.kind === "serial" && o.value === c.port)) v = c.port;
     else if (c.transport === "lan") { const lo = sel.querySelector('option[value="lan"]'); if (lo && !lo.hidden) v = "lan"; }
     sel.value = v;
-    if (v === "sim" && !c.transport) {            // no saved choice: a COM-only radio prefers its Enhanced (CAT) port
+    if (v === "sim" && !c.transport) {            // manual form only: a COM-only radio pre-selects its Enhanced (CAT) port
       const p = radios.find((r) => r.id === id);
       if (p && p.has_network === false) {
         const enh = [...sel.options].find((o) => o.dataset.kind === "serial" && o.dataset.enhanced);
         if (enh) sel.value = enh.value;
       }
     }
-    wantRxDev = c.rxDev || null; wantMicDev = c.micDev || null; wantMicInDev = c.micInDev || null;
-    updateConnFields();                             // shows the right fields + (serial) loads audio devices
+    wantMicInDev = c.micInDev || null;
+    updateConnFields();
+    applyOperatorForm();                            // operators: the pinned transport wins (F20)
   }
   async function doConnect(body, silent) {
-    const btn = $("connectBtn"); btn.textContent = "Connecting…"; btn.disabled = true;
+    const btn = $("connectBtn");
+    btn.textContent = "Connecting…"; btn.disabled = true; connecting = true;
     try {
-      const r = await fetch("/api/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      const j = await r.json();
-      if (j.ok) {
-        $("conn").classList.remove("open"); blanked = false;              // fresh connection -> live data again
-        if (!silent) autoStartRx();                                       // COM: auto-start RX audio (rides the Connect click)
-      } else if (!silent) alert("Connect failed: " + (j.error || "unknown"));
-    } catch (e) { if (!silent) alert("Connect error: " + e); }
-    finally { btn.textContent = "Connect"; btn.disabled = false; }
+      await TR.api("/api/connect", { method: "POST", json: body, quiet: !!silent });
+      $("conn").classList.remove("open"); blanked = false;              // fresh connection -> live data again
+      if (!silent) autoStartRx();                                       // COM: auto-start RX audio (rides the Connect click)
+    } catch (e) {
+      if (!silent && e.code !== "busy") TR.toast("Connect failed: " + e.message, "error");
+    } finally {
+      connecting = false;
+      btn.textContent = "Connect"; btn.disabled = false;
+      applyOperatorForm();
+      refreshStatus();
+    }
+  }
+  // Disconnect: an operator confirms inline when others are online (409 confirm_required, F20);
+  // an admin may stop someone's transmission explicitly.
+  async function doDisconnect() {
+    let body = {};
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        await TR.api("/api/disconnect", { method: "POST", json: body, quiet: true });
+        break;
+      } catch (e) {
+        if (e.status === 409 && e.code === "confirm_required" && !body.confirm) {
+          const n = +e.body.online || 0;
+          const ok = await TR.confirm((n === 1 ? "1 other is" : n + " others are") +
+                                      " connected — disconnect the radio for everyone?", { ok: "Disconnect", danger: true });
+          if (!ok) return;
+          body = { confirm: true };
+          continue;
+        }
+        if (e.status === 409 && e.code === "busy") {
+          if (TR.can("switch_radio")) { if (await adminDisconnect("disconnect")) break; return; }
+          TR.toast((e.body.owner || "Someone") + " is on the air — try again when they finish.", "warn");
+          return;
+        }
+        TR.toast("Disconnect failed: " + e.message, "error");
+        return;
+      }
+    }
+    stopAllAudio();
+    $("conn").classList.add("open");
+    refreshStatus();
   }
   $("connToggle").onclick = () => $("conn").classList.toggle("open");
   $("connectBtn").onclick = () => {
+    if (!TR.can("connect")) return;
     const body = buildConnectBody();
-    if (body.transport === "lan" && !body.host) { alert("Enter the radio's IP address."); return; }
+    if (body.transport === "lan" && !body.host) { TR.toast("Enter the radio's IP address.", "warn"); return; }
     saveConn();
     doConnect(body);                       // collapses the settings on success (mobile)
   };
-  $("disconnectBtn").onclick = () => { stopAllAudio(); $("conn").classList.add("open"); fetch("/api/disconnect", { method: "POST" }); };
+  $("disconnectBtn").onclick = () => { if (TR.can("connect")) doDisconnect(); };
   // Enter in any connection field starts the connect; edits persist per-radio
   ["lanHost", "lanUser", "lanPass", "baud"].forEach((id) => {
     const el = $(id);
@@ -1158,6 +1909,38 @@
     el.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); $("connectBtn").click(); } });
     el.addEventListener("change", saveConn);
   });
+  // G-8: a page-load connect only with this browser's SAVED connection for the radio (never a
+  // guessed port, no implicit simulator fallback); an operator's must equal the admin's pin.
+  function savedConnBody(id) {
+    const c = (CONNS.radios && CONNS.radios[id]) || null;
+    if (!c || !c.transport) return null;
+    if (c.transport === "sim") return { transport: "sim", radio: id };
+    if (c.transport === "lan") {
+      return c.host ? { transport: "lan", radio: id, host: String(c.host).trim(), port: 50001,
+                        user: c.user || "", password: c.pass || "" } : null;
+    }
+    if (c.transport === "serial") {
+      const ok = c.port && [...$("transport").options].some((o) => o.dataset.kind === "serial" && o.value === c.port);
+      return ok ? { transport: "serial", radio: id, port: c.port, baud: +c.baud || 115200 } : null;
+    }
+    return null;
+  }
+  function samePin(body, pin) {
+    if (!pin || typeof pin !== "object" || body.transport !== pin.transport) return false;
+    if (body.transport === "serial") return body.port === pin.port && +body.baud === +pin.baud;
+    if (body.transport === "lan") return body.host === pin.host && +body.port === +(pin.port || 50001);
+    return true;
+  }
+  function maybeAutoConnect() {
+    const st = TR.status || {};
+    if (!TR.can("connect") || !TR.boot.autoconnect || new URLSearchParams(location.search).has("noconnect") ||
+        state.connected || st.connected) return;
+    const id = $("radioSel").value;
+    const body = savedConnBody(id);
+    if (!body) return;
+    if (!TR.can("switch_radio") && (st.last_radio !== id || !samePin(body, st.pinned_transport))) return;
+    doConnect(Object.assign(body, { auto: true }), true);   // a 409 (disabled / spent / connected) is silent
+  }
 
   // ---- RX audio (Web Audio playback of 16-bit LE mono PCM) ----
   let audioCtx = null, audioGain = null, rxBus = null, playTime = 0, audioOn = false;
@@ -1211,16 +1994,11 @@
     src.start(playTime); playTime += ab.duration;
   }
 
-  // ---- USB audio (serial/COM radios) ----------------------------------------
-  // Over a COM/CAT connection the control link carries no audio — the radio's
-  // audio is a separate USB sound device. So pick the radio's USB-CODEC input to
-  // hear RX, and an output device to feed your mic to for TX. Needs a secure
-  // context (HTTPS or localhost), like any getUserMedia.
-  function currentTransportKind() {
-    const sel = $("transport"), opt = sel.options[sel.selectedIndex];
-    if (!opt) return "sim";
-    return opt.dataset.kind === "serial" ? "serial" : opt.value;
-  }
+  // ---- radio audio devices ------------------------------------------------------
+  // Over a COM/CAT connection the control link carries no audio — the radio's audio is a USB sound
+  // card on the HOST. The server picks it (an admin's pin, or the F22 automatic CODEC) and streams
+  // it to every RX subscriber; this browser only chooses its own microphone (Mic In) for TX audio.
+  // Needs a secure context (HTTPS or localhost) for the microphone, like any getUserMedia.
   function fillDevs(sel, list, kind, withDefault) {
     if (!sel) return;
     const prev = sel.value; sel.innerHTML = "";
@@ -1240,43 +2018,13 @@
     });
     if (prev) sel.value = prev;
   }
-  // Radio RX / Radio TX are sound cards on the HOST (the PC with the radio), so on a serial/USB
-  // radio they're enumerated SERVER-side — a remote browser can't see the host's devices. Mic In
-  // stays the client's microphone. fillHostDevs defaults to the radio's USB CODEC when unset.
-  let hostAudioAvail = true;
-  function fillHostDevs(sel, list, kind) {
-    if (!sel) return;
-    const prev = sel.value; sel.innerHTML = "";
-    if (!list.length) {
-      const o = document.createElement("option"); o.value = "";
-      o.textContent = hostAudioAvail ? "(no " + kind + ")" : "install sounddevice on host";
-      sel.appendChild(o); return;
-    }
-    list.forEach((d) => { const o = document.createElement("option"); o.value = String(d.id); o.textContent = d.name; sel.appendChild(o); });
-    if (prev) sel.value = prev;
-    else { const codec = [...sel.options].find((o) => /codec/i.test(o.textContent)); if (codec) sel.value = codec.value; }
-  }
-  async function loadHostDevices() {
-    try {
-      const j = await (await fetch("/api/audio_devices")).json();
-      hostAudioAvail = !!j.available;
-      fillHostDevs($("rxDev"), j.inputs || [], "host input");
-      fillHostDevs($("micDev"), j.outputs || [], "host output");
-    } catch (_) { hostAudioAvail = false; fillHostDevs($("rxDev"), [], "host input"); fillHostDevs($("micDev"), [], "host output"); }
-  }
-  async function loadAudioDevices() {
-    if (currentTransportKind() === "serial") await loadHostDevices();    // Radio RX/TX = host sound cards
+  async function loadAudioDevices() {              // this browser's microphones only (G-5)
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       let devs = [];
       try { devs = await navigator.mediaDevices.enumerateDevices(); } catch (_) { devs = []; }
       fillDevs($("micInDev"), devs.filter((d) => d.kind === "audioinput"), "Mic", true);   // Mic In = this client's mic
     }
-    applyWantedDevs();                              // restore the remembered Radio RX / Radio TX / Mic In for this radio
-  }
-  function applyWantedDevs() {
-    const r = $("rxDev"), m = $("micDev"), mi = $("micInDev");
-    if (r && wantRxDev && [...r.options].some((o) => o.value === wantRxDev)) r.value = wantRxDev;
-    if (m && wantMicDev && [...m.options].some((o) => o.value === wantMicDev)) m.value = wantMicDev;
+    const mi = $("micInDev");                      // restore the remembered Mic In for this radio
     if (mi && wantMicInDev && [...mi.options].some((o) => o.value === wantMicInDev)) mi.value = wantMicInDev;
   }
   if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
@@ -1322,6 +2070,7 @@
     const ns = $("noScope"); if (ns) ns.hidden = true;
     const badge = $("afBadge"); if (badge) badge.hidden = false;
     afTimer = setInterval(() => {
+      if (!scope.wrap.clientWidth || !scope.wrap.clientHeight) return;   // scope parked / collapsed: no work
       afAnalyser.getFloatFrequencyData(buf);     // raw dB (full dynamic range), not the lossy 0-255 byte path
       const mode = state.mode_name || "USB";
       const lsb = ["LSB", "CW-LSB", "RTTY-LSB", "DATA-LSB", "CW-R", "RTTY", "DATA-L"].includes(mode);
@@ -1355,27 +2104,18 @@
     const badge = $("afBadge"); if (badge) badge.hidden = true;
     if (afEligible()) { const ns = $("noScope"); if (ns) ns.hidden = false; }
   }
-  // stop every audio path + reset the buttons (on radio change / disconnect)
+  // stop every audio path + reset the buttons (on radio change / disconnect). The server keeps RX
+  // and mic subscriptions per connection (G-5): tell it, then stop locally.
   function stopAllAudio() {
+    const rxWas = $("audioBtn").classList.contains("active");
     audioOn = false;
-    if (currentTransportKind() === "serial") { send({ action: "host_rx", on: false }); send({ action: "host_tx", on: false }); }
+    if (rxWas) send({ action: "rx_audio", on: false });
+    if (micOn || $("micBtn").classList.contains("on")) send({ action: "mic", on: false });
     stopMic(); stopAfScope();
     $("audioBtn").classList.remove("active");
     $("micBtn").classList.remove("on");
   }
 
-  // re-route live if a picker changes while running. Sync the want* cache first so the restart's
-  // applyWantedDevs() keeps the NEW pick. Radio RX/TX re-point the HOST capture/playback over WS.
-  if ($("rxDev")) $("rxDev").addEventListener("change", () => {
-    wantRxDev = $("rxDev").value || null; saveConn();
-    if (currentTransportKind() === "serial" && $("audioBtn").classList.contains("active") && $("rxDev").value)
-      send({ action: "host_rx", on: true, device: +$("rxDev").value });
-  });
-  if ($("micDev")) $("micDev").addEventListener("change", () => {
-    wantMicDev = $("micDev").value || null; saveConn();
-    if (currentTransportKind() === "serial" && $("micBtn").classList.contains("on") && $("micDev").value)
-      send({ action: "host_tx", on: true, device: +$("micDev").value });
-  });
   if ($("micInDev")) $("micInDev").addEventListener("change", () => {
     wantMicInDev = $("micInDev").value || null; saveConn();
     if (micOn) { stopMic(); startMic(); }                         // re-open the client mic on the new input
@@ -1386,18 +2126,18 @@
   // ONLY when PTT is engaged AND its MOD Input is set to LAN.
   let micStream = null, micSrc = null, micProc = null, micSink = null, micOn = false;
   async function startMic() {
+    // Toasts, never alert(): a modal dialog freezes the tab, and with it the TX heartbeat.
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      alert("Microphone (TX) needs a secure HTTPS connection. You're on " + location.protocol +
-        " — browsers only allow the mic over HTTPS (or localhost), not plain HTTP. " +
-        "Serve the app over HTTPS (e.g. behind a reverse proxy / TLS tunnel) and open the https:// address. " +
-        "RX audio still works over HTTP.");
+      TR.toast("Microphone (TX) needs a secure HTTPS connection. You're on " + location.protocol +
+        " — browsers only allow the mic over HTTPS (or localhost). Open the https:// (Tailscale) address. " +
+        "RX audio still works over HTTP.", "error", { ms: 9000 });
       return false;
     }
     try {
       const micId = $("micInDev") ? $("micInDev").value : "";
       micStream = await navigator.mediaDevices.getUserMedia(
         { audio: { deviceId: micId ? { exact: micId } : undefined, channelCount: 1, echoCancellation: true, noiseSuppression: true } });
-    } catch (e) { alert(micErr(e)); return false; }
+    } catch (e) { TR.toast(micErr(e), "error", { ms: 7000 }); return false; }
     loadAudioDevices();                  // mic labels are available now permission is granted
     if (!audioCtx) startAudio();
     micSrc = audioCtx.createMediaStreamSource(micStream);
@@ -1430,57 +2170,47 @@
     const ml = $("micLevel"); if (ml) ml.style.width = "0%";
   }
 
-  // Turn RX audio ON (shared by the 🔊 button and the auto-start on COM connect).
-  // Returns false if a serial radio has no host RX sound card selected yet.
+  // Turn RX audio ON (the RX button, and the auto-start after a COM connect). Every transport
+  // subscribes on the server (G-5): LAN audio flows to subscribers only, and a serial radio's host
+  // capture starts with the first subscriber (the admin's pin or the automatic CODEC, F22). If the
+  // server cannot capture, it answers with an error frame and RX is switched off again here.
   function startRxAudio() {
     if ($("audioBtn").classList.contains("active")) return true;
-    if (currentTransportKind() === "serial") {
-      const dev = $("rxDev") ? $("rxDev").value : "";
-      if (!dev) return false;                           // host RX card not available yet
-      send({ action: "host_rx", on: true, device: +dev });
-    }
+    send({ action: "rx_audio", on: true });
     startAudio();                                       // play the WS PCM (host capture, or LAN radio)
     if (afEligible()) startAfScope(rxBus);              // FT-991A etc.: AF spectrum tapped off the RX bus
     $("audioBtn").classList.add("active");
     return true;
   }
-  // Auto-start RX audio after a (user-initiated) COM/serial connect. Retries briefly so it waits
-  // for the host RX sound card to enumerate. Only after a real Connect click, so the AudioContext
-  // resume rides that user gesture.
+  // Auto-start RX audio after a (user-initiated) COM/serial connect. Only after a real Connect click,
+  // so the AudioContext resume rides that user gesture. Waits briefly for the connected state.
   function autoStartRx(tries = 10) {
-    if (currentTransportKind() !== "serial") return;
     if ($("audioBtn").classList.contains("active")) return;
-    if (state.connected && startRxAudio()) return;      // wait for connect + the host RX card
+    if (state.connected && currentTransportKind() === "serial") { startRxAudio(); return; }
     if (tries > 0) setTimeout(() => autoStartRx(tries - 1), 250);
   }
   $("audioBtn").onclick = () => {
-    const serial = currentTransportKind() === "serial";
     if ($("audioBtn").classList.contains("active")) {   // RX off
-      if (serial) send({ action: "host_rx", on: false });
+      send({ action: "rx_audio", on: false });
       audioOn = false; stopAfScope();
       $("audioBtn").classList.remove("active");
     } else {                                            // RX on
-      if (serial && !($("rxDev") && $("rxDev").value)) {
-        alert("Pick the radio's RX sound card on the host computer (Radio RX)."); return;
-      }
       startRxAudio();
     }
   };
+  // Mic: non-exclusive (F12). "mic on" tells the server this connection streams microphone audio;
+  // the server forwards it only while this connection owns TX with ptt/vox (I10).
   $("micBtn").onclick = async () => {
-    const serial = currentTransportKind() === "serial";
     if ($("micBtn").classList.contains("on")) {         // mic off
-      if (serial) send({ action: "host_tx", on: false });
+      send({ action: "mic", on: false });
       stopMic();
       $("micBtn").classList.remove("on");
     } else {                                            // mic on
-      if (serial) {
-        const dev = $("micDev") ? $("micDev").value : "";
-        if (!dev) { alert("Pick the radio's TX sound card on the host computer (Radio TX)."); return; }
-        send({ action: "host_tx", on: true, device: +dev });
-      }
-      const ok = await startMic();                      // capture the CLIENT mic -> WS -> server -> host TX card
+      if (!TR.can("tx")) return;
+      send({ action: "mic", on: true });
+      const ok = await startMic();                      // capture the CLIENT mic -> WS -> server -> radio
       if (ok) $("micBtn").classList.add("on");
-      else if (serial) send({ action: "host_tx", on: false });
+      else send({ action: "mic", on: false });
     }
   };
   $("vol").oninput = (e) => { if (audioGain) audioGain.gain.value = (+e.target.value) / 100; };
@@ -1493,7 +2223,7 @@
     async function render() {
       body.innerHTML = '<p class="rm-hint">Checking…</p>';
       let s;
-      try { s = await (await fetch("/api/remote_status")).json(); }
+      try { s = await TR.api("/api/remote_status", { noRedirect: true }); }
       catch (_) { body.innerHTML = '<p class="rm-bad">Could not read remote status.</p>'; return; }
       const ts = s.tailscale || {}, local = s.local, port = s.port || 8700;
       let h = '<section class="rm-why"><b>Why HTTPS?</b> Browsers only allow microphone access over a '
@@ -1548,13 +2278,11 @@
       on("rmPwSet", () => postJson("/api/set_password",
         { password: ($("rmPw") || {}).value || "", allowed_hosts: ts.magicdns ? [ts.magicdns] : [] }));
     }
-    async function postJson(url, obj) {
+    async function postJson(url, obj) {             // (B4 replaces this dialog with the admin modal)
       const msg = $("rmMsg");
       try {
-        const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
-        const j = await r.json().catch(() => ({}));
-        if (j && j.ok === false && j.error) { if (msg) msg.textContent = j.error; return; }
-      } catch (_) { if (msg) msg.textContent = "Request failed."; return; }
+        await TR.api(url, { method: "POST", json: obj, noRedirect: true });
+      } catch (e) { if (msg) msg.textContent = e.message || "Request failed."; return; }
       render();
     }
     if ($("remoteBtn")) $("remoteBtn").onclick = () => { modal.hidden = false; render(); };
@@ -1567,7 +2295,7 @@
     const link = $("verUpdate");
     if (!link) return;
     function check(retry) {
-      fetch("/api/version").then((r) => r.json()).then((v) => {
+      TR.api("/api/version", { noRedirect: true }).then((v) => {
         if (v.current) { const n = $("verNow"); if (n) n.textContent = "v" + v.current; }   // source of truth = backend __version__
         if (v.update_available && v.url) {
           link.href = v.url;
@@ -1582,26 +2310,54 @@
     check(true);
   })();
 
+  // ---- RadioTx / RadioControl: for cwtool.js and layout.js (B3) ----
+  window.RadioTx = {
+    ownedPtt: () => ownedPtt(),
+    ownedOrPending: () => ownedOrPending(),
+    holds: (k) => holds(k),
+    owner: () => txOwner(),
+    nextSeq: () => nextSeq(),
+    stop: () => txStop(),
+  };
+  // Sim-only test hook (like TR._inject): mark a PTT claim as pending WITHOUT sending anything, so the
+  // AR-8 stale-frame check can be exercised with injected frames and no transmit command at all.
+  if (TR.boot.sim_only === true) {
+    window.RadioTx._simPending = (seq) => {
+      seq = +seq || nextSeq();
+      if (seq > txSeq) txSeq = seq;
+      const now = performance.now();
+      pendingClaims.set(seq, { kind: "ptt", at: now });
+      pttPending = { seq, at: now };
+      renderTx();
+      return seq;
+    };
+  }
+
   // ---- boot ----
-  requestAnimationFrame(() => scope.resize());          // re-measure once the console layout settles
-  window.addEventListener("load", () => scope.resize());
+  requestAnimationFrame(() => { applySplit(); scope.resize(); });   // re-measure once the console layout settles
+  window.addEventListener("load", () => { applySplit(); scope.resize(); });
   setupFmControls();                                     // populate + wire the FM Tone/DCS selects once
   setupExtControls();                                    // wire the WIDTH/CONTOUR/APF/CW sliders once
+  renderTx();
+  applyRadioSelLock();
   connectWS();
   loadRadios().then(() => {
-    if (CONNS.last && radios.some(p => p.id === CONNS.last)) $("radioSel").value = CONNS.last;   // last-used radio
+    // the server's connected radio, else this browser's last, else the first profile (AR-44, G-4)
+    const st = TR.status || {};
+    const init = (st.connected && st.radio) || TR.initialRadio;
+    if (init && radios.some(p => p.id === init)) $("radioSel").value = init;
     renderRadio(selectedRadio());
-    return loadPorts();                            // serial COM options now exist
-  }).then((status) => {
-    if (status && status.connected) {              // already connected — reflect its radio
-      if (status.radio && radios.some(p => p.id === status.radio)) { $("radioSel").value = status.radio; renderRadio(selectedRadio()); }
-      applyConnForRadio($("radioSel").value);
-      $("conn").classList.remove("open");          // collapse settings (mobile)
-      return;
+    return loadPorts();                            // serial COM options now exist (operators/admins)
+  }).then(() => {
+    if (state.connected && state.radio && currentRadio && state.radio !== currentRadio.id &&
+        radios.some(p => p.id === state.radio)) {  // the radio changed while we loaded
+      $("radioSel").value = state.radio; renderRadio(selectedRadio());
     }
     applyConnForRadio($("radioSel").value);        // restore this radio's last connection type + settings
-    const body = buildConnectBody();               // and connect to it (silent on failure)
-    if (body.transport === "lan" && !body.host) doConnect({ transport: "sim", radio: $("radioSel").value, auto: true }, true);
-    else doConnect({ ...body, auto: true }, true);   // auto: the server may refuse (--no-autoconnect / after a disconnect)
+    if ((TR.status || {}).connected || state.connected) {
+      $("conn").classList.remove("open");          // already connected: collapse settings (mobile)
+      return;
+    }
+    maybeAutoConnect();                            // G-8: only a saved, matching connection; never a guess
   });
 })();

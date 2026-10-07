@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TeleRig</title>
 <link rel="stylesheet" href="/static/style.css" />
+<!--TR_BOOT-->
 </head>
 <body>
 
@@ -12,11 +13,15 @@
   <div class="brand"><span class="mk">TELE</span>Rig<span class="model" id="modelLabel"></span><span class="ver" id="verNow">v0.2.23</span><a class="ver-update" id="verUpdate" hidden target="_blank" rel="noopener"></a>
     <button id="themeBtn" class="theme-btn" title="Day / night theme">🌙</button>
   </div>
+  <div class="onair" id="onAir" hidden role="status" aria-live="assertive">
+    <span class="onair-dot" aria-hidden="true"></span><b>ON AIR</b><span id="onAirWho"></span><span id="onAirTime" class="num"></span>
+    <button id="onAirStop" class="onair-stop" type="button" data-tx><span id="onAirStopLbl">STOP</span></button>
+  </div>
   <div class="conn open" id="conn">
     <span id="led" class="led"></span>
     <span id="connlabel" class="connlabel">Disconnected</span>
-    <button id="connToggle" class="conn-toggle" title="Connection settings">⚙</button>
-    <div class="conn-controls" id="connControls">
+    <button id="connToggle" class="conn-toggle" data-perm="connect" title="Connection settings">⚙</button>
+    <div class="conn-controls" id="connControls" data-perm="connect">
       <span class="radio-pick">
         <select id="radioSel" title="Radio model"></select>
         <button id="radioHelpBtn" class="help-btn" type="button" title="Radio settings needed to connect" aria-label="Connection help">?</button>
@@ -38,6 +43,7 @@
     </div>
   </div>
 </header>
+<div id="linkBanner" class="link-banner" role="alert" hidden></div>
 
 <div class="modal-overlay" id="remoteModal" hidden>
   <div class="modal-card">
@@ -53,7 +59,7 @@
   <!-- ===================== RIGHT: VFO readout + meter + waterfall ===================== -->
   <section class="scopepane">
     <div class="toprow">
-    <div class="bands tft" id="bands">
+    <div class="bands tft" id="bands" data-gate="operate">
       <div class="bandrow active" data-act="select_band" data-band="main" id="rowMain" title="Operate the MAIN band">
         <div class="b-modebox">
           <b class="band-mode" id="mainMode">USB</b>
@@ -85,11 +91,11 @@
       </div>
     </div>
 
-      <button class="key ptt ptt-big" id="pttBtn" data-act="ptt">PTT</button>
+      <button class="key ptt ptt-big" id="pttBtn" data-act="ptt" data-tx aria-pressed="false">PTT</button>
 
       <!-- ATAS manual antenna tuning — shown only when TUNER SELECT = ATAS. Steps the
            motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter. -->
-      <div class="atas-tune" id="atasTune" hidden>
+      <div class="atas-tune" id="atasTune" hidden data-tx>
         <span class="atas-lbl" title="Active-Tuning Antenna System (ATAS-120A) manual tuning">ATAS</span>
         <button class="key atas-btn" data-act="atas_step" data-dir="1" title="Extend the ATAS element — hold PTT and step to minimum SWR">&#9650;</button>
         <button class="key atas-btn" data-act="atas_step" data-dir="-1" title="Retract the ATAS element — hold PTT and step to minimum SWR">&#9660;</button>
@@ -100,14 +106,13 @@
         <div class="grp-title">AUDIO <span class="lan-only" id="audioAvail"></span></div>
         <div class="row">
           <button class="key" id="audioBtn">🔊 RX</button>
-          <button class="key ptt" id="micBtn">🎤 Mic</button>
+          <button class="key ptt" id="micBtn" data-tx>🎤 Mic</button>
         </div>
         <div class="usb-audio" id="audioDevs" hidden>
-          <label class="sl sl-dev usb-only"><span>Radio RX</span><select id="rxDev" aria-label="Radio RX — the radio's receive sound card on the host computer; captured there and streamed to you" title="The radio's RX sound card ON THE HOST (its USB-CODEC input) — captured on the host and streamed to your browser"></select></label>
-          <label class="sl sl-dev usb-only"><span>Radio TX</span><select id="micDev" aria-label="Radio TX — the radio's transmit sound card on the host computer; your mic is played to it" title="The radio's TX sound card ON THE HOST (its USB-CODEC output) — your mic is sent to the host and played here to reach the modulator"></select></label>
-          <label class="sl sl-dev"><span>Mic In</span><select id="micInDev" aria-label="Mic In — your microphone on this computer, captured for transmit" title="Your microphone on THIS computer — captured and sent to the radio for transmit"></select></label>
+          <label class="sl sl-dev" data-tx><span>Mic In</span><select id="micInDev" aria-label="Mic In — your microphone on this computer, captured for transmit" title="Your microphone on THIS computer — captured and sent to the radio for transmit"></select></label>
         </div>
-        <div class="mic-meter"><span>MIC</span><div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div></div>
+        <div class="host-audio-info" id="hostAudioInfo" hidden></div>
+        <div class="mic-meter" id="micMeter" data-tx><span>MIC</span><div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div></div>
         <label class="sl"><span>VOL</span><input type="range" min="0" max="100" id="vol" value="80"></label>
       </div>
     </div><!-- /toprow -->
@@ -119,7 +124,7 @@
       </div>
       <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
       <div class="meter-val" id="meterVal">S0</div>
-      <div class="meter-sel" id="meterSel">
+      <div class="meter-sel" id="meterSel" data-gate="operate">
         <button class="m-btn active" data-act="meter" data-meter="S">S</button>
         <button class="m-btn" data-act="meter" data-meter="PO">PO</button>
         <button class="m-btn" data-act="meter" data-meter="SWR">SWR</button>
@@ -146,7 +151,7 @@
     </div>
 
     <div class="scope-ctl">
-      <span id="scopeOnlyCtl">
+      <span id="scopeOnlyCtl" data-gate="operate">
         <button data-act="scope_mode" data-center="1" class="sc-btn active" id="btnCenter">CENT</button>
         <button data-act="scope_mode" data-center="0" class="sc-btn" id="btnFixed">FIX</button>
         <span class="sep"></span>
@@ -178,9 +183,9 @@
         <div class="cw-row">
           <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
           <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
-          <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden>TX</button>
+          <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
         </div>
-        <div class="cw-row cw-txrow" id="cwTxRow" hidden>
+        <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
           <span class="cw-txhint" id="cwTxHint"></span>
         </div>
         <div class="cw-row">
@@ -196,7 +201,7 @@
   </section>
 
   <!-- ===================== LEFT: tabbed controls ===================== -->
-  <section class="controls">
+  <section class="controls" data-gate="operate">
     <div class="tabs" id="ctlTabs">
       <div class="tab on" data-t="radio">Radio</div>
       <div class="tab" data-t="rx">RX</div>
@@ -305,7 +310,7 @@
       <div class="grp-title">TX</div>
       <div class="row wrap">
         <button class="key tog" data-act="rxfunc" data-fn="comp" id="compBtn">COMP</button>
-        <button class="key tog" data-act="rxfunc" data-fn="vox" id="voxBtn">VOX</button>
+        <button class="key tog" data-act="rxfunc" data-fn="vox" id="voxBtn" data-tx>VOX</button>
         <button class="key tog" data-act="rxfunc" data-fn="mon" id="monBtn">MON</button>
         <button class="key tog" data-act="toggle" data-fn="param_eq" id="paramEqBtn" title="Parametric microphone equalizer on/off">P-EQ</button>
       </div>
@@ -317,7 +322,7 @@
       </div>
       <label class="sl"><span>MIC</span><input type="range" min="0" max="255" id="mic" data-target="mic"><b class="sl-val" id="micVal">128</b></label>
       <label class="sl"><span>COMP</span><input type="range" min="0" max="255" id="comp_level" data-target="comp_level"><b class="sl-val" id="comp_levelVal">128</b></label>
-      <label class="sl"><span>VOX</span><input type="range" min="0" max="255" id="vox_gain" data-target="vox_gain"><b class="sl-val" id="vox_gainVal">128</b></label>
+      <label class="sl" data-tx><span>VOX</span><input type="range" min="0" max="255" id="vox_gain" data-target="vox_gain"><b class="sl-val" id="vox_gainVal">128</b></label>
       <label class="sl"><span>MON</span><input type="range" min="0" max="255" id="mon_level" data-target="mon_level"><b class="sl-val" id="mon_levelVal">128</b></label>
     </div>
 
@@ -325,7 +330,7 @@
       <div class="grp-title">ANTENNA TUNER</div>
       <div class="row">
         <button class="key tog" data-act="toggle" data-fn="tuner" id="tunerBtn" title="Antenna tuner in / out of line">TUNER</button>
-        <button class="key" data-act="tune_atu" id="tuneBtn" title="Start an antenna-tuner cycle — transmits a brief carrier to tune">TUNE</button>
+        <button class="key" data-act="tune_atu" id="tuneBtn" data-tx title="Start an antenna-tuner cycle — transmits a brief carrier to tune">TUNE</button>
       </div>
     </div>
 
@@ -443,7 +448,11 @@
 </main>
 
 <div id="bandTip" class="band-tip" hidden></div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<div id="srLive" class="sr-only" aria-live="assertive"></div>
+<button id="txStopFab" class="tx-fab" type="button" hidden data-tx>STOP · <span id="txStopFabTime"></span></button>
 
+<script src="/static/tr.js"></script>
 <script src="/static/waterfall.js"></script>
 <script src="/static/bandplan.js"></script>
 <script src="/static/app.js"></script>

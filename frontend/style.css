@@ -627,3 +627,66 @@ select,input,.baud{
 .rm-on{color:#5fe0a8;font-size:11px}
 .rm-off{color:#7fa8bd;font-size:11px}
 .rm-msg{color:#ff9a8a;font-size:12px;min-height:14px;margin-top:6px}
+
+/* ===== Phase 1 B1: role channel (§4.6) — negative, !important, fail-closed =====
+   :not([data-role=…]) also matches a missing attribute, so with no role nothing TX/connect shows.
+   .gate-exempt: controls a viewer may use inside a gated area (the Settings group headers, F23). */
+body:not([data-role="operator"]):not([data-role="admin"]) [data-tx]{display:none!important}
+body:not([data-role="operator"]):not([data-role="admin"]) [data-perm~="connect"]{display:none!important}
+body:not([data-role="admin"]) [data-perm~="admin"]{display:none!important}
+body:not([data-role="operator"]):not([data-role="admin"]) [data-gate~="operate"] :is(button,input,select,textarea,[data-act]):not(.gate-exempt){pointer-events:none!important;opacity:.45!important}
+
+/* ===== Phase 1 B1: session + multi-user UI (minimal; B2 restyles with the design tokens) ===== */
+.sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* ON-AIR chip (top bar): whoever owns TX; STOP is one tap for the owner, two taps for others */
+.onair{display:inline-flex;align-items:center;gap:6px;padding:3px 6px 3px 10px;border-radius:999px;
+  background:rgba(239,68,68,.12);border:1px solid var(--red);color:var(--red);font-size:12px;white-space:nowrap}
+.onair[hidden]{display:none}
+.onair b{letter-spacing:.08em}
+.onair .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.onair-dot{width:8px;height:8px;border-radius:50%;background:var(--red);animation:trpulse 1.6s ease-in-out infinite}
+@keyframes trpulse{50%{opacity:.35}}
+.onair-stop{margin-left:4px;border:1px solid var(--red);background:transparent;color:var(--red);border-radius:999px;
+  padding:2px 9px;font-size:11px;font-weight:700;cursor:pointer}
+.onair-stop:hover{background:var(--red);color:#fff}
+.onair-stop.armed{background:var(--red);color:#fff}
+/* PTT: owner-aware classes from the server's tx frame (AR-60) */
+#pttBtn.tx-mine{background:#dc2626;border-color:#dc2626;color:#fff;box-shadow:0 0 14px rgba(239,68,68,.6)}
+#pttBtn.tx-busy{background:transparent;border:1px solid var(--amber);color:var(--amber);box-shadow:none}
+#pttBtn.tx-external{background:transparent;border:1px solid var(--amber);color:var(--amber);box-shadow:none}
+.key:disabled,.key[disabled]{opacity:.45;cursor:not-allowed;filter:none}
+/* STOP floating button: the owner's STOP when PTT is scrolled off / parked / collapsed */
+.tx-fab{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:150;background:#dc2626;color:#fff;
+  border:0;border-radius:999px;padding:12px 22px;font-weight:800;letter-spacing:.06em;box-shadow:0 8px 24px rgba(0,0,0,.45);cursor:pointer}
+.tx-fab[hidden]{display:none}
+/* link banner: fixed overlay under the top bar (never in the flow) */
+.link-banner{position:fixed;left:50%;top:8px;transform:translateX(-50%);z-index:180;max-width:min(94vw,720px);
+  display:flex;align-items:center;gap:10px;padding:8px 14px;border-radius:12px;font-size:13px;
+  background:rgba(245,158,11,.14);border:1px solid rgba(245,158,11,.5);color:var(--amber);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.link-banner[hidden]{display:none}
+.link-banner.fatal{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.55);color:var(--red)}
+/* toasts: bottom-right on desktop, full-width top on phone */
+.toasts{position:fixed;right:16px;bottom:16px;z-index:190;display:flex;flex-direction:column;gap:8px;max-width:min(92vw,380px);pointer-events:none}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;font-size:13px;line-height:1.35;
+  background:var(--surface);border:1px solid var(--border);color:var(--txt);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.toast-warn{border-color:rgba(245,158,11,.55)}
+.toast-error{border-color:rgba(239,68,68,.6)}
+.toast-ok{border-color:rgba(16,185,129,.55)}
+.toast-act{margin-left:auto;border:1px solid var(--border);background:transparent;color:var(--txt);border-radius:8px;padding:3px 9px;cursor:pointer}
+@media (max-width:899px){.toasts{left:8px;right:8px;top:8px;bottom:auto;max-width:none}}
+/* inline confirm (never window.confirm: it freezes the tab and the TX heartbeat) */
+.tr-confirm{position:fixed;left:50%;top:56px;transform:translateX(-50%);z-index:200;max-width:min(94vw,640px);
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;font-size:13px;
+  background:var(--surface);border:1px solid var(--accent);color:var(--txt);box-shadow:0 12px 32px rgba(0,0,0,.5)}
+.tr-confirm.danger{border-color:var(--red)}
+.tr-confirm-msg{flex:1 1 240px}
+.ctl-btn.danger{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:600}
+/* host sound card in use (serial radios), chosen by the server */
+.host-audio-info{font-size:11px;color:var(--txt-dim);margin:2px 0 7px}
+.host-audio-info[hidden]{display:none}
+/* critical SET-menu items for non-admins */
+.mi-admin{display:inline-flex;align-items:center;gap:3px;margin-left:6px;font-size:9px;color:var(--txt-dim);letter-spacing:.04em;text-transform:uppercase}
+.mi-lock{width:10px;height:10px}
+.menu-item.locked .mi-ctl{opacity:.55}
+select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
+.ctl-btn:disabled,.ctl-btn[disabled]{opacity:.5;cursor:not-allowed}

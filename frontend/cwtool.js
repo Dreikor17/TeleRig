@@ -337,16 +337,38 @@
   // backend hands the text to the rig's own keyer, which generates clean CW at the
   // WPM and drops back to RX. Press again to stop. Bound by the 120 s failsafe + TOT.
   const txBtn = $("cwTx"), txRow = $("cwTxRow"), txHint = $("cwTxHint");
+  const TX = () => window.RadioTx || null;        // server-derived TX ownership (app.js, G-1)
+  const TRx = () => window.TR || null;
   function setTxHint(s) {
     if (!txRow || !txHint) return;
     txHint.textContent = s || "";
     txRow.hidden = !s;
   }
+  function txOwner() { const t = TX(); return t ? t.owner() : null; }
+  function mineTx() { const tr = TRx(); return !!(tr && tr.isTxOwner && tr.isTxOwner()); }
+  function ownerName(o) { return o ? (o.external ? "FRONT PANEL" : (o.user || "someone")) : ""; }
+  // Someone else's CW (F18): a non-owner's cw_stop would only get `busy`, so the button becomes a
+  // two-tap STOP: the first tap arms it for 3 s ("Tap again to stop <USER>"), the second sends tx_stop.
+  let stopArmed = 0, armedHint = "";
+  function disarm() {
+    if (stopArmed) { clearTimeout(stopArmed); stopArmed = 0; }
+    if (txHint && txHint.textContent === armedHint) setTxHint("");
+    armedHint = "";
+  }
   if (txBtn) {
     txBtn.addEventListener("click", () => {
       const rc = RC(); if (!rc) return;
       const st = rc.state() || {};
-      if (st.cw_tx) { rc.send({ action: "cw_stop" }); return; }   // already sending -> stop
+      const o = txOwner();
+      if (st.cw_tx) {                                // a CW message is on the air
+        if (mineTx() || !o) { disarm(); rc.send({ action: "cw_stop" }); return; }   // ours (or nobody's): stop
+        if (stopArmed) { disarm(); rc.send({ action: "tx_stop" }); return; }        // second tap: STOP
+        armedHint = "Tap again to stop " + ownerName(o);
+        setTxHint(armedHint);
+        stopArmed = setTimeout(disarm, 3000);
+        return;
+      }
+      if (o && !mineTx()) { setTxHint("busy — " + ownerName(o) + " is transmitting"); return; }
       if (!st.connected) { setTxHint("connect a radio to transmit"); return; }
       if (!st.cw_tx_ready) { setTxHint("CW key port not found — check the radio's 2nd USB (Standard) COM port"); return; }
       // any CW mode: Icom CW / CW-R, Yaesu CW-USB / CW-LSB
@@ -357,9 +379,24 @@
       const wpm = Math.max(5, Math.min(40, +$("cwWpmSet").value || 18));
       setTxHint("");
       addTx(text);                                  // show our sent message as a blue bubble
-      rc.send({ action: "cw_tx", text, wpm });
+      const t = TX();                               // the claim carries a seq; heartbeats start with it
+      rc.send({ action: "cw_tx", text, wpm, seq: t ? t.nextSeq() : undefined });
     });
   }
+  // busy / denied answers to our cw_tx (forwarded by app.js as DOM events)
+  document.addEventListener("tr:busy", (e) => {
+    const m = e.detail || {};
+    if (m.action === "cw_tx" || m.action === "cw_stop") {
+      setTxHint("busy — " + (m.owner === "FRONT PANEL" ? "the radio's front panel" : (m.owner || "someone")) + " is transmitting");
+    }
+  });
+  document.addEventListener("tr:denied", (e) => {
+    const m = e.detail || {};
+    if (m.action !== "cw_tx") return;
+    setTxHint({ role: "not permitted for your role", not_connected: "connect a radio to transmit",
+                unsupported: "CW TX is not available now (mode / key port)", invalid: "nothing to send after filtering",
+                connecting: "the radio is switching — try again" }[m.reason] || ("refused: " + m.reason));
+  });
   // keep the TX button in step with the live radio state (shown only when the
   // connected radio supports CW message TX; reflects the transmitting state)
   function syncTx() {
@@ -367,19 +404,25 @@
     const st = (RC() && RC().state()) || {};
     const supported = !!st.has_cw_tx;
     txBtn.hidden = !supported;
-    if (!supported) { setTxHint(""); return; }
+    if (!supported) { disarm(); setTxHint(""); return; }
     const tx = !!st.cw_tx;
     const ready = !!st.cw_tx_ready;
+    const o = txOwner(), other = o && !mineTx() ? o : null;
+    if (!tx && stopArmed) disarm();
     txBtn.textContent = tx ? "■" : "TX";
     txBtn.classList.toggle("on", tx);
-    txBtn.disabled = !tx && (!st.connected || !ready);
-    txBtn.title = tx ? "Stop transmitting"
+    // someone else holds TX (not CW): nothing to send and nothing to stop here (top-bar STOP does that)
+    txBtn.disabled = tx ? false : (!!other || !st.connected || !ready);
+    txBtn.title = tx ? (other ? "Tap twice to stop " + ownerName(other) : "Stop transmitting")
+      : other ? ownerName(other) + " is transmitting"
       : !st.connected ? "Connect a radio to transmit"
       : !ready ? "CW key port not found"
       : "Transmit this message as CW on the radio";
-    if (tx) setTxHint("on air — sending CW");
+    if (stopArmed) return;                          // keep "Tap again to stop …" visible while armed
+    if (tx) setTxHint(other ? ownerName(other) + " is sending CW" : "on air — sending CW");
     else if (st.connected && !ready) setTxHint("CW key port not found — check the radio's 2nd USB (Standard) COM port");
-    else if (txHint && (txHint.textContent === "on air — sending CW" || txHint.textContent.indexOf("CW key port") === 0)) setTxHint("");
+    else if (txHint && (/^on air — sending CW$| is sending CW$|^busy — /.test(txHint.textContent) ||
+                        txHint.textContent.indexOf("CW key port") === 0) && !other) setTxHint("");
   }
   setInterval(syncTx, 400);
   syncTx();

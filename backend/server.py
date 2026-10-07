@@ -227,13 +227,15 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 
 
 # -- HTTP routes -------------------------------------------------------------
+# One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15). Later steps
+# append layout.js, account.js and admin.js here when they add those files.
+ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "app.js", "cwtool.js")
+
+
 def _asset_version():
     """Token from frontend file mtimes so the browser refetches updated assets."""
     try:
-        return str(int(max(
-            (FRONTEND / f).stat().st_mtime
-            for f in ("index.html", "app.js", "waterfall.js", "bandplan.js", "cwtool.js", "style.css")
-        )))
+        return str(int(max((FRONTEND / f).stat().st_mtime for f in ("index.html",) + ASSETS)))
     except OSError:
         return "0"
 
@@ -334,8 +336,8 @@ async def index(request):
     p = request.state.principal
     html = (FRONTEND / "index.html").read_text(encoding="utf-8")
     v = _asset_version()
-    for asset in ("app.js", "waterfall.js", "bandplan.js", "cwtool.js", "style.css"):
-        html = html.replace(f"/static/{asset}", f"/static/{asset}?v={v}")
+    for asset in ASSETS:
+        html = html.replace(f'/static/{asset}"', f'/static/{asset}?v={v}"')
     tag = f'<script id="tr-boot" type="application/json">{_boot_json(p, request)}</script>'
     if "<!--TR_BOOT-->" in html:
         html = html.replace("<!--TR_BOOT-->", tag, 1)
