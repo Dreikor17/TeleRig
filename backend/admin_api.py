@@ -266,7 +266,7 @@ async def api_user_patch(request):
         return fail
     if old is None:
         return _ok(changed=False)
-    _kick_user(name)                                 # the reload hook does it too (gen changed)
+    _kick_user(name, "role_changed")                 # the reload hook does it too (gen changed)
     audit.log("role_changed", user=name, by=p.user, **{"from": old, "to": role})
     return _ok(changed=True)
 

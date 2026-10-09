@@ -374,23 +374,39 @@
   function ownerName(o) { return o ? (o.external ? "FRONT PANEL" : (o.user || "someone")) : ""; }
   // Someone else's CW (F18): a non-owner's cw_stop would only get `busy`, so the button becomes a
   // two-tap STOP: the first tap arms it for 3 s ("Tap again to stop <USER>"), the second sends tx_stop.
-  let stopArmed = 0, armedHint = "";
-  function disarm() {
-    if (stopArmed) { clearTimeout(stopArmed); stopArmed = 0; }
+  // The arm is bound to the owner of the first tap (TR.stopArm, the top-bar STOP's rule, I23): any
+  // owner change disarms it (every tx frame and every state poll), and the second tap sends tx_stop
+  // only while that same owner still sends CW. A tap that belongs to a STOP double-tap never starts a
+  // transmission: when the CW being stopped has ended, the rest of the arm window sends nothing.
+  let armedHint = "", stopGuardUntil = 0;
+  const TRo = TRx();
+  const stopArm = TRo && typeof TRo.stopArm === "function" ? TRo.stopArm((o) => {
+    if (o) { armedHint = "Tap again to stop " + ownerName(o); setTxHint(armedHint); return; }
     if (txHint && txHint.textContent === armedHint) setTxHint("");
     armedHint = "";
-  }
+  }) : null;                                       // no tr.js: another user's CW simply can't be stopped here
+  const armed = () => !!(stopArm && stopArm.armed());
+  function disarm() { if (stopArm) stopArm.disarm(); }
+  document.addEventListener("tr:tx", () => { if (stopArm) stopArm.check(txOwner()); });
   if (txBtn) {
     txBtn.addEventListener("click", () => {
       const rc = RC(); if (!rc) return;
       const st = rc.state() || {};
       const o = txOwner();
+      const now = Date.now();
       if (st.cw_tx) {                                // a CW message is on the air
-        if (mineTx() || !o) { disarm(); rc.send({ action: "cw_stop" }); return; }   // ours (or nobody's): stop
-        if (stopArmed) { disarm(); rc.send({ action: "tx_stop" }); return; }        // second tap: STOP
-        armedHint = "Tap again to stop " + ownerName(o);
-        setTxHint(armedHint);
-        stopArmed = setTimeout(disarm, 3000);
+        if (mineTx() || !o) { disarm(); stopGuardUntil = 0; rc.send({ action: "cw_stop" }); return; }   // ours (or nobody's)
+        if (!stopArm) return;
+        const r = stopArm.tap(o);                    // "arm" | "fire" (same owner still sending) | "none"
+        if (r === "arm") stopGuardUntil = now + 3000;
+        else if (r === "fire") rc.send({ action: "tx_stop" });
+        return;
+      }
+      if (armed() || now < stopGuardUntil) {         // the CW being stopped ended: this tap sends nothing
+        disarm(); stopGuardUntil = 0;
+        const msg = "nothing sent — that CW message already ended";
+        setTxHint(msg);
+        setTimeout(() => { if (txHint && txHint.textContent === msg) setTxHint(""); }, 3000);
         return;
       }
       if (o && !mineTx()) { setTxHint("busy — " + ownerName(o) + " is transmitting"); return; }
@@ -433,7 +449,8 @@
     const tx = !!st.cw_tx;
     const ready = !!st.cw_tx_ready;
     const o = txOwner(), other = o && !mineTx() ? o : null;
-    if (!tx && stopArmed) disarm();
+    if (stopArm) stopArm.check(o);                  // the armed owner gone (a missed tx event) -> disarm
+    if (!tx && armed()) disarm();
     txBtn.textContent = tx ? "■" : "TX";
     txBtn.classList.toggle("on", tx);
     // someone else holds TX (not CW): nothing to send and nothing to stop here (top-bar STOP does that)
@@ -443,7 +460,7 @@
       : !st.connected ? "Connect a radio to transmit"
       : !ready ? "CW key port not found"
       : "Transmit this message as CW on the radio";
-    if (stopArmed) return;                          // keep "Tap again to stop …" visible while armed
+    if (armed()) return;                            // keep "Tap again to stop …" visible while armed
     const h = txHint ? txHint.textContent : "";
     if (tx) setTxHint(other ? ownerName(other) + " is sending CW" : "on air — sending CW");
     else if (st.connected && !ready) setTxHint("CW key port not found — check the radio's 2nd USB (Standard) COM port");

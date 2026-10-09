@@ -274,6 +274,21 @@ user_kicks.clear()
 server._on_accounts_change(old, store_dict({"ADMIN": 10, "OP1": 6, "V1": 7}))
 C("an ordinary gen change of ADMIN (e.g. a password reset) clears ADMIN's keys (spec 2.4)",
   (user_kicks, server.limiter.check("ADMIN", SRC)), ([("ADMIN", 4401, "session_revoked")], 0.0))
+# B4: a role change closes as role_changed (the sign-in page says "Your role changed"); a password change
+# of another user in the same write, and a deleted user, still close as session_revoked
+user_kicks.clear()
+old_r = {"secret": "a" * 64, "meta": {"limiter_reset": 0, "revoked": {}},
+         "users": {"OP1": {"gen": 6, "role": "operator"}, "OP2": {"gen": 7, "role": "operator"},
+                   "V1": {"gen": 8, "role": "viewer"}}}
+new_r = {"secret": "a" * 64, "meta": {"limiter_reset": 0, "revoked": {}},
+         "users": {"OP1": {"gen": 9, "role": "viewer"}, "OP2": {"gen": 10, "role": "operator"}}}
+server._on_accounts_change(old_r, new_r)
+C("role change -> role_changed; password-type gen change and delete -> session_revoked", sorted(user_kicks),
+  [("OP1", 4401, "role_changed"), ("OP2", 4401, "session_revoked"), ("V1", 4401, "session_revoked")])
+C("change_reason: role differs -> role_changed", server.change_reason({"role": "admin"}, {"role": "operator"}), "role_changed")
+C("change_reason: same role / gone / missing -> session_revoked",
+  [server.change_reason({"role": "admin"}, {"role": "admin"}), server.change_reason({"role": "admin"}, None),
+   server.change_reason(None, {"role": "admin"})], ["session_revoked"] * 3)
 server.hub.kick_user, server.accounts.revocation_bump, server.auth.sudo_drop_user = real_hook
 server.limiter.clear_all()
 

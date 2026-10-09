@@ -29,7 +29,9 @@ GS_SHA256 = {                                     # spec §7 B3 verify 0 (gridst
     "LICENSE": "28d28a6e0b5c6ebca8759b162a644c31cea28aab591060c0d95c7737d8456764",
 }
 TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"]
-B3_ALLOW_MISSING = "rxDev,micDev"
+# the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
+# gone as well (AR-56)
+B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev"
 
 
 def _sha(p: Path) -> str:
@@ -156,7 +158,8 @@ def index_tiles_parking_and_script_order(ctx):
         check(gone not in html, f"{gone} removed")
     srcs = re.findall(r'<script src="([^"]+)"', html)
     eq(srcs, ["/static/vendor/gridstack/gridstack-all.js?v=14.0.0", "/static/tr.js", "/static/waterfall.js",
-              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js"], "script order")
+              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js",
+              "/static/account.js", "/static/admin.js"], "script order")
     check(not re.search(r"<script>\s*/\*\s*tabbed control panels", html), "the inline tab switcher moved to layout.js")
     css = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
     eq(css, ["/static/vendor/gridstack/gridstack.min.css?v=14.0.0", "/static/style.css"], "stylesheets")
@@ -246,11 +249,12 @@ def scripts_tile_mode_and_cwdiag(ctx):
     check('$("meterBlock")' in app and '$("micMeter")' in app, "app.js uses #meterBlock / #micMeter")
     check("Layout().setRadio(p)" in app, "renderRadio hands the profile to the layout (gates)")
     srv = (REPO / "backend" / "server.py").read_text(encoding="utf-8")
-    m = re.search(r"^ASSETS = \((.*?)\)$", srv, re.M)
+    m = re.search(r"^ASSETS = \((.*?)\)\s*$", srv, re.M | re.S)
     check(m, "server.py ASSETS")
     eq(re.findall(r'"([^"]+)"', m.group(1)), ["style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js",
-                                               "app.js", "cwtool.js"], "ASSETS (cache-busted, §3.15)")
-    for f in ("layout.js", "app.js", "cwtool.js", "tr.js", "waterfall.js"):
+                                               "app.js", "cwtool.js", "account.js", "admin.js"],
+       "ASSETS (cache-busted, §3.15)")
+    for f in ("layout.js", "app.js", "cwtool.js", "tr.js", "waterfall.js", "account.js", "admin.js"):
         r = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(r.returncode, 0, f"node --check {f}: {r.stderr}")
 

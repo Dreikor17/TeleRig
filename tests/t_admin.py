@@ -108,7 +108,8 @@ def t21_role_change_kicks_the_user(ctx):
         t0 = time.monotonic()
         r = admin.patch(f"/api/admin/users/{harness.uid('OP1')}", {"role": "viewer"})
         eq((r.status, r.json().get("changed")), (200, True), f"PATCH role {r!r}")
-        eq(ws.wait_closed(timeout=3), (4401, "session_revoked"), "T21 OP1's socket")
+        # B4: a role change closes as role_changed, so the tab lands on /login?reason=role_changed
+        eq(ws.wait_closed(timeout=3), (4401, "role_changed"), "T21 OP1's socket")
         dt = time.monotonic() - t0
         check(dt < 1.0, f"T21 closed {dt:.2f}s after the role change (want < 1 s)")
     r = op.raw("GET", "/api/me", headers={"Cookie": f"tr_session_{srv.port}={tok}"}, cookies=False)

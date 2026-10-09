@@ -227,9 +227,9 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 
 
 # -- HTTP routes -------------------------------------------------------------
-# One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15). B4 appends
-# account.js and admin.js here when it adds those files.
-ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js")
+# One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15).
+ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js",
+          "account.js", "admin.js")
 
 
 def _asset_version():
@@ -1115,6 +1115,15 @@ def _locked_response(request, e: StoreCorrupt):
 
 
 # -- account changes (the auth.json reload hook, §2.4) -----------------------------------------
+def change_reason(old_user, new_user) -> str:
+    """The 4401 close reason for a changed account: `role_changed` when the account still exists
+    and its role differs, else `session_revoked` (password change or reset, sign-out everywhere,
+    delete, --reset-admin)."""
+    if isinstance(old_user, dict) and isinstance(new_user, dict) and old_user.get("role") != new_user.get("role"):
+        return "role_changed"
+    return "session_revoked"
+
+
 def _on_accounts_change(old: dict, new: dict) -> None:
     """Runs after every auth.json content change: our own writes, a `--reset-admin` from the CLI
     or a hand edit (the watchdog reloads every 0.5 s, so a CLI change bites within ~1 s, I7).
@@ -1124,14 +1133,18 @@ def _on_accounts_change(old: dict, new: dict) -> None:
 
     One exception: a logout that did not fit the revocation list bumps the signing-out user's gen
     instead (accounts.revoke). That is the user's own sign-out, not an account change: the user's
-    sockets close as `signed_out` and the rate-limit keys are kept."""
+    sockets close as `signed_out` and the rate-limit keys are kept.
+
+    A user who still exists with a different role closes as `role_changed`, so their tab lands on
+    /login?reason=role_changed ("Your role changed — sign in again", §5.1, B4)."""
     ch = accounts.diff(old, new)
+    old_users = (old or {}).get("users") or {}
     new_users = (new or {}).get("users") or {}
     for user in ch.users:
         if accounts.revocation_bump(user, (new_users.get(user) or {}).get("gen")):
             hub.kick_user(user, 4401, "signed_out")
         else:
-            hub.kick_user(user, 4401, "session_revoked")
+            hub.kick_user(user, 4401, change_reason(old_users.get(user), new_users.get(user)))
             limiter.clear_user(user)
         auth.sudo_drop_user(user)
     for fp in ch.revoked:

@@ -7,6 +7,7 @@
  *   toast(msg, kind) / srLive(msg) / confirm(text, opts)  feedback; confirm is inline (never blocks)
  *   handleClose(code, reason, reconnect) / linkUp()       WebSocket close codes, onAuthLost, link banner
  *   myConn / tx / isTxOwner()                             this tab's connection id + the TX owner
+ *   ownerKey(o) / stopArm(onChange)                       the two-tap STOP of another user's TX (I23)
  *   _inject(frame)                                        sim-only: feed a synthetic server frame
  *   fallbackLayout()                                      the stacked-tile fallback (§3.20)
  *   applyTheme(day) / icon(name)                          day/night theme (html.day); an inline-sprite <svg>
@@ -51,6 +52,42 @@
 
   TR.can = (perm) => TR.perms.has(perm);
   TR.isTxOwner = () => !!(TR.tx && TR.tx.owner && TR.myConn != null && TR.tx.owner.conn === TR.myConn);
+
+  // -- two-tap STOP of SOMEONE ELSE's transmission (D-16, F18, I23) ---------------------------------
+  // The first tap arms it for ONE owner, keyed by conn + user (the front panel is conn -1, "ext"), for
+  // 3 s. The second tap answers "fire" only while that same owner still holds TX; any other owner (or
+  // none) disarms it and answers "none". check(owner) runs on every tx frame and disarms as soon as the
+  // owner changes, so a stale arm can never stop another user's transmission. The caller sends tx_stop
+  // on "fire" and nothing otherwise. Used by cwtool.js (CW STOP) and admin.js (Activity); app.js's
+  // top-bar STOP applies the same rule with its own copy (B2b).
+  TR.ownerKey = (o) => (o ? String(o.conn) + "|" + (o.external ? "ext" : (o.user || "")) : null);
+  TR.stopArm = function (onChange, ms) {
+    let armedFor = null, armedOwner = null, timer = 0;
+    const arm = {
+      armed: () => armedFor !== null,
+      owner: () => armedOwner,
+      disarm() {
+        if (timer) { clearTimeout(timer); timer = 0; }
+        if (armedFor === null) return;
+        armedFor = null; armedOwner = null;
+        if (onChange) onChange(null);
+      },
+      check(owner) { if (armedFor !== null && TR.ownerKey(owner) !== armedFor) arm.disarm(); },
+      tap(owner) {                                  // -> "arm" | "fire" | "none"
+        if (!owner) { arm.disarm(); return "none"; }
+        if (armedFor !== null) {
+          const same = TR.ownerKey(owner) === armedFor;
+          arm.disarm();
+          return same ? "fire" : "none";
+        }
+        armedFor = TR.ownerKey(owner); armedOwner = owner;
+        timer = setTimeout(arm.disarm, ms || 3000);
+        if (onChange) onChange(owner);
+        return "arm";
+      },
+    };
+    return arm;
+  };
 
   // Role/perms from the server (bootstrap, then hello). The CSS role channel (§4.6) reads
   // body[data-role]; only the three known roles are ever written there (fail closed).
@@ -236,7 +273,7 @@
       const users = Array.isArray(j.users) ? j.users : [];
       if (!users.length) return;
       const u = users[0];
-      const at = new Date(Number(u.until) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const at = new Date(Number(u.until) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
       el.textContent = u.key + " is locked out until " + at + " after repeated failed sign-ins" +
         (users.length > 1 ? " (and " + (users.length - 1) + " more)." : ".");
     } catch (_) {}

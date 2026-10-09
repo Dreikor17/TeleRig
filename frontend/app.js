@@ -1782,18 +1782,41 @@
     if (note.textContent !== t) note.textContent = t;
   }
   // Host sound cards (serial radios): which card the server uses, the admin's pin or the server's
-  // automatic CODEC choice (F22); chosen by the server, never by this browser.
+  // automatic CODEC choice (F22); chosen by the server, never by this browser. For an admin the line
+  // is a link that opens Admin → Radio & audio (G-5).
+  let hostAudioShown = null;
   function applyHostAudioInfo() {
     const el = $("hostAudioInfo");
     if (!el) return;
     if (currentTransportKind() !== "serial") { el.hidden = true; return; }
     const ha = (TR.status && TR.status.host_audio) || {};
     const rx = ha.rx_pinned || ha.rx_default;
-    el.textContent = rx ? "Host audio: " + rx + (ha.rx_pinned ? "" : " (automatic)")
-      : (TR.can("audio_pin") ? "Host audio not set up — choose the devices in Admin → Radio & audio"
-                             : "Host audio not set up — ask an admin");
+    const admin = TR.can("audio_pin");
+    const text = rx ? "Host audio: " + rx + (ha.rx_pinned ? "" : " (automatic)")
+      : (admin ? "Host audio not set up — choose the devices in Admin → Radio & audio"
+               : "Host audio not set up — ask an admin");
+    const key = (admin ? "a|" : "u|") + text;
+    if (hostAudioShown !== key || !el.firstChild) {
+      hostAudioShown = key;
+      el.textContent = "";
+      if (admin) {
+        const a = document.createElement("a");
+        a.href = "#"; a.className = "ha-link"; a.textContent = text;
+        a.title = "Open Admin → Radio & audio";
+        a.addEventListener("click", (e) => {
+          e.preventDefault();
+          if (window.TRAdmin) window.TRAdmin.open("audio");
+        });
+        el.appendChild(a);
+      } else {
+        el.textContent = text;
+      }
+    }
     el.hidden = false;
   }
+  // Admin → Radio & audio changed a pin or the transport pin: re-read the status (G-6) so this line
+  // and the connection form follow at once.
+  document.addEventListener("tr:refresh-status", () => { refreshStatus(); });
   $("transport").addEventListener("change", () => { updateConnFields(); saveConn(); });
 
   // ---- server status (G-6): bootstrap, then hello, then re-read on connect / disconnect ----
@@ -1902,7 +1925,11 @@
   }
   function saveConn() {
     const id = $("radioSel").value; if (!id) return;
-    CONNS.radios[id] = currentConf(); CONNS.last = id; persistConns();
+    // keep the v1 host-device picks (rxDev/micDev, query_devices indexes): Admin → Radio & audio
+    // offers them as "the devices this browser used before" (§2.14); nothing else reads them
+    const old = CONNS.radios[id] || {}, keep = {};
+    for (const k of ["rxDev", "micDev"]) if (old[k] != null && old[k] !== "") keep[k] = old[k];
+    CONNS.radios[id] = Object.assign(keep, currentConf()); CONNS.last = id; persistConns();
   }
   // restore a radio's last-used connection type + settings (+ this browser's Mic In)
   function applyConnForRadio(id) {
@@ -2045,7 +2072,7 @@
   window.RadioAudio = { ensure: ensureAudioCtx, ctx: () => audioCtx, bus: () => rxBus, state: () => state,
     on: () => !!($("audioBtn") && $("audioBtn").classList.contains("active")) };
   // control channel for overlay tools (CW TX): send a WS command + read live state
-  window.RadioControl = { send: (o) => send(o), state: () => state };
+  window.RadioControl = { send: (o) => send(o), state: () => state, radios: () => radios.slice() };
   function playAudio(buf) {
     if (!audioOn || !audioCtx) return;
     const rate = new DataView(buf).getUint16(2, true) || 16000;
@@ -2295,80 +2322,7 @@
   };
   $("vol").oninput = (e) => { if (audioGain) audioGain.gain.value = (+e.target.value) / 100; };
 
-  // ---- remote access setup (Tailscale) ----
-  (function () {
-    const modal = $("remoteModal"), body = $("remoteBody");
-    if (!modal || !body) return;
-    const E = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    async function render() {
-      body.innerHTML = '<p class="rm-hint">Checking…</p>';
-      let s;
-      try { s = await TR.api("/api/remote_status", { noRedirect: true }); }
-      catch (_) { body.innerHTML = '<p class="rm-bad">Could not read remote status.</p>'; return; }
-      const ts = s.tailscale || {}, local = s.local, port = s.port || 8700;
-      let h = '<section class="rm-why"><b>Why HTTPS?</b> Browsers only allow microphone access over a '
-        + 'secure (HTTPS) connection. Listening and full radio control work over plain HTTP, but to '
-        + '<b>transmit phone/SSB with your mic remotely you need HTTPS</b>. Tailscale provides it '
-        + 'automatically and keeps access private to your own devices — no port&#8209;forwarding.</section>';
-      h += '<section class="rm-status">';
-      if (!ts.installed) {
-        h += '<p class="rm-bad">Tailscale isn’t installed on this PC.</p><p>'
-          + '<a href="https://tailscale.com/download" target="_blank" rel="noopener">Download Tailscale</a>, '
-          + 'install it, sign in, then reopen this dialog.</p>';
-      } else if (!ts.running) {
-        h += '<p class="rm-bad">Tailscale is installed but not signed in.</p>'
-          + '<p>Open the Tailscale app on this PC and sign in, then reopen this dialog.</p>';
-      } else if (ts.serve_running && ts.url) {
-        h += '<p class="rm-good">✓ Remote access is ON — tailnet&#8209;only, HTTPS.</p>'
-          + '<div class="rm-url"><code id="rmUrl">' + E(ts.url) + '</code>'
-          + '<button class="ctl-btn" id="rmCopy" type="button">Copy</button></div>'
-          + '<p class="rm-hint">Open that address from any device signed into your tailnet.</p>'
-          + (local ? '<button class="ctl-btn" id="rmOff" type="button">Turn off remote access</button>' : '');
-      } else if (ts.url) {
-        h += '<p class="rm-good">Tailscale is ready (<code>' + E(ts.url) + '</code>).</p>'
-          + (local ? '<button class="ctl-btn primary" id="rmOn" type="button">Turn on secure remote access</button>'
-                   + '<p class="rm-hint">Runs <code>tailscale serve</code> so your address serves HTTPS to the radio.</p>'
-                   : '<p class="rm-hint">Open this on the host PC to turn remote access on.</p>');
-      }
-      h += '</section>';
-      h += '<section class="rm-steps"><h3>How it works</h3><ol>'
-        + '<li>Install Tailscale on this PC <b>and</b> the device you operate from; sign both into the same account.</li>'
-        + '<li>In the Tailscale admin console → <b>DNS</b>, enable <b>MagicDNS</b> and <b>HTTPS Certificates</b>.</li>'
-        + '<li>Turn on secure remote access above (or run <code>tailscale serve --bg ' + port + '</code>).</li>'
-        + '<li>Open your <code>*.ts.net</code> address from any of your devices — HTTPS, mic and all.</li></ol>'
-        + '<p class="rm-hint">Tip: launch the server with <code>--host 127.0.0.1</code> so only Tailscale can reach it.</p></section>';
-      h += '<section class="rm-pw"><h3>Password ' + (s.auth_enabled ? '<span class="rm-on">on</span>' : '<span class="rm-off">optional</span>') + '</h3>';
-      if (!local) {
-        h += '<p class="rm-hint">Change the password on the host PC (open <code>http://localhost:' + port + '</code> there).</p>';
-      } else if (s.auth_enabled) {
-        h += '<p>A login password is required for everyone reaching the server (including this host).</p>'
-          + '<button class="ctl-btn" id="rmPwClear" type="button">Remove password</button>';
-      } else {
-        h += '<p>Your tailnet already limits access to your own devices. Add a password too if you share your tailnet with others.</p>'
-          + '<div class="rm-pwset"><input id="rmPw" type="password" placeholder="new password (min 6 chars)" autocomplete="new-password">'
-          + '<button class="ctl-btn" id="rmPwSet" type="button">Set password</button></div>';
-      }
-      h += '<div class="rm-msg" id="rmMsg"></div></section>';
-      body.innerHTML = h;
-      const on = (id, fn) => { const e = $(id); if (e) e.onclick = fn; };
-      on("rmCopy", () => { const u = $("rmUrl"); if (u && navigator.clipboard) navigator.clipboard.writeText(u.textContent); });
-      on("rmOn", () => postJson("/api/tailscale_serve", {}));
-      on("rmOff", () => postJson("/api/tailscale_serve_off", {}));
-      on("rmPwClear", () => postJson("/api/set_password", { clear: true }));
-      on("rmPwSet", () => postJson("/api/set_password",
-        { password: ($("rmPw") || {}).value || "", allowed_hosts: ts.magicdns ? [ts.magicdns] : [] }));
-    }
-    async function postJson(url, obj) {             // (B4 replaces this dialog with the admin modal)
-      const msg = $("rmMsg");
-      try {
-        await TR.api(url, { method: "POST", json: obj, noRedirect: true });
-      } catch (e) { if (msg) msg.textContent = e.message || "Request failed."; return; }
-      render();
-    }
-    if ($("remoteBtn")) $("remoteBtn").onclick = () => { modal.hidden = false; render(); };
-    if ($("remoteClose")) $("remoteClose").onclick = () => { modal.hidden = true; };
-    modal.addEventListener("click", (e) => { if (e.target === modal) modal.hidden = true; });
-  })();
+  // (Remote access — Tailscale Serve — lives in Admin → Remote now: admin.js, §5.4, G-20.)
 
   // ---- update check (latest GitHub release) ----
   (function () {

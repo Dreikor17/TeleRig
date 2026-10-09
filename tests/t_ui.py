@@ -92,11 +92,12 @@ def icons_every_reference_resolves(ctx):
     full, auth = set(mod.ICONS), set(mod.AUTH_ICONS)
     pat = re.compile(r'#i-([a-z0-9-]+)')
     call = re.compile(r'(?:TR\.icon|setIcon)\([^"\')]*["\']([a-z0-9-]+)["\']')
-    app_files = ["index.html", "tr.js", "layout.js", "app.js", "cwtool.js"]
+    named = re.compile(r'\bicon:\s*"([a-z0-9-]+)"')          # admin.js: btn(label, {icon: "copy"})
+    app_files = ["index.html", "tr.js", "layout.js", "app.js", "cwtool.js", "account.js", "admin.js"]
     seen = set()
     for f in app_files:
         text = (FRONT / f).read_text(encoding="utf-8")
-        names = set(pat.findall(text)) | set(call.findall(text))
+        names = set(pat.findall(text)) | set(call.findall(text)) | set(named.findall(text))
         seen |= names
         missing = sorted(names - full)
         check(not missing, f"{f}: icons not in the sprite: {missing}")
@@ -120,7 +121,7 @@ def icons_every_reference_resolves(ctx):
 
 @test("unit")
 def ui_has_no_emoji_icons(ctx):
-    for f in ("index.html", "app.js", "tr.js", "cwtool.js", "login.html", "change-password.html"):
+    for f in ("index.html", "app.js", "tr.js", "cwtool.js", "login.html", "change-password.html", "account.js", "admin.js"):
         text = (FRONT / f).read_text(encoding="utf-8")
         hits = [e for e in EMOJI if e in text]
         check(not hits, f"{f} still contains {hits}")
