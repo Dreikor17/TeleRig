@@ -27,7 +27,8 @@ from .store import JsonStore, StoreCorrupt, StoreMissing, console
 __all__ = ["StoreCorrupt", "View", "path", "store", "status", "load", "raw", "view", "mutate",
            "allowed_hosts", "allowed_names", "allowed_origins", "behind_proxy",
            "behind_proxy_source", "host_audio", "radio_transports", "last_radio",
-           "set_behind_proxy", "add_allowed_host", "normalize_entry"]
+           "set_behind_proxy", "clear_managed_behind_proxy", "proxy_source_managed",
+           "MANAGED_PROXY_SOURCES", "add_allowed_host", "normalize_entry"]
 
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 TRANSPORT_KINDS = ("sim", "serial", "lan")
@@ -280,6 +281,19 @@ def behind_proxy_source() -> Optional[str]:
     return view().behind_proxy_source
 
 
+# Who set behind_proxy. TeleRig manages a flag whose source is "tailscale" (Remote -> Turn on, or
+# Serve set up by hand as REMOTE-ACCESS.md says) or None (a v1 flag): it is reported stale and may be
+# cleared when Tailscale confirms Serve is off. Any other source (the documented "manual", for an
+# nginx / socat / ssh -R / ... front TeleRig cannot see, R4) was set by hand in config.json: it is
+# never stale and TeleRig never clears it (startup reconcile, Turn off, Clear flag); only an edit of
+# config.json removes it.
+MANAGED_PROXY_SOURCES = (None, "tailscale")
+
+
+def proxy_source_managed(source: Optional[str]) -> bool:
+    return source in MANAGED_PROXY_SOURCES
+
+
 def host_audio() -> dict:
     return {k: dict(v) for k, v in view().host_audio.items()}
 
@@ -302,6 +316,31 @@ def set_behind_proxy(value: bool, source: Optional[str] = None) -> None:
         d["behind_proxy"] = value
         d["behind_proxy_source"] = source if value else None
     mutate(fn, create=True)
+
+
+class _NoChange(Exception):
+    pass
+
+
+def clear_managed_behind_proxy() -> bool:
+    """Clear behind_proxy unless it was set by hand (proxy_source_managed). Decided under the store
+    lock on what is on disk, so a hand edit that lands first is never undone, and nothing at all is
+    written when there is nothing TeleRig may clear (a hand-edited file keeps its formatting).
+    True when the flag was cleared."""
+    if status() == "missing":
+        return False                             # no file, no flag; do not create one for it
+
+    def fn(d: dict) -> None:
+        src = d.get("behind_proxy_source")
+        if d.get("behind_proxy") is not True or not proxy_source_managed(src if isinstance(src, str) else None):
+            raise _NoChange
+        d["behind_proxy"] = False
+        d["behind_proxy_source"] = None
+    try:
+        mutate(fn, create=True)
+    except _NoChange:
+        return False
+    return True
 
 
 def add_allowed_host(host: str) -> None:

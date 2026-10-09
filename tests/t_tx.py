@@ -426,6 +426,45 @@ def t47_t62_cw_claim(ctx):
         w2.close()
 
 
+# -- T61 (final review round 1): the 20 s TUNE cap ends the tune claim ONLY ---------------------------------------------
+@test("tx")
+def t61_tune_cap_never_cuts_a_later_ptt(ctx):
+    """IC-7300MK2 simulator (internal ATU). OP1 presses TUNE, then keys PTT 3 s later: when the tune
+    claim reaches its 20 s cap, only the tune claim lapses; the over goes on, nobody is revoked."""
+    srv, cl = setup(ctx, users=(("OP1", "operator"), ("V1", "viewer")), radio="ic7300mk2")
+    w1, _ = open_ws(cl["OP1"])
+    hb = None
+    try:
+        w1.send({"action": "tune_atu", "seq": 1})
+        f = w1.wait_for(lambda m: m.get("type") in ("tx", "busy", "denied") and
+                        (m.get("req") or {}).get("seq") == 1, timeout=5)
+        t_tune = time.monotonic()
+        hb = harness.Heartbeat(w1, interval=2.0)
+        eq((f["type"], (f.get("owner") or {}).get("claims")), ("tx", ["tune"]), "T61 TUNE claimed")
+        time.sleep(3.0)
+        f = key(w1, seq=2)
+        eq((f["type"], f["owner"]["claims"]), ("tx", ["ptt", "tune"]), "T61 PTT added to the TUNE session")
+        lapse = w1.wait_for(lambda m: m.get("type") == "tx_revoked" or
+                            (m.get("type") == "tx" and (m.get("owner") or {}).get("claims") == ["ptt"]), timeout=25)
+        took = time.monotonic() - t_tune
+        eq(lapse.get("type"), "tx", f"T61 the tune cap dropped only the tune claim (no tx_revoked): {lapse}")
+        check(18.5 <= took <= 23.0, f"T61 ... at the 20 s tune cap ({took:.1f} s after TUNE)")
+        time.sleep(1.5)
+        eq((radio_state(cl["V1"])["ptt"], (tx_owner(cl["V1"]) or {}).get("user"), (tx_owner(cl["V1"]) or {}).get("claims")),
+           (True, "OP1", ["ptt"]), "T61 still keyed by OP1 after the tune cap")
+        eq([m for m in drain(w1, 0.5) if m.get("type") == "tx_revoked"], [], "T61 OP1 was never revoked")
+        w1.send({"action": "ptt", "tx": False})
+        w1.wait_for(lambda m: m.get("type") == "tx" and m.get("owner") is None, timeout=5)
+    finally:
+        if hb:
+            hb.stop()
+        w1.close()
+    eq(radio_state(cl["V1"])["ptt"], False, "T61 unkeyed by the owner")
+    ends = audit_wait(srv.tmp, lambda r: r.get("ev") == "tx_end")
+    eq((len(ends), ends[-1]["reason"], ends[-1]["claims"], ends[-1]["kind"]), (1, "owner", ["ptt", "tune"], "tune"),
+       "T61 one session, ended by the owner")
+
+
 # -- T48: the SET-menu queue ---------------------------------------------------------------------------------------------
 @test("tx")
 def t48_menu_queue(ctx):

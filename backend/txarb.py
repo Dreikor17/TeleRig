@@ -16,7 +16,9 @@ Rules (see the table in §2.13):
     is never pushed back (F19, I17). tx_hb never calls the radio (I16).
   * The arbiter keeps its OWN monotonic session clock: a session holding ptt or vox is
     force-released SESSION_MAX (120 s) after it started, whatever the radio deadline says; cw and
-    tune claims have caps (I18).
+    tune claims have caps (I18). A cap ends ITS claim only (ptt and vox stay on the session
+    clock): CW still sending at its cap is stopped, and the tune claim (tuning is not observable)
+    simply ends there. The session ends at a cap only when nothing else is held.
   * The owner's socket closing or being kicked (the server's kick hook; the watchdog checks it
     too), or 6 s without tx_hb from the owner, releases (I5, I7). A kicked connection's tx_hb is
     ignored.
@@ -347,9 +349,11 @@ class TxArbiter:
             self.force_release("disconnect")
 
     # -- force release -------------------------------------------------------------------------------
-    def force_release(self, reason: str, by: Optional[str] = None, explicit: bool = False) -> None:
+    def force_release(self, reason: str, by: Optional[str] = None, explicit: bool = False,
+                      claim: Optional[str] = None) -> None:
         """Release everything. Unkeys only what the app keyed unless explicit; each step on its own
-        so nothing can skip an unkey (I4)."""
+        so nothing can skip an unkey (I4). `claim` names the claim whose cap ended the session (cw);
+        it rides on tx_revoked so the owner is told which limit was reached."""
         # A FRONT PANEL session's ptt was not keyed by the app: only an explicit STOP unkeys it.
         claims = set(self.claims) if self.owner != EXTERNAL else set()
         r = None
@@ -379,7 +383,10 @@ class TxArbiter:
         try:
             oc = self.owner_conn
             if self.owner != EXTERNAL and oc is not None and self.conn_alive(oc):
-                self.send_to(oc, {"type": "tx_revoked", "reason": reason, "by": by})
+                rv = {"type": "tx_revoked", "reason": reason, "by": by}
+                if claim:
+                    rv["claim"] = claim
+                self.send_to(oc, rv)
         except Exception:
             pass
         self.claims = set()
@@ -479,10 +486,10 @@ class TxArbiter:
         if (self.claims & {"ptt", "vox"}) and now >= self.session_start + SESSION_MAX:
             self.force_release("timeout")
             return
-        for k in ("cw", "tune"):
-            if k in self.claims and now >= self.claim_cap.get(k, float("inf")):
-                self.force_release("timeout")
-                return
+        expired = [k for k in ("cw", "tune")
+                   if k in self.claims and now >= self.claim_cap.get(k, float("inf"))]
+        if expired and self._caps_expired(expired, st):
+            return
         if not lag and now > self.hb_grace_until and oc is not None \
                 and now - getattr(oc, "last_hb", 0.0) > HB_TIMEOUT:
             self._audit("tx_hb_timeout", user=self.owner_user, conn=self.owner,
@@ -501,6 +508,33 @@ class TxArbiter:
                 self._end_session("done" if dropped == ["cw"] else "radio", None)
             else:
                 self._bcast()
+
+    def _caps_expired(self, expired: list, st: dict) -> bool:
+        """Per-claim caps (I18, F19): a cw or tune cap ends THAT claim only; ptt and vox stay on the
+        120 s session clock, so a TUNE pressed before PTT can never cut the over that follows it.
+          * cw: a message still sending at duration + 5 s is a fault, so CW is stopped (when the
+            radio shows it) and the claim dropped;
+          * tune: tuning is not observable and has no stop primitive, so the cap is the normal end of
+            the claim: it is dropped, nothing is sent to the radio.
+        With nothing else held the session ends: `timeout` (tx_revoked naming cw) when the CW cap
+        ended it, `done` when only the tune claim lapsed. Returns True when the session ended."""
+        if not (self.claims - set(expired)):
+            if "cw" in expired:
+                self.force_release("timeout", claim="cw")
+            else:
+                self._drop("tune")
+                self._end_session("done", None)
+            return True
+        for k in expired:
+            if k == "cw":
+                try:
+                    if st.get("cw_tx"):
+                        self.radio().stop_cw()
+                except Exception as e:
+                    self.log(f"TeleRig: CW stop at its cap failed: {e!r}")
+            self._drop(k)
+        self._bcast()
+        return False
 
     def _external_or_reattach(self, now: float, st: dict) -> None:
         ls = self.last_session

@@ -283,9 +283,10 @@ def status_for(p) -> dict:
 
 def notices_for(p, port: Optional[int] = None) -> list:
     """Banner keys for this principal (§3.15): migrated_local_only (F17 remote session); for admins
-    migrated_v1_password, lockouts, audio_default:<radio> (F22) and behind_proxy_stale (the flag is
-    set but Tailscale Serve is confirmed off for this port, AR-34; from the last known Tailscale
-    status, refreshed in the background, so a page load never waits for the CLI)."""
+    migrated_v1_password, lockouts, audio_default:<radio> (F22) and behind_proxy_stale (a flag
+    TeleRig manages — never one set by hand, e.g. "manual" — is set but Tailscale Serve is confirmed
+    off for this port, AR-34; from the last known Tailscale status, refreshed in the background, so
+    a page load never waits for the CLI)."""
     out = []
     if p is None:
         return out

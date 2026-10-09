@@ -157,6 +157,10 @@ proxy with an automatic `*.ts.net` certificate. HTTPS is also what the browser n
   Copy button.
 - **Turn off** (any admin) runs `tailscale serve reset`; `behind_proxy` is cleared only when
   Tailscale confirms Serve is off. A flag left behind with Serve off shows a **Clear flag** button.
+  A flag you set by hand with `"behind_proxy_source": "manual"` (see
+  [Reverse proxies and tunnels](#reverse-proxies-and-tunnels-loopback-isnt-the-host-pc)) is never
+  called stale and is never cleared by TeleRig — not at start-up, not by **Turn off**, not by
+  **Clear flag**.
 
 **By hand (the same thing):**
 
@@ -239,7 +243,9 @@ guesses — but don't rely on it:
   (and `X-Forwarded-Host` / `X-Forwarded-Proto`), and
 - for anything else, set `"behind_proxy": true, "behind_proxy_source": "manual"` in `config.json`
   (in the config folder above), so no visitor is ever treated as the host PC. Use the recovery
-  command for admin tasks that need the host PC.
+  command for admin tasks that need the host PC. TeleRig never changes a `manual` flag (Remote shows
+  it as "set by hand in config.json", with no stale warning and no **Clear flag**); to undo it,
+  edit `config.json` again.
 
 When a sign-in on the host PC is refused as "not on this PC", the sign-in page's "Trouble signing in
 on this PC?" note names the reason: the server is marked behind a proxy, a forwarding header was

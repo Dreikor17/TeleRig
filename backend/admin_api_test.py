@@ -308,6 +308,58 @@ n0 = len(audit_events("behind_proxy_cleared"))
 r = call("POST", "/api/admin/clear_behind_proxy", {}, ADM)
 C("clear_behind_proxy with Serve off -> 200, cleared, audited", (r.status, settings.behind_proxy(),
                                                                   len(audit_events("behind_proxy_cleared")) - n0), (200, False, 1))
+
+# ---- T74 (final review round 1): a flag set by hand ("manual", REMOTE-ACCESS.md for nginx / socat /
+# ssh -R fronts) is never stale and never cleared by TeleRig -------------------------------------------
+MANUAL = {"behind_proxy": True, "behind_proxy_source": "manual"}
+write_cfg(MANUAL)
+manual_bytes = CFG.read_bytes()
+n0 = len(audit_events("behind_proxy_cleared"))
+real_cli = tailscale.cli_path
+tailscale.cli_path = lambda: None                    # Tailscale "not installed" (the usual case behind nginx)
+try:
+    CALLS.clear()
+    accounts._state["reconciled"] = False
+    accounts.ensure_initialized(port=PORT)
+    C("T74 manual: kept at startup, Tailscale not asked", (settings.behind_proxy(), settings.behind_proxy_source(), CALLS),
+      (True, "manual", []))
+    r, ADM = login("admin", PW)
+    rs = call("GET", "/api/admin/remote_status", None, ADM).json()
+    C("T74 manual, Tailscale not installed: remote_status not stale, reported as set by hand",
+      (rs["tailscale"]["installed"], rs["behind_proxy"], rs["behind_proxy_source"], rs["stale_flag"], rs.get("behind_proxy_by_hand")),
+      (False, True, "manual", False, True))
+    boot = re.search(r'<script id="tr-boot" type="application/json">(.*?)</script>', call("GET", "/", None, ADM).text).group(1)
+    C("T74 manual: no behind_proxy_stale notice for admins", "behind_proxy_stale" in json.loads(boot)["notices"], False)
+    C("T74 manual: serve_stale is False even with a cached 'not installed' status", admin_api.serve_stale(PORT), False)
+    r = call("POST", "/api/admin/clear_behind_proxy", {}, ADM)
+    C("T74 manual: clear_behind_proxy -> 409 set_by_hand, flag kept", (e(r), settings.behind_proxy(), settings.behind_proxy_source()),
+      ((409, "set_by_hand"), True, "manual"))
+    C("... the message says it was set by hand in config.json", "set by hand in config.json" in r.json().get("message", ""), True)
+finally:
+    tailscale.cli_path = real_cli
+ts_set(serve_status=(0, "No serve config\n", ""))   # installed, Serve confirmed OFF for this port
+rs = call("GET", "/api/admin/remote_status", None, ADM).json()
+C("T74 manual, Serve confirmed off: still not stale", (rs["tailscale"]["serve_status_ok"], rs["tailscale"]["serve_running"],
+                                                      rs["stale_flag"]), (True, False, False))
+C("T74 manual, Serve confirmed off: clear_behind_proxy -> 409 set_by_hand",
+  e(call("POST", "/api/admin/clear_behind_proxy", {}, ADM)), (409, "set_by_hand"))
+ts_set(reset=(0, "", ""), serve_status=(0, "No serve config\n", ""))
+r = call("POST", "/api/admin/tailscale_serve_off", {}, ADM)
+C("T74 manual: Turn off (confirmed) -> 200, the manual flag stays", (r.status, r.json().get("behind_proxy"),
+                                                                     settings.behind_proxy(), settings.behind_proxy_source()),
+  (200, True, True, "manual"))
+C("T74 manual: config.json never rewritten, nothing audited as cleared",
+  (CFG.read_bytes() == manual_bytes, len(audit_events("behind_proxy_cleared")) - n0), (True, 0))
+# A hand edit that lands after the view was read but before the write wins (decided under the store lock).
+write_cfg({"behind_proxy": True, "behind_proxy_source": "tailscale"})
+CFG.write_text(json.dumps(MANUAL, indent=4), encoding="utf-8")   # by hand, behind the cache's back
+hand = CFG.read_bytes()
+C("clear_managed_behind_proxy re-reads under the lock: a manual flag on disk is left alone, file untouched",
+  (settings.clear_managed_behind_proxy(), settings.behind_proxy_source(), CFG.read_bytes() == hand), (False, "manual", True))
+write_cfg({"behind_proxy": True, "behind_proxy_source": "tailscale"})
+C("clear_managed_behind_proxy clears a tailscale flag", (settings.clear_managed_behind_proxy(), settings.behind_proxy(),
+                                                          settings.behind_proxy_source()), (True, False, None))
+C("... and with no flag set there is nothing to clear", settings.clear_managed_behind_proxy(), False)
 C("no real Tailscale call was ever made (every call recorded by the fake)", all(isinstance(c, list) for c in CALLS), True)
 write_cfg({})
 r, ADM = login("admin", PW)

@@ -28,6 +28,9 @@ which cannot ride in a path segment). Errors are {ok:false, error, message[, fie
 
 behind_proxy is written ONLY after a confirmed Tailscale result (E8, AR-22): Serve ON after exit 0
 and `serve_running`; Serve OFF after exit 0 and a successful `serve status` that shows Serve off.
+A flag set by hand (behind_proxy_source other than "tailscale"/None, e.g. the documented "manual"
+for a non-Tailscale proxy, settings.proxy_source_managed) is never stale and never cleared here:
+no behind_proxy_stale notice, no stale_flag, Turn off leaves it, clear_behind_proxy -> 409 set_by_hand.
 Every Tailscale CLI call, device enumeration, scrypt and store write runs in the threadpool (AR-16).
 """
 from __future__ import annotations
@@ -740,10 +743,12 @@ async def _ts_status(port: int) -> dict:
     return await run_in_threadpool(_ts_status_sync, port)
 
 
-def _stale(behind: bool, st: Optional[dict]) -> bool:
-    """behind_proxy is set but Serve is confirmed NOT running for this port (or Tailscale is not
-    installed): the condition under which clear_behind_proxy may clear it."""
-    if not behind or not isinstance(st, dict):
+def _stale(behind: bool, source: Optional[str], st: Optional[dict]) -> bool:
+    """behind_proxy is set by TeleRig (source "tailscale", or a v1 flag without one) but Serve is
+    confirmed NOT running for this port (or Tailscale is not installed): the condition under which
+    clear_behind_proxy may clear it. A flag set by hand (e.g. source "manual" for an nginx / socat
+    front, docs/REMOTE-ACCESS.md) is never stale: Tailscale says nothing about that proxy."""
+    if not behind or not settings.proxy_source_managed(source) or not isinstance(st, dict):
         return False
     if not st.get("installed"):
         return True
@@ -752,7 +757,11 @@ def _stale(behind: bool, st: Optional[dict]) -> bool:
 
 def serve_stale(port: int) -> bool:
     """For the admin notice `behind_proxy_stale` (§3.15), without blocking: the last known status
-    for this port; an old or missing one is refreshed in a background thread for the next page."""
+    for this port; an old or missing one is refreshed in a background thread for the next page.
+    A flag set by hand is never stale, so Tailscale is not even asked."""
+    source = settings.behind_proxy_source()
+    if not settings.proxy_source_managed(source):
+        return False
     with _ts_mu:
         ent = _ts_cache.get(port)
         need = (ent is None or time.monotonic() - ent[0] > TS_TTL) and port not in _ts_busy
@@ -768,7 +777,7 @@ def serve_stale(port: int) -> bool:
                 with _ts_mu:
                     _ts_busy.discard(port)
         threading.Thread(target=run, daemon=True, name="tr-ts-status").start()
-    return _stale(True, ent[1]) if ent else False
+    return _stale(True, source, ent[1]) if ent else False
 
 
 def _cli_text(out: str, errtxt: str, fallback: str) -> str:
@@ -782,8 +791,9 @@ async def api_remote_status(request):
     v = settings.view()
     return JSONResponse({"tailscale": st, "behind_proxy": v.behind_proxy,
                          "behind_proxy_source": v.behind_proxy_source,
+                         "behind_proxy_by_hand": v.behind_proxy and not settings.proxy_source_managed(v.behind_proxy_source),
                          "can_serve_on": auth.direct_local(request.scope), "port": port,
-                         "stale_flag": _stale(v.behind_proxy, st)}, headers=NO_STORE)
+                         "stale_flag": _stale(v.behind_proxy, v.behind_proxy_source, st)}, headers=NO_STORE)
 
 
 @requires("admin", sudo=True, local=True)              # F9: admin + fresh sudo + host-local
@@ -848,11 +858,11 @@ async def api_tailscale_serve_off(request):
                                              "behind-proxy setting was left as it was.",
                    tailscale=st, behind_proxy=settings.behind_proxy())
     if settings.behind_proxy():
-        _, fail = await _write(settings.set_behind_proxy, False)
+        _, fail = await _write(settings.clear_managed_behind_proxy)   # a flag set by hand stays
         if fail is not None:
             return fail
     audit.log("remote_off", by=p.user, port=port)
-    return _ok(tailscale=st)
+    return _ok(tailscale=st, behind_proxy=settings.behind_proxy())
 
 
 @requires("admin", sudo=True)
@@ -863,19 +873,32 @@ async def api_clear_behind_proxy(request):
         return body
     if not settings.behind_proxy():
         return _ok(changed=False)
+    source = settings.behind_proxy_source()
+    if not settings.proxy_source_managed(source):
+        return _set_by_hand(source)
     port = auth.bound_port(request.scope)
     st = await _ts_status(port)
     if st.get("installed") and st.get("serve_running"):
         return err(409, "serve_running", f"Tailscale Serve is running for port {port}; turn it off "
                                          "instead (Remote → Turn off).", tailscale=st)
-    if not _stale(True, st):
+    if not _stale(True, source, st):
         return err(409, "serve_status_unknown", "Could not confirm that Tailscale Serve is off for this "
                                                 "port; the flag was left as it was.", tailscale=st)
-    _, fail = await _write(settings.set_behind_proxy, False)
+    cleared, fail = await _write(settings.clear_managed_behind_proxy)
     if fail is not None:
         return fail
+    if not cleared:                                    # changed on disk meanwhile (a hand edit wins)
+        if settings.behind_proxy():
+            return _set_by_hand(settings.behind_proxy_source())
+        return _ok(changed=False)
     audit.log("behind_proxy_cleared", by=p.user, reason="admin")
     return _ok(changed=True)
+
+
+def _set_by_hand(source: Optional[str]):
+    return err(409, "set_by_hand", f"This flag was set by hand in config.json (behind_proxy_source "
+                                   f"{json.dumps(source)}) for a proxy or tunnel Tailscale knows nothing "
+                                   "about; TeleRig never clears it. Edit config.json to change it.")
 
 
 # -- audit (view + download) ------------------------------------------------------------------

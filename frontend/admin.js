@@ -792,15 +792,24 @@
         h("li", null, "Turn on secure remote access above (on the host PC), or run ", h("code", { text: "tailscale serve --bg " + port }), "."),
         h("li", null, "Open your ", h("code", { text: "*.ts.net" }), " address from any of your devices — HTTPS, mic and all.")),
       h("p", { class: "tm-note" }, "Tip: start the server with ", h("code", { text: "--host 127.0.0.1" }), " so only Tailscale can reach it.")));
-    // behind_proxy: read-only; set and cleared only by confirmed Tailscale results (E8, AR-22)
+    // behind_proxy: read-only; set and cleared only by confirmed Tailscale results (E8, AR-22) —
+    // except a flag set by hand in config.json (e.g. "behind_proxy_source": "manual" for an nginx or
+    // socat front, REMOTE-ACCESS.md), which TeleRig never changes and never calls stale.
+    const byHand = !!(s.behind_proxy && s.behind_proxy_by_hand);
     const bp = h("section", { class: "tm-sec", id: "admProxy" }, head3("BEHIND A PROXY"),
       h("p", null, s.behind_proxy ? "Yes" : "No",
-        s.behind_proxy && s.behind_proxy_source ? h("span", { class: "tm-hint", text: " (set by " + s.behind_proxy_source + ")" }) : null),
-      note("Read-only: it is set when Tailscale confirms Serve is on and cleared when it confirms Serve is off. " +
-           "While it is set, this server never treats a request as coming from the host PC."));
+        s.behind_proxy && s.behind_proxy_source
+          ? h("span", { class: "tm-hint", text: byHand ? " (set by hand in config.json)" : " (set by " + s.behind_proxy_source + ")" })
+          : null),
+      byHand
+        ? note("Set by hand in config.json (\"behind_proxy_source\": " + JSON.stringify(s.behind_proxy_source) + ") for a proxy " +
+               "or tunnel that Tailscale knows nothing about. TeleRig never changes it; edit config.json to remove it. " +
+               "While it is set, this server never treats a request as coming from the host PC.")
+        : note("Read-only: it is set when Tailscale confirms Serve is on and cleared when it confirms Serve is off. " +
+               "While it is set, this server never treats a request as coming from the host PC."));
     const flagErr = h("div", { class: "tm-ferr", role: "alert", hidden: true });
     let clearB = null;
-    if (s.stale_flag) {
+    if (s.stale_flag && !byHand) {
       clearB = btn("Clear flag", { icon: "x", id: "admClearFlag", mut: true, on: async () => {
         flagErr.hidden = true;
         const r = await act(() => api("/api/admin/clear_behind_proxy", { method: "POST" }), "The behind-proxy flag was cleared.");

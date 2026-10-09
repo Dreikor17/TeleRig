@@ -145,7 +145,12 @@
   }
 
   function txSendClaim(obj, k) {
-    if (holds(k)) return false;                  // never re-send a held claim (F2, F19, I17)
+    if (holds(k)) {                              // never re-send a held claim (F2, F19, I17)
+      // Tuning is not observable: the server holds the tune claim until its 20 s cap. Say so
+      // instead of silently ignoring the press.
+      if (k === "tune") TR.toast("Tuning is still running — TUNE can be pressed again 20 s after it started.", "info");
+      return false;
+    }
     if (!ws || ws.readyState !== 1) return false;
     const seq = (typeof obj.seq === "number" && obj.seq > 0) ? obj.seq : nextSeq();
     if (seq > txSeq) txSeq = seq;
@@ -206,7 +211,8 @@
     const why = {
       stopped: "Your transmission was stopped" + by + ".",
       heartbeat: "Transmission ended — the link to the server stalled.",
-      timeout: "Transmission ended — the 120 s limit was reached.",
+      timeout: m.claim === "cw" ? "CW stopped — the message ran past its time limit."
+                                : "Transmission ended — the 120 s limit was reached.",
       radio_change: "Transmission ended — the radio was switched" + by + ".",
       radio_disconnect: "Transmission ended — the radio was disconnected" + by + ".",
       admin_switch: "Transmission ended — an admin switched the radio" + by + ".",

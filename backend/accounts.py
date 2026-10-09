@@ -904,7 +904,7 @@ def reconcile(port: Optional[int] = None, *, ts_status: Optional[Callable[[int],
     _state["reconciled"] = True
     port = port or _port()
     v = settings.view()
-    if v.behind_proxy and v.behind_proxy_source in ("tailscale", None) and port:
+    if v.behind_proxy and settings.proxy_source_managed(v.behind_proxy_source) and port:
         try:
             if ts_status is None:
                 from . import tailscale
@@ -916,10 +916,10 @@ def reconcile(port: Optional[int] = None, *, ts_status: Optional[Callable[[int],
             installed = bool(st.get("installed"))
             if (installed and st.get("serve_status_ok") and not st.get("serve_running")) \
                     or (not installed and v.behind_proxy_source == "tailscale"):
-                settings.set_behind_proxy(False)
-                console("  TeleRig: behind_proxy was set but Tailscale Serve is not running for "
-                        f"port {port}; cleared it.")
-                _audit("behind_proxy_cleared", reason="serve_not_running")
+                if settings.clear_managed_behind_proxy():         # never a flag set by hand
+                    console("  TeleRig: behind_proxy was set but Tailscale Serve is not running for "
+                            f"port {port}; cleared it.")
+                    _audit("behind_proxy_cleared", reason="serve_not_running")
     v = settings.view()
     if v.behind_proxy:
         names = [e for e in v.allowed_hosts if "://" not in e and e.endswith(".ts.net")]

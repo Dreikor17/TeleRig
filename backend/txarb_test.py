@@ -309,8 +309,12 @@ e.arb.claim(a, "cw", args={"text": "CQ CQ", "wpm": 20})
 C("T61 cw cap = duration + 5 s", round(e.arb.claim_cap["cw"] - e.clock.t, 3), round(dur + 5.0, 3))
 e.arb.claim_cap["cw"] = e.clock.t + 0.4
 e.arb.on_tx_hb(a)
+e.radio.calls.clear()
 e.tick()
 C("T61 cw cap reached -> timeout", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+C("... the CW still sending is stopped", e.radio.calls, [("stop_cw",)])
+C("... tx_revoked names the cw cap (not the 120 s session clock)",
+  [f for cid, f in e.sent if f.get("type") == "tx_revoked"], [{"type": "tx_revoked", "reason": "timeout", "by": None, "claim": "cw"}])
 e = Env(FakeRadio("ft991a"))
 a = e.conn(1)
 e.arb.claim(a, "tune")
@@ -319,8 +323,84 @@ for _ in range(39):
     e.tick()
     e.arb.on_tx_hb(a)
 C("... still owned at 19.5 s (tune is not observable: no reconciliation)", e.arb.owner, 1)
+e.radio.calls.clear()
 e.tick()
-C("... released at 20 s", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+C("... the tune claim ends at 20 s: session over, reason done", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "done"))
+C("... nothing sent to the radio, no tx_revoked (the cap is the normal end of a tune)",
+  (e.radio.calls, [f for _, f in e.sent if f.get("type") == "tx_revoked"]), ([], []))
+C("... release grace set like every IDLE transition", e.arb.release_grace_until, e.clock.t + 2.0)
+
+# T61 (final review): the tune cap ends the tune claim ONLY. TUNE at t0 then PTT at t5: the over goes on
+# past t20 and ends at the 120 s session clock, which runs from the session start (t0).
+e = Env(FakeRadio("ic7300mk2"))
+a = e.conn(1)
+t0 = e.clock.t
+C("T61 tune+ptt: TUNE at t0 -> started", e.arb.claim(a, "tune", seq=1), "started")
+for _ in range(10):                                 # 5 s of heartbeats
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("T61 tune+ptt: PTT at t5 -> added", e.arb.claim(a, "ptt", seq=2), "added")
+e.radio.calls.clear()
+while e.clock.t < t0 + 20.0:
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("T61 tune+ptt: at t20 the tune claim lapsed, ptt still held by OP1", (e.arb.owner, sorted(e.arb.claims)), (1, ["ptt"]))
+C("... no unkey, no tx_revoked, no tx_end", (e.radio.calls, [f for _, f in e.sent if f.get("type") == "tx_revoked"],
+                                              e.evs("tx_end")), ([], [], []))
+C("... the tx frame now shows only ptt", (e.bcast[-1].get("owner") or {}).get("claims"), ["ptt"])
+C("... the radio is still keyed", e.radio.state["ptt"], True)
+C("... TUNE can be pressed again (the tune claim is free)", e.arb.claim(a, "tune", seq=3), "added")
+C("... ... one tune_atu, no unkey", e.radio.calls, [("tune_atu",)])
+while e.clock.t < t0 + 119.5:
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("T61 tune+ptt: still on the air at t119.5", (e.arb.owner, "ptt" in e.arb.claims, e.radio.state["ptt"]), (1, True, True))
+e.tick()
+C("T61 tune+ptt: the 120 s session clock (from t0) ends it at t120",
+  (e.arb.owner, e.radio.state["ptt"], e.evs("tx_end")[-1]["reason"], e.evs("tx_end")[-1]["dur_s"]), (None, False, "timeout", 120.0))
+C("... tx_revoked{timeout} without a claim name (the session clock)",
+  [f for _, f in e.sent if f.get("type") == "tx_revoked"], [{"type": "tx_revoked", "reason": "timeout", "by": None}])
+
+# The owner releases ptt while the tune claim still runs: the session lasts until the tune cap (done).
+e = Env(FakeRadio("ic7300mk2"))
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "tune")
+e.tick()
+e.arb.claim(a, "ptt")
+e.tick()
+e.arb.on_tx_hb(a)
+C("T61 tune+ptt: the owner unkeys -> the tune claim keeps the session", (e.arb.release(a, "ptt"), sorted(e.arb.claims)), (True, ["tune"]))
+while e.clock.t < t0 + 20.0:
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("... which ends at the tune cap, reason done", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "done"))
+
+# A cw cap with ptt also held: CW stopped and dropped, the ptt over goes on.
+e = Env(FakeRadio("ic7300mk2"))
+a = e.conn(1)
+e.arb.claim(a, "ptt")
+e.arb.claim(a, "cw", args={"text": "CQ", "wpm": 20})
+e.arb.claim_cap["cw"] = e.clock.t + 0.4
+e.arb.on_tx_hb(a)
+e.radio.calls.clear()
+e.tick()
+C("T61 cw cap with ptt held: stop_cw only, ptt kept", (e.radio.calls, e.arb.owner, sorted(e.arb.claims)),
+  ([("stop_cw",)], 1, ["ptt"]))
+C("... no tx_revoked, no tx_end", ([f for _, f in e.sent if f.get("type") == "tx_revoked"], e.evs("tx_end")), ([], []))
+
+# A tune cap with cw still running: only tune ends.
+e = Env(FakeRadio("ft991a"))
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "tune")
+e.clock.t += 15
+e.arb.on_tx_hb(a)
+e.arb.claim(a, "cw", args={"text": "CQ CQ CQ DE TEST TEST", "wpm": 10})
+while e.clock.t < t0 + 20.0:
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("T61 tune cap with cw running: cw kept", (e.arb.owner, sorted(e.arb.claims), e.radio.state["cw_tx"]), (1, ["cw"], True))
 long = "E" * 160
 e = Env(FakeRadio("ft991a"))
 a = e.conn(1)

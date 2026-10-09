@@ -549,6 +549,21 @@ recon_case("a manual flag is never touched (Tailscale not even asked)",
 recon_case("flag off: Tailscale not asked", {}, OFF, False, want_called=False)
 
 
+d = use_dir("recon-race")
+(d / "config.json").write_text(json.dumps({"behind_proxy": True, "behind_proxy_source": "tailscale"}))
+accounts.ensure_initialized(reconcile_mode="skip")
+
+
+def hand_edit_then_off(port):                      # the user sets "manual" while Tailscale is asked
+    (d / "config.json").write_text(json.dumps({"behind_proxy": True, "behind_proxy_source": "manual"}))
+    return OFF
+
+
+accounts.reconcile(8790, ts_status=hand_edit_then_off)
+C("reconcile: a hand edit to 'manual' that lands mid-reconcile wins (decided under the store lock)",
+  (settings.behind_proxy(), settings.behind_proxy_source()), (True, "manual"))
+
+
 def boom(port):
     raise RuntimeError("cli exploded")
 

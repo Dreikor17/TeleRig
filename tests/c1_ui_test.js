@@ -10,6 +10,11 @@
  *  C. app.js top-bar STOP: the shared TR.stopArm rule (behaviour as before).
  *  D. waterfall.js: the edge frequencies are drawn once (HTML labels), not also on the canvas.
  *  E. tr.js: the 4401 close reason role_changed lands on /login?reason=role_changed.
+ *  F. app.js (final review round 1): a TUNE press while this tab holds the tune claim sends nothing and
+ *     says why; tx_revoked{timeout} names the CW cap when the server says the CW cap ended it. Only
+ *     RadioControl.send is called, for claims this tab ALREADY holds, so nothing is ever sent.
+ *     admin.js Remote: a behind_proxy flag set by hand ("manual") is shown as such, never as stale,
+ *     and no Clear flag is offered (not even through the notice's clearFlag path).
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -113,7 +118,7 @@ test("A a second click while a sign-out runs is ignored", async () => {
 
 // ---- B. admin.js: the temporary password is shown exactly once --------------------------------------
 const TEMP_PW = "Tmp4Pass9xyzQ";
-function adminEnv() {
+function adminEnv(extraRoutes) {
   const users = [
     { uid: "41444d494e", user: "ADMIN", role: "admin", must_change: false, online: 1 },
     { uid: "4f5031", user: "OP1", role: "operator", must_change: false, online: 0 },
@@ -132,6 +137,7 @@ function adminEnv() {
     "/api/admin/users/5631/reset_password": [200, { ok: true, temp_password: TEMP_PW + "R" }],
     "/api/admin/allowed_hosts": [200, { entries: [], current_host: "localhost", current_origin: "http://localhost:8790", behind_proxy: false }],
   };
+  Object.assign(routes, extraRoutes || {});
   const log = [];
   const env = makeEnv({ fetch: fetchStub(routes, log) });
   for (const id of ["userBtn", "adminBtn", "umAdmin", "umChangePw", "umSignoutAll", "umSignout", "modalRoot"]) env.el("div", { id });
@@ -310,6 +316,70 @@ test("E role_changed inside the consecutive-4401 cap keeps its reason", async ()
   env.ctx.TR.handleClose(4401, "role_changed", () => { rc++; });
   await env.flush();
   eq(env.ctx.location.replaced, ["/login?reason=role_changed&next=%2F"], "E the cap goes to the sign-in page with role_changed");
+});
+
+// ---- F. app.js: held TUNE feedback, the CW-cap tx_revoked text ---------------------------------------
+function recordToasts(env) {
+  const toasts = [];
+  env.ctx.TR.toast = (msg, kind) => { toasts.push([String(msg), kind]); };
+  return toasts;
+}
+test("F TUNE while this tab holds the tune claim: nothing is sent and a toast says why", async () => {
+  const e = appEnv();
+  const toasts = recordToasts(e);
+  e.owner({ conn: 3, user: "ME", claims: ["ptt", "tune"], elapsed_ms: 5000 });
+  const before = e.sent().length;
+  eq(e.ctx.RadioControl.send({ action: "tune_atu" }), false, "F held tune: send() refuses the re-claim");
+  eq(e.sent().length, before, "F held tune: no tune_atu frame on the socket");
+  eq(toasts.length, 1, "F held tune: exactly one toast");
+  check(toasts.length === 1 && toasts[0][1] === "info" && /Tuning is still running/.test(toasts[0][0]),
+        "F held tune: the toast explains it: " + JSON.stringify(toasts));
+  eq(e.ctx.RadioControl.send({ action: "ptt", tx: true }), false, "F held ptt: send() refuses the re-claim");
+  eq([e.sent().length, toasts.length], [before, 1], "F held ptt: nothing sent, no tune toast");
+});
+test("F tx_revoked timeout: the CW cap and the 120 s session clock read differently", async () => {
+  const e = appEnv();
+  const toasts = recordToasts(e);
+  e.owner({ conn: 3, user: "ME", claims: ["cw"], elapsed_ms: 9000 });
+  e.frame({ type: "tx_revoked", reason: "timeout", by: null, claim: "cw" });
+  e.owner(null);
+  e.owner({ conn: 3, user: "ME", claims: ["ptt"], elapsed_ms: 119000 });
+  e.frame({ type: "tx_revoked", reason: "timeout", by: null });
+  eq(toasts.map((t) => t[0]), ["CW stopped — the message ran past its time limit.",
+                               "Transmission ended — the 120 s limit was reached."], "F timeout texts");
+  eq(e.sent(), [], "F nothing was sent");
+});
+function remoteStatus(over) {
+  return [200, Object.assign({ tailscale: { installed: false }, behind_proxy: true, behind_proxy_source: "manual",
+                               behind_proxy_by_hand: true, can_serve_on: false, port: 8790, stale_flag: false }, over || {})];
+}
+test("F Remote: a flag set by hand (manual) shows no stale warning and no Clear flag, even via the notice", async () => {
+  const env = adminEnv({ "/api/admin/remote_status": remoteStatus() });
+  env.ctx.TRAdmin.open("remote", { clearFlag: true });          // the path the notice's [Clear flag] takes
+  await env.settle();
+  const sec = env.dialog().querySelector("#admProxy");
+  check(!!sec && sec.textContent.includes("set by hand in config.json"), "F manual: Remote says it was set by hand: " + (sec && sec.textContent));
+  check(!!sec && sec.textContent.includes("TeleRig never changes it"), "F manual: ... and that TeleRig never changes it");
+  check(!!sec && !sec.textContent.includes("it is set when Tailscale confirms Serve is on"), "F manual: no Tailscale-only note");
+  check(!env.text().includes("so this flag is stale"), "F manual: no stale warning");
+  eq(!!env.dialog().querySelector("#admClearFlag"), false, "F manual: no Clear flag button");
+  eq(env.log.filter((x) => x.url.indexOf("clear_behind_proxy") >= 0).length, 0, "F manual: nothing was cleared");
+});
+test("F Remote: a stale_flag next to a hand-set flag still offers no Clear flag (belt and braces)", async () => {
+  const env = adminEnv({ "/api/admin/remote_status": remoteStatus({ stale_flag: true }) });
+  env.ctx.TRAdmin.open("remote", { clearFlag: true });
+  await env.settle();
+  eq([!!env.dialog().querySelector("#admClearFlag"), env.log.filter((x) => x.url.indexOf("clear_behind_proxy") >= 0).length],
+     [false, 0], "F manual + stale_flag: no button, no request");
+});
+test("F Remote: a stale Tailscale-set flag still offers Clear flag", async () => {
+  const env = adminEnv({ "/api/admin/remote_status": remoteStatus({ behind_proxy_source: "tailscale", behind_proxy_by_hand: false,
+                                                                     stale_flag: true }) });
+  env.ctx.TRAdmin.open("remote");
+  await env.settle();
+  check(!!env.dialog().querySelector("#admClearFlag"), "F tailscale stale: Clear flag offered");
+  check(env.text().includes("so this flag is stale") && env.text().includes("it is set when Tailscale confirms Serve is on"),
+        "F tailscale stale: the stale warning and the Tailscale note");
 });
 
 (async () => {
