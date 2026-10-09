@@ -234,6 +234,35 @@ C("33 entries -> 400", e(call("PUT", "/api/admin/allowed_hosts", {"entries": [f"
   (400, "invalid"))
 write_cfg({})
 
+# final review P2 (test gap): would_lock_out compares the SCHEME too (auth.same_origin, round 3). Each
+# browser below has the same host AND port as the request but another scheme, so it passed the Origin
+# check only through its allowlisted origin entry: removing that entry must be refused. A host+port-only
+# comparison (the pre-round-3 rule) took it for same-origin and saved the list, locking the browser out.
+for label, hdrs, keep, origin_entry in (
+        ("plain http request, Origin https://radio-pc:PORT",
+         {"host": f"radio-pc:{PORT}", "origin": f"https://radio-pc:{PORT}"}, "radio-pc", f"https://radio-pc:{PORT}"),
+        ("XFP https from a local proxy, Origin http://pc.tailnet.ts.net:8443",
+         {"host": "pc.tailnet.ts.net:8443", "x-forwarded-proto": "https", "origin": "http://pc.tailnet.ts.net:8443"},
+         "pc.tailnet.ts.net", "http://pc.tailnet.ts.net:8443")):
+    write_cfg({"allowed_hosts": [keep, origin_entry]})
+    scope = {"type": "http", "scheme": "http", "client": ("127.0.0.1", 50000), "server": ("127.0.0.1", PORT),
+             "headers": [(k.encode(), v.encode()) for k, v in hdrs.items()]}
+    C(f"would_lock_out: {label} -> the request is NOT same-origin (scheme differs)",
+      auth.same_origin(auth.parse_origin(hdrs["origin"]), scope), False)
+    C(f"would_lock_out: {label}, removing its origin entry -> a reason",
+      bool(admin_api.would_lock_out([keep], hdrs["host"], hdrs["origin"], scope)), True)
+    C(f"PUT [{keep}] ({label}) -> 400 would_lock_out",
+      e(call("PUT", "/api/admin/allowed_hosts", {"entries": [keep]}, ADM, headers=hdrs)), (400, "would_lock_out"))
+    C(f"... ({label}) config.json unchanged", cfg_json().get("allowed_hosts"), [keep, origin_entry])
+    C(f"PUT [{keep}, the origin] ({label}) -> 200 (keeping it is fine)",
+      call("PUT", "/api/admin/allowed_hosts", {"entries": [keep, origin_entry]}, ADM, headers=hdrs).status, 200)
+# control: the browser whose origin IS the request's (scheme, host and port) may remove that entry
+write_cfg({"allowed_hosts": ["radio-pc", f"https://radio-pc:{PORT}"]})
+C("control: from http://radio-pc:PORT (exactly this server's origin) removing the https entry -> 200",
+  call("PUT", "/api/admin/allowed_hosts", {"entries": ["radio-pc"]}, ADM, headers=lan).status, 200)
+C("... saved", cfg_json().get("allowed_hosts"), ["radio-pc"])
+write_cfg({})
+
 # ---- T32: Tailscale Serve ON / OFF with the fake CLI -------------------------------------------------
 CALLS.clear()
 r = call("POST", "/api/admin/tailscale_serve", {}, ADM, headers={"x-forwarded-for": "203.0.113.5"})

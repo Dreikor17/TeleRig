@@ -40,7 +40,8 @@ and only one operator transmits at a time.
   click, tap or key press on it unkeys — however fast you click — and a double-click, a key's
   auto-repeat or a click just after it unkeyed never re-keys. With a **failsafe time-out** — a
   client countdown, an independent server-side auto-unkey and a 120 s session limit, plus
-  release on screen-lock / disconnect. A hardware TX time-out is set on connect as a backstop.
+  release on screen-lock / disconnect; a hidden tab never keys (not even a touch hold begun just
+  before). A hardware TX time-out is set on connect as a backstop.
 - **One transmitter, many users** — accounts with roles (viewer / operator / admin); one
   connection owns TX at a time, the others see **ON AIR · *callsign*** and get "busy", and any
   operator can stop a transmission with a two-tap **STOP**. Every TX session is logged.

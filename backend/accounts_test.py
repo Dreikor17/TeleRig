@@ -523,6 +523,106 @@ accounts._reset_for_tests()
 accounts.ensure_initialized(reconcile_mode="skip")
 C("M1 deleted again: still the default ADMIN", (accounts.get("ADMIN").migrated_v1, accounts.get("ADMIN").default_pw),
   (False, True))
+C("M1: the first seed (the migration) wrote the v1-password-retired.txt marker",
+  (d / "v1-password-retired.txt").exists(), True)
+
+# ---- final review P2: once auth.json has existed in a folder, NO path imports the v1 password again ------
+# Round 3 marked "already migrated" only by config.v1.bak.json, which only the seed wrote: an auth.json
+# created by --reset-admin left no mark, so deleting / moving it aside brought the v1 shared password
+# back. Every path that creates auth.json now writes v1-password-retired.txt first, and the seed also
+# takes auth.json.lock / an auth.json.corrupt-* backup as evidence of an earlier store.
+RETIRED = "v1-password-retired.txt"
+
+
+def v1_folder(name):
+    dd = use_dir(name)
+    b = json.dumps({"session_secret": "cd" * 32, "password_hash": v1_hash("hunter22")}, indent=2).encode()
+    (dd / "config.json").write_bytes(b)
+    return dd, b
+
+
+def reseed():
+    """auth.json is missing: the same ensure_initialized -> _seed every seeding path runs (startup, the
+    runtime re-seed, the unlock after a move-aside)."""
+    accounts._reset_for_tests()
+    accounts.ensure_initialized(reconcile_mode="skip")
+    a = accounts.get("ADMIN")
+    return (a.default_pw, a.must_change, a.migrated_v1, a.created_by, accounts.verify(a.hash, "hunter22")[0],
+            accounts.verify(a.hash, "admin")[0], bool(accounts.SETUP_RE.fullmatch(accounts.setup_code() or "")))
+
+
+DEFAULT_SEED = (True, True, False, "system", False, True, True)   # default ADMIN, hunter22 refused, setup code
+
+# --reset-admin is the FIRST thing run in an upgraded v1 folder: it creates auth.json
+d, cb = v1_folder("p2-reset-first")
+res = accounts.reset_admin("Reset#First-2030")
+a = accounts.get("ADMIN")
+C("P2 reset-admin first: a fresh store, ADMIN has the reset password (not hunter22)",
+  (res["created"], accounts.verify(a.hash, "Reset#First-2030")[0], accounts.verify(a.hash, "hunter22")[0], a.migrated_v1),
+  (True, True, False, False))
+(d / "auth.json").unlink()
+C("P2 reset-admin first, auth.json deleted -> the default ADMIN, the v1 password NOT imported", reseed(), DEFAULT_SEED)
+(d / "auth.json").rename(d / "auth.json.moved")
+C("P2 ... moved aside again -> still the default ADMIN", reseed(), DEFAULT_SEED)
+C("P2 reset-admin first: config.json byte-identical (T27)", (d / "config.json").read_bytes(), cb)
+C("P2 reset-admin first: it wrote the marker and the one-time config.v1.bak.json copy",
+  ((d / RETIRED).exists(), (d / "config.v1.bak.json").exists() and (d / "config.v1.bak.json").read_bytes() == cb), (True, True))
+
+# --reset-admin --move-corrupt on a damaged auth.json that no seed of this build created (an older build's)
+d, cb = v1_folder("p2-reset-corrupt")
+(d / "auth.json").write_text('{"version": 2, "users": {', encoding="utf-8")
+accounts._reset_for_tests()
+res = accounts.reset_admin("Reset#Corrupt-2030", move_corrupt=True)
+C("P2 reset-admin --move-corrupt: the damaged store kept aside, a fresh one created",
+  (bool(res["backup"]), res["created"]), (True, True))
+(d / "auth.json").unlink()
+C("P2 reset-admin --move-corrupt, then auth.json deleted -> the default ADMIN, NOT the v1 password", reseed(), DEFAULT_SEED)
+C("P2 reset-admin --move-corrupt: config.json byte-identical", (d / "config.json").read_bytes(), cb)
+
+# --reset-admin on an existing store writes the marker too, but never makes a "v1" copy of a v2 config.json
+d = use_dir("p2-reset-existing")
+accounts.ensure_initialized(reconcile_mode="skip")           # no config.json: the default seed, no copy
+(d / RETIRED).unlink(missing_ok=True)
+(d / "config.json").write_text(json.dumps({"allowed_hosts": ["radio-pc"]}), encoding="utf-8")
+accounts.reset_admin("Reset#Exist-2030")
+C("P2 reset-admin on an existing store: the marker again, no config.v1.bak.json of a v2 config",
+  ((d / RETIRED).exists(), (d / "config.v1.bak.json").exists()), (True, False))
+
+# --reset-admin with an unparsable config.json (the user declined to move it): no copy of the broken file
+d = use_dir("p2-reset-badcfg")
+(d / "config.json").write_bytes(b'{"allowed_hosts": [')
+accounts.reset_admin("Reset#BadCfg-2030")
+C("P2 reset-admin with an unparsable config.json: store + marker, no copy of the broken file",
+  ((d / "auth.json").exists(), (d / RETIRED).exists(), (d / "config.v1.bak.json").exists()), (True, True, False))
+
+# a folder migrated by an older build whose marker files are gone: auth.json.lock alone still counts
+d, cb = v1_folder("p2-lock-only")
+accounts.ensure_initialized(reconcile_mode="skip")
+C("P2 lock-only: first start migrates (no evidence yet)", accounts.get("ADMIN").migrated_v1, True)
+for name in ("auth.json", "config.v1.bak.json", RETIRED):
+    (d / name).unlink(missing_ok=True)
+C("P2 auth.json, config.v1.bak.json and the marker all deleted: auth.json.lock still retires the v1 password",
+  reseed(), DEFAULT_SEED)
+
+# each piece of evidence alone, in a v1 folder that otherwise never held a store
+for label, make in (("the marker", lambda dd: (dd / RETIRED).write_text("x", encoding="utf-8")),
+                    ("config.v1.bak.json", lambda dd: (dd / "config.v1.bak.json").write_text("{}", encoding="utf-8")),
+                    ("auth.json.lock", lambda dd: (dd / "auth.json.lock").write_bytes(b"")),
+                    ("an auth.json.corrupt-* backup",
+                     lambda dd: (dd / "auth.json.corrupt-20260101T000000Z").write_text("{", encoding="utf-8"))):
+    d, cb = v1_folder("p2-evidence")
+    make(d)
+    C(f"P2 evidence alone ({label}) -> the default ADMIN, the v1 password NOT imported", reseed(), DEFAULT_SEED)
+    C(f"P2 evidence alone ({label}): config.json byte-identical", (d / "config.json").read_bytes(), cb)
+
+# a fresh install (default seed, no config.json) is marked too: a v1 config.json copied in later is not imported
+d = use_dir("p2-fresh-then-v1")
+accounts.ensure_initialized(reconcile_mode="skip")
+C("P2 fresh install: the marker is written, no config.v1.bak.json", ((d / RETIRED).exists(), (d / "config.v1.bak.json").exists()),
+  (True, False))
+(d / "config.json").write_text(json.dumps({"password_hash": v1_hash("hunter22")}), encoding="utf-8")
+(d / "auth.json").unlink()
+C("P2 fresh install, a v1 config.json copied in, auth.json deleted -> the default ADMIN", reseed(), DEFAULT_SEED)
 
 d = use_dir("m1-once-malformed")                     # a stale v1 hash after the first seed is not even parsed
 (d / "config.json").write_text(json.dumps({"password_hash": "not-a-v1-hash"}))

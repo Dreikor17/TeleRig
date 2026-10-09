@@ -778,12 +778,18 @@ def reset_admin(password: str, *, demote: tuple = (), move_corrupt: bool = False
     hash, no must_change/default_pw/migrated_v1, gen = ++gen_seq), setup_code = null,
     limiter_reset += 1, and demote the named other admins to operator (each gen = ++gen_seq).
     move_corrupt=True moves a corrupt auth.json aside (auth.json.corrupt-<UTC>) and starts a fresh
-    store. Returns {"demoted": [...], "backup": path|None, "created": bool}."""
+    store. Every call retires a v1 shared password first (_retire_v1): after a reset, deleting or
+    moving auth.json never brings the old config.json password_hash back.
+    Returns {"demoted": [...], "backup": path|None, "created": bool}."""
     h = hash_password(password)
     out = {"demoted": [], "backup": None, "created": False}
     want = {canonical(x) for x in demote if canonical(x)}
 
     def fn(d):
+        # Under auth.json's lock, before the store is written: a v1 password_hash in config.json is
+        # retired from now on (a later re-seed never imports it), and a store created here makes the
+        # one-time config.v1.bak.json copy, like the first seed does.
+        _retire_v1("--reset-admin", copy_v1=not d)
         if not d:
             d.update(_fresh_store())
             out["created"] = True
@@ -818,24 +824,80 @@ def _config_corrupt() -> Optional[StoreCorrupt]:
     return None
 
 
+V1_RETIRED = "v1-password-retired.txt"       # the marker: an account store was created in this folder
+V1_BAK = "config.v1.bak.json"
+
+
+def _v1_retired_by(folder: Path, lock_existed: bool) -> Optional[str]:
+    """Why a v1 password_hash in config.json must NOT be imported (it is a retired password), or None
+    when this folder never held a TeleRig account store. config.json is never rewritten (T27), so
+    the evidence lives next to it; any ONE item is enough, and deleting or moving auth.json touches
+    none of them:
+      - V1_RETIRED, written by every path that creates auth.json (_seed, reset_admin) before it does;
+      - config.v1.bak.json, the one-time copy the first creation of auth.json makes;
+      - auth.json.lock, held by every write of auth.json and never deleted (as it was BEFORE this
+        seed took the lock), so a folder whose store was created by an older build counts too;
+      - an auth.json.corrupt-* backup (--reset-admin moved a damaged store aside).
+    A folder that cannot be listed counts as retired (fail closed: the default ADMIN instead)."""
+    if (folder / V1_RETIRED).exists():
+        return V1_RETIRED
+    if (folder / V1_BAK).exists() or settings.path().with_name(V1_BAK).exists():
+        return V1_BAK
+    if lock_existed:
+        return "auth.json.lock"
+    try:
+        if any(folder.glob("auth.json.corrupt-*")):
+            return "auth.json.corrupt-*"
+    except OSError:
+        return "an unreadable config folder"
+    return None
+
+
+def _retire_v1(by: str, *, copy_v1: bool = True) -> None:
+    """Called by every path that creates (or resets) auth.json, under auth.json's OS lock and BEFORE
+    the store is written, so the v1 shared password can never be imported again afterwards:
+    copy_v1 makes the one-time config.json -> config.v1.bak.json copy (whenever a readable config.json
+    exists and no copy does), then the V1_RETIRED marker is created once. A failure raises (OSError):
+    the store is then not written either (fail closed)."""
+    cfg = settings.path()
+    bak = cfg.with_name(V1_BAK)
+    if copy_v1 and cfg.exists() and not bak.exists() and settings.status() == "ok":
+        shutil.copy2(cfg, bak)                                # one-time copy of the v1 settings
+    marker = store().path.with_name(V1_RETIRED)
+    if marker.exists():
+        return
+    text = (f"TeleRig created its account store (auth.json) in this folder ({now_iso()}, {by}).\n"
+            "A v1 shared remote-access password (\"password_hash\" in config.json) is retired from then on:\n"
+            "if auth.json is deleted or moved aside, it is set up again with the default admin and a\n"
+            "new setup code (shown in the TeleRig window), never with that old password.\n")
+    try:
+        with open(marker, "x", encoding="utf-8") as f:
+            f.write(text)
+    except FileExistsError:
+        pass
+
+
 def _seed() -> Optional[str]:
     """auth.json is missing: migrate the v1 shared password (M1/M3a) or seed the default ADMIN
     with a setup code (M2/M3b). Returns "migrated" | "default" | None (another process won).
 
-    The v1 password is imported ONCE. The first seed of this config folder writes
-    config.v1.bak.json (whenever a config.json exists) before it seeds; when that file exists, a
-    store was already seeded here, so auth.json was moved aside / deleted since and the v1
-    password_hash still in config.json (config.json is never rewritten, T27) is a retired password
-    by now: re-seeding brings back the default ADMIN + a setup code instead, never the old shared
-    password (with its remote access)."""
+    Every seeding path comes here: the first start, auth.json deleted while running (the runtime
+    re-seed), and a damaged auth.json moved aside while locked (the unlock); --reset-admin creates
+    the store through reset_admin(). The v1 password is imported ONCE: only into a folder that never
+    held a TeleRig account store (_v1_retired_by: the marker, config.v1.bak.json, auth.json.lock or a
+    corrupt-store backup). Anywhere else the password_hash still in config.json (never rewritten,
+    T27) is a retired password: the re-seed brings back the default ADMIN + a setup code, never the
+    old shared password (with its remote access). The store write itself retires it (_retire_v1)."""
+    st = store()
+    lock_existed = st.lock_path.exists()                      # before this seed creates it
     v1 = settings.raw() or {}
     cfg = settings.path()
-    bak = cfg.with_name("config.v1.bak.json")
     ph = v1.get("password_hash")
-    if ph and bak.exists():
+    why = _v1_retired_by(st.path.parent, lock_existed) if ph else None
+    if why:
         console("  TeleRig: auth.json was missing, so it was set up again. config.json still holds the old "
-                "shared password, but it was already migrated once (config.v1.bak.json) and is NOT imported "
-                "again: sign in as admin on this PC with the setup code, or run the recovery command.")
+                f"shared password, but an account store already existed in this folder ({why}), so it is NOT "
+                "imported again: sign in as admin on this PC with the setup code, or run the recovery command.")
         ph = None
     if ph:
         try:
@@ -852,14 +914,13 @@ def _seed() -> Optional[str]:
     def fn(d):
         if d:
             raise _AlreadyInitialized()
+        _retire_v1("v1 migration" if result == "migrated" else "first start")
         new = _fresh_store()
         new["meta"].update(gen_seq=1, setup_code=code)
         new["users"][ADMIN] = rec
         return new
     try:
-        if cfg.exists() and not bak.exists():
-            shutil.copy2(cfg, bak)                            # one-time copy of the v1 settings
-        store().mutate(fn, create=True)
+        st.mutate(fn, create=True)
     except _AlreadyInitialized:
         return None
     _audit("store_init", result=result)

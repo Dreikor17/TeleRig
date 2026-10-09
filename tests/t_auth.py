@@ -555,6 +555,103 @@ def t29b_deeply_nested_json_body_is_a_400_with_headers(ctx):
     check(srv.alive(), "server died")
 
 
+_T29C = r"""
+import json, os, re, sys
+sys.path.insert(0, {tests!r}); sys.path.insert(0, {repo!r})
+import harness
+harness.check_config_path(os.environ["TELERIG_CONFIG"])        # scratch store only
+from starlette.routing import request_response
+from backend import accounts, auth, server
+accounts.ensure_initialized(reconcile_mode="skip")
+accounts.reset_admin("Gate#Probe-2026")
+r = harness.asgi_request(server.app, "POST", "/api/login", body={{"username": "admin", "password": "Gate#Probe-2026"}})
+CK = {{"cookie": "tr_session_8790=" + re.search(r"tr_session_8790=([^;]+)", " ".join(r.header_all("set-cookie"))).group(1)}}
+MSG = "gate-catch-all-probe " + r"C:\Users\someone\secret-folder\auth.json"
+
+
+class ProbeBoom(RuntimeError):
+    pass
+
+
+def boom(*a, **k):
+    raise ProbeBoom(MSG)
+
+
+async def boom_ep(request):
+    raise ProbeBoom(MSG)
+
+
+out = {{}}
+
+
+def probe(label, method, path, headers=None, body=None):
+    try:
+        resp = harness.asgi_request(server.app, method, path, headers=headers, body=body)
+        out[label] = {{"status": resp.status, "headers": resp.headers, "body": resp.text}}
+    except BaseException as e:                                  # it escaped the Gate
+        out[label] = {{"raised": repr(e)[:300]}}
+
+
+def swap(path, methods):
+    for rt in server.app.routes:
+        if getattr(rt, "path", None) == path and methods <= (getattr(rt, "methods", None) or set()):
+            saved = rt.app
+            rt.app = request_response(boom_ep)
+            return lambda: setattr(rt, "app", saved)
+    raise SystemExit("no route " + path)
+
+
+for label, method, path, hdrs, body in (("api route, signed in", "GET", "/api/version", CK, None),
+                                        ("page route, signed in", "GET", "/", CK, None),
+                                        ("public POST route, signed out", "POST", "/api/login", None,
+                                         {{"username": "x", "password": "y"}})):
+    undo = swap(path, {{method}})
+    probe(label, method, path, hdrs, body)
+    undo()
+real = auth.identify
+auth.identify = boom                                            # inside the Gate itself, before any route
+probe("the Gate's own checks", "GET", "/api/me", CK)
+auth.identify = real
+probe("afterwards", "GET", "/api/version", CK)
+print("RESULT " + json.dumps(out))
+"""
+
+
+@test("auth")
+def t29c_gate_turns_any_exception_into_a_json_500_with_headers(ctx):
+    """Final review P2 (test gap): the Gate's catch-all. Any unexpected exception, raised in a route
+    (API, page, public POST) or in the Gate's own checks, becomes a JSON 500 {"ok": false, "error":
+    "internal_error"} WITH every security header (I14; no-store on /api/*); the exception text, a
+    path and the traceback reach the console only, never the client; the next request is answered
+    normally. In-process (backend.server.app via harness.asgi_request in a scratch child): a route
+    handler is swapped for one that raises, then auth.identify. No server, socket or radio."""
+    tmp = ctx.tmp()
+    r = harness.run_child(["-c", _T29C.format(tests=str(harness.TESTS), repo=str(harness.REPO))], tmp, timeout=120)
+    line = next((ln for ln in (r.stdout or "").splitlines() if ln.startswith("RESULT ")), None)
+    check(r.returncode == 0 and line, f"child failed ({r.returncode}):\n{r.stdout[-3000:]}\n{r.stderr[-3000:]}")
+    out = json.loads(line[len("RESULT "):])
+    for label in ("api route, signed in", "page route, signed in", "public POST route, signed out",
+                  "the Gate's own checks"):
+        res = out.get(label) or {}
+        check("raised" not in res, f"{label}: the exception escaped the Gate: {res.get('raised')}")
+        body, hdrs = res.get("body") or "", res.get("headers") or {}
+        try:
+            j = json.loads(body)
+        except ValueError:
+            j = body[:200]
+        eq((res.get("status"), j), (500, {"ok": False, "error": "internal_error"}), f"{label}: JSON 500")
+        eq([h for h in HDRS if not hdrs.get(h)], [], f"{label}: security headers on the 500")
+        if label != "page route, signed in":
+            eq(hdrs.get("cache-control"), "no-store", f"{label}: no-store")
+        for leak in ("gate-catch-all-probe", "secret-folder", "someone", "ProbeBoom", "Traceback", 'File "'):
+            check(leak not in body, f"{label}: the body leaks {leak!r}: {body[:300]}")
+    eq(out.get("afterwards", {}).get("status"), 200, "the next request is answered normally")
+    err = r.stderr or ""
+    check("Traceback" in err and "ProbeBoom: gate-catch-all-probe" in err, "the console has the traceback:\n" + err[-2000:])
+    for want in ("GET /api/version failed", "GET / failed", "POST /api/login failed", "GET /api/me failed"):
+        check(f"TeleRig: {want}" in err, f"the console names the request ({want}):\n{err[-2000:]}")
+
+
 @test("auth")
 def auth_json_deleted_at_runtime_is_seeded_again(ctx):
     """A deleted auth.json is treated like a first start (never an open server): every session
@@ -661,6 +758,70 @@ def t27b_v1_password_is_imported_once(ctx):
     eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, "deleted: old password, remote")
     eq(((tmp / "config.json").read_bytes(), (tmp / "config.v1.bak.json").read_bytes()), (cfg, bak),
        "config.json and config.v1.bak.json byte-identical")
+
+
+def _wait_auth(tmp: Path, timeout: float = 8.0) -> None:
+    end = time.monotonic() + timeout
+    while not (tmp / "auth.json").exists():
+        check(time.monotonic() < end, "auth.json was not created again")
+        time.sleep(0.1)
+    time.sleep(0.3)
+
+
+def _default_reseed(srv, tmp: Path, remote: dict, what: str) -> None:
+    """The re-seeded store is the default ADMIN + a setup code; the v1 password signs in nowhere."""
+    a = harness.read_auth(tmp)["users"]["ADMIN"]
+    eq({k: a[k] for k in ("default_pw", "must_change", "migrated_v1", "created_by")},
+       {"default_pw": True, "must_change": True, "migrated_v1": False, "created_by": "system"}, f"{what}: re-seeded ADMIN")
+    eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, f"{what}: v1 password, remote")
+    eq(harness.login(srv.client(), "admin", "hunter22").status, 401, f"{what}: v1 password, on the host PC")
+    eq(harness.admin_login(srv.client(), tmp, headers=remote).status, 401, f"{what}: the default password is local-only")
+    eq(harness.admin_login(srv.client(), tmp).status, 200, f"{what}: first-run login on this PC with the setup code")
+
+
+@test("auth")
+def t27c_v1_password_never_returns_after_reset_admin(ctx):
+    """Final review P2: `--reset-admin` run in an upgraded v1 folder BEFORE the first start creates
+    auth.json. Round 3 marked "already migrated" only through config.v1.bak.json, which only the seed
+    wrote, so after such a reset every re-seed imported the retired shared password again. Now every
+    seeding path brings the default ADMIN + a setup code instead: the runtime re-seed (auth.json
+    deleted while running), the move-aside unlock (a damaged auth.json renamed while locked) and the
+    startup seed (auth.json deleted while stopped). config.json stays byte-identical (T27)."""
+    tmp = ctx.tmp()
+    cfg = _v1_config(tmp)
+    r = harness.run_child(RESET, tmp, input="Reset#First-2026\n")
+    eq(r.returncode, 0, f"--reset-admin in the v1 folder:\n{r.stdout}\n{r.stderr}")
+    srv = ctx.server(tmp)
+    remote = xff("198.51.100.21")
+    eq(harness.login(srv.client(), "admin", "Reset#First-2026").status, 200, "the reset password")
+    eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, "after the reset: v1 password, remote")
+    # 1. the runtime re-seed
+    (tmp / "auth.json").unlink()
+    _wait_auth(tmp)
+    _default_reseed(srv, tmp, remote, "deleted while running")
+    check("NOT imported" in srv.log_text(), "the console says why the old password was not imported")
+    # 2. the move-aside unlock
+    auth_p = tmp / "auth.json"
+    auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")         # damaged
+    c = srv.client()
+    end = time.monotonic() + 8
+    while c.get("/api/auth_status").status != 503:
+        check(time.monotonic() < end, "the server did not lock on the damaged auth.json")
+        time.sleep(0.2)
+    auth_p.rename(tmp / "auth.json.bad")
+    end = time.monotonic() + 8
+    while c.get("/login").status != 200:
+        check(time.monotonic() < end, "the server did not re-seed and unlock")
+        time.sleep(0.2)
+    _default_reseed(srv, tmp, remote, "moved aside while locked")
+    # 3. the startup seed
+    srv.stop()
+    auth_p.unlink()
+    srv2 = ctx.server(tmp)
+    _default_reseed(srv2, tmp, remote, "deleted while stopped")
+    check("NOT imported" in srv2.log_text(), "the startup console says why the old password was not imported")
+    eq((tmp / "config.json").read_bytes(), cfg, "config.json byte-identical")
+    check((tmp / "v1-password-retired.txt").exists(), "no v1-password-retired.txt marker")
 
 
 @test("auth")

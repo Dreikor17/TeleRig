@@ -1354,7 +1354,8 @@ class Gate(BaseHTTPMiddleware):
     F21) -> exact Origin on every non-GET/HEAD (CSWSH, I15) -> JSON content type for API bodies
     (415) -> identify() -> coarse auth (401/303 to /login, restricted 403/303 to
     /change-password) -> the route (which re-checks its own @requires policy) -> security headers.
-    A WebSocket upgrade does not pass through here; ws_endpoint does the same checks itself."""
+    A WebSocket upgrade does not pass through here; ws_endpoint does the same checks itself (an
+    upgrade to any other path is refused before this by WsOnlyAtWs)."""
     async def dispatch(self, request, call_next):
         path = request.url.path
         try:
@@ -1409,6 +1410,42 @@ class Gate(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+WS_PATH = "/ws"
+_WS_REFUSED_BODY = b'{"ok": false, "error": "not_found"}'
+
+
+class WsOnlyAtWs:
+    """A WebSocket upgrade to any path but /ws is refused here, before any route (pure ASGI, outside
+    the Gate, which sees HTTP only). Without it Starlette's Mount("/static") also matches websocket
+    scopes and StaticFiles raises on them (HTTP 500 and a traceback, unauthenticated), and every
+    other path got a bare 403 without the security headers. The refusal is the same for everyone
+    (nothing is read from the request): a 404 JSON body with the security headers through the ASGI
+    websocket.http.response extension (uvicorn offers it), else a close before accept (uvicorn
+    answers 403). /ws itself is untouched: ws_endpoint makes its own checks (§2.11)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "websocket":
+            await self.app(scope, receive, send)
+            return
+        path, root = scope.get("path") or "", scope.get("root_path") or ""
+        if root and path.startswith(root):           # the route path, as the router matches it
+            path = path[len(root):]
+        if path == WS_PATH:
+            await self.app(scope, receive, send)
+            return
+        if "websocket.http.response" in (scope.get("extensions") or {}):
+            hdrs = [(k.lower().encode("latin-1"), v.encode("latin-1")) for k, v in SECURITY_HEADERS.items()]
+            hdrs += [(b"cache-control", b"no-store"), (b"content-type", b"application/json"),
+                     (b"content-length", str(len(_WS_REFUSED_BODY)).encode("ascii"))]
+            await send({"type": "websocket.http.response.start", "status": 404, "headers": hdrs})
+            await send({"type": "websocket.http.response.body", "body": _WS_REFUSED_BODY})
+        else:
+            await send({"type": "websocket.close", "code": 1008})
+
+
 # The Tailscale Serve routes moved to /api/admin/ (backend/admin_api.py): /api/remote_status,
 # /api/tailscale_serve and /api/tailscale_serve_off are gone (404), like /api/set_password.
 
@@ -1436,8 +1473,10 @@ routes = [
     Route("/api/connect", api_connect, methods=["POST"]),
     Route("/api/disconnect", api_disconnect, methods=["POST"]),
     Route("/api/tx_stop", api_tx_stop, methods=["POST"]),
-    WebSocketRoute("/ws", ws_endpoint),
+    WebSocketRoute(WS_PATH, ws_endpoint),
     _static,
 ]
 
-app = Starlette(debug=False, routes=routes, middleware=[Middleware(Gate)], lifespan=_lifespan)
+# WsOnlyAtWs first: a WebSocket upgrade off /ws never reaches a route (StaticFiles is HTTP-only).
+app = Starlette(debug=False, routes=routes, middleware=[Middleware(WsOnlyAtWs), Middleware(Gate)],
+                lifespan=_lifespan)

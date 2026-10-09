@@ -136,11 +136,13 @@ Lockouts**, with **Unlock** buttons. Ways back in:
   recovery command; then create individual accounts so the old shared password can retire. Until
   then the shared admin account may have 24 pages open at once.
 
-  The old password is imported **once**. If `auth.json` is later deleted or moved aside (for
-  example after the "TeleRig is locked" page), it is set up again like a fresh install — admin /
-  admin with a new setup code in the TeleRig window — even though `config.json` still holds the old
-  `password_hash`: `config.v1.bak.json` shows the migration already happened, so a retired shared
-  password never comes back.
+  The old password is imported **once**, and only into a folder where TeleRig never created its
+  account store. If `auth.json` is later deleted or moved aside (for example after the "TeleRig is
+  locked" page), or was first created by `run.bat --reset-admin`, it is set up again like a fresh
+  install — admin / admin with a new setup code in the TeleRig window — even though `config.json`
+  still holds the old `password_hash`, so a retired shared password never comes back. TeleRig
+  recognises such a folder by `v1-password-retired.txt` (written whenever it creates `auth.json`),
+  `config.v1.bak.json`, `auth.json.lock` or an `auth.json.corrupt-*` backup next to `config.json`.
 - **Tailscale Serve was on (`behind_proxy`) and no password was set.** At start-up TeleRig clears a
   stale `behind_proxy` flag when Tailscale says Serve isn't running for this port. If Serve really
   runs, every visitor — the host PC included — arrives through the proxy, so nobody counts as "on the

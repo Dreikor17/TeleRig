@@ -135,7 +135,9 @@
     const t = (now === undefined ? performance.now() : now) + PTT_REKEY_GUARD_MS;
     if (t > pttGuardUntil) pttGuardUntil = t;
   }
-  // The tab is hidden or being left (pagehide): a claim granted now is released at once (G-1 c).
+  // The tab is hidden or being left (pagehide): a claim granted now is released at once (G-1 c),
+  // and no claim is SENT at all (txSendClaim), so a deferred key (a touch hold whose 300 ms timer
+  // fires after the hide) can never key the radio from a page nobody is looking at.
   let pageGone = false;
   function pageAway() { return pageGone || !!document.hidden; }
 
@@ -161,6 +163,9 @@
   }
 
   function txSendClaim(obj, k) {
+    // Never KEY from a hidden or departing page (G-1 c): whatever asks — a deferred press, a timer,
+    // another module through RadioControl.send — nothing is sent. Unkeys are never held back.
+    if (pageAway()) return false;
     if (holds(k)) {                              // never re-send a held claim (F2, F19, I17)
       // Tuning is not observable: the server holds the tune claim until its 20 s cap. Say so
       // instead of silently ignoring the press.
@@ -898,6 +903,7 @@
   // (pttGuardUntil, after this tab's own PTT ended or a refused press) send nothing. So a STOP can
   // never be swallowed, and a double-click / a burst of STOP clicks can never re-key.
   const ptt = $("pttBtn");
+  let cancelPttHold = () => {};                  // a touch hold still timing (set below); hide/pagehide cancel it
   function pttLeft() {
     const since = ownedPtt() ? txSince : (pttPending ? pttPending.at : performance.now());
     return (state.ptt_tot || 120) - Math.floor((performance.now() - since) / 1000);
@@ -960,6 +966,10 @@
     const SWALLOW_MS = 800;
     let touchTimer = 0, touchHeld = false, touchId = null, swallowClickUntil = 0;
     const cancelHold = () => { touchHeld = false; clearTimeout(touchTimer); };
+    // Hiding the tab / leaving the page ends a hold that has not keyed yet: it never keys, not even
+    // when the tab is shown again with the finger still down (lift and hold again). The touch's
+    // compat-click window is left as it is, so its click stays swallowed.
+    cancelPttHold = cancelHold;
     const touchEnded = (e) => {
       if (touchId === null || e.pointerId !== touchId) return;
       touchId = null;
@@ -1000,13 +1010,14 @@
     });
   }
   // Hiding the tab or leaving the page releases what this tab holds; a claim still pending then is
-  // released when its grant lands (applyTx -> pageAway()). Back from the bfcache (pageshow) or
-  // visible again, grants are kept as usual.
+  // released when its grant lands (applyTx -> pageAway()). A touch hold still timing is cancelled,
+  // and while hidden / gone no claim is sent at all (txSendClaim). Back from the bfcache (pageshow)
+  // or visible again, presses and grants work as usual.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) autoRelease();
+    if (document.hidden) { cancelPttHold(); autoRelease(); }
     else pageGone = false;
   });
-  window.addEventListener("pagehide", () => { pageGone = true; autoRelease(); });
+  window.addEventListener("pagehide", () => { pageGone = true; cancelPttHold(); autoRelease(); });
   window.addEventListener("pageshow", () => { pageGone = false; });
 
   // ---- ON-AIR chip, two-tap STOP and the STOP FAB (§4.5) ----

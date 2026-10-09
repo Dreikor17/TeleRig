@@ -9,7 +9,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import secrets
+import socket
 import time
 
 import harness
@@ -173,3 +175,96 @@ def ws_state_hides_lan_address(ctx):
     with c.ws() as ws:
         eq(ws.recv_json(type="state").get("transport"), "Simulator")
     eq(c.post("/api/disconnect", None).status, 200)
+
+
+SEC_HDRS = ("x-frame-options", "content-security-policy", "x-content-type-options", "referrer-policy",
+            "cross-origin-opener-policy", "permissions-policy")
+
+
+def raw_upgrade(port: int, path: str, *, origin: str | None = None, cookie: str | None = None,
+                timeout: float = 5.0) -> tuple:
+    """One raw WebSocket upgrade request (no client library in between). Returns (status, headers with
+    lower-case names, body) of the server's HTTP answer; a 101 is closed again at once (no frame sent)."""
+    port = harness.check_port(port)
+    s = socket.create_connection(("127.0.0.1", port), timeout=timeout)
+    try:
+        lines = [f"GET {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Upgrade: websocket", "Connection: Upgrade",
+                 f"Sec-WebSocket-Key: {base64.b64encode(os.urandom(16)).decode()}", "Sec-WebSocket-Version: 13"]
+        if origin:
+            lines.append(f"Origin: {origin}")
+        if cookie:
+            lines.append(f"Cookie: {cookie}")
+        s.sendall(("\r\n".join(lines) + "\r\n\r\n").encode("latin-1"))
+        buf = b""
+        while b"\r\n\r\n" not in buf:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+        head, _, body = buf.partition(b"\r\n\r\n")
+        first, *rest = head.decode("latin-1").split("\r\n")
+        status = int(first.split()[1]) if len(first.split()) > 1 else 0
+        hdrs = {}
+        for ln in rest:
+            k, _, v = ln.partition(":")
+            hdrs.setdefault(k.strip().lower(), v.strip())
+        if status == 101:
+            return status, hdrs, b""
+        want = int(hdrs.get("content-length") or 0)
+        end = time.monotonic() + timeout
+        while len(body) < want and time.monotonic() < end:
+            try:
+                chunk = s.recv(4096)
+            except socket.timeout:
+                break
+            if not chunk:
+                break
+            body += chunk
+        return status, hdrs, body
+    finally:
+        s.close()
+
+
+@test("ws")
+def ws_upgrade_off_the_ws_path_is_refused_cleanly(ctx):
+    """Final review P2: a WebSocket upgrade to any path but /ws is refused before any route. Before,
+    /static/* reached StaticFiles (HTTP-only), which raised: HTTP 500 and a traceback on the console
+    for an unauthenticated request, outside the Gate; other paths got a bare 403 without the security
+    headers. Now: 404 {"ok": false, "error": "not_found"} with every security header and no-store,
+    the same signed in or not, nothing on the console; /ws and plain HTTP to /static are unchanged."""
+    srv = ctx.server()
+    port = srv.port
+    origin = f"http://127.0.0.1:{port}"
+    paths = ("/static/app.js", "/static/", "/static/style.css", "/static/vendor/lucide/sprite.svg", "/static/nope.js",
+             "/static/../run.py", "/", "/login", "/api/status", "/api/admin/users", "/ws/", "/WS", "/wss", "/nope")
+
+    def sweep(who: str, cookie: str | None) -> None:
+        for p in paths:
+            for o in (origin, None, "https://evil.example"):
+                st, h, body = raw_upgrade(port, p, origin=o, cookie=cookie)
+                tag = f"{who}, Origin {o}: WS upgrade {p}"
+                eq(st, 404, tag)
+                eq([x for x in SEC_HDRS if not h.get(x)], [], f"{tag}: security headers")
+                eq(h.get("cache-control"), "no-store", f"{tag}: Cache-Control")
+                try:
+                    j = json.loads(body.decode("utf-8"))
+                except ValueError:
+                    j = body[:200]
+                eq(j, {"ok": False, "error": "not_found"}, f"{tag}: body")
+
+    sweep("signed out", None)
+    c = harness.ready_admin(srv)
+    sweep("signed in", c.cookie_header())
+    time.sleep(0.3)
+    log = srv.log_text()
+    for bad in ("Exception in ASGI application", "Traceback", "AssertionError", "500 Internal Server Error"):
+        check(bad not in log, f"the server log has {bad!r}:\n{srv.log_tail(30)}")
+    check(srv.alive(), "server died")
+    # /ws itself and plain HTTP are unchanged
+    with c.ws() as ws:
+        check(ws.recv_json(type="hello").get("conn") is not None, "signed-in /ws: hello")
+    with srv.client().ws() as ws:
+        eq(ws.wait_closed(), (4401, "unauthenticated"), "signed-out /ws: still accepted, then 4401")
+    eq(raw_upgrade(port, "/ws", origin=origin, cookie=c.cookie_header())[0], 101, "raw upgrade to /ws: 101")
+    eq(c.get("/static/app.js").status, 200, "plain HTTP GET /static/app.js")
+    eq(srv.client().get("/static/app.js").status, 303, "plain HTTP GET /static/app.js signed out: to /login")

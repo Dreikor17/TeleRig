@@ -26,6 +26,9 @@
  *     the guard window after this page's PTT ended, (c) every ptt:on comes from a deliberate idle press
  *  H. a VOX / CW / PTT claim still pending when the tab is hidden (or left) is released when its grant
  *     lands, and heartbeats stop; a grant while visible is kept
+ *  I. no claim is ever SENT while the tab is hidden or after pagehide: a touch hold still timing at
+ *     the hide never keys (not even after the tab is back); RadioControl claims and presses while away
+ *     send nothing; randomized property over touches, holds, hides, pagehides and claims
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -144,7 +147,30 @@ function pageEnv(lat) {
     e.curOp = "after-touch";
   };
   e.hide = () => { e.doc.hidden = true; e.doc.dispatchEvent(new e.Event("visibilitychange")); };
-  e.show = () => { e.doc.hidden = false; e.doc.dispatchEvent(new e.Event("visibilitychange")); };
+  e.show = () => { e.doc.hidden = false; e.gone = false; e.doc.dispatchEvent(new e.Event("visibilitychange")); };
+  // section I: a finger that stays down across a hide, and "is this page away right now?" as a
+  // browser would say (document.hidden, or between pagehide and pageshow)
+  e.gone = false;
+  e.pagehide = () => { e.gone = true; e.win("pagehide", {}); };
+  e.pageshow = () => { e.gone = false; e.win("pageshow", {}); };
+  e.awayNow = () => !!e.doc.hidden || e.gone;
+  e.touchDown = () => { e.curOp = "touch-down"; fire(e.btn, "pointerdown", { pointerType: "touch", pointerId: 7 }); };
+  e.touchUp = (compat) => {
+    e.curOp = "touch-up";
+    e.win("pointerup", { pointerType: "touch", pointerId: 7 });
+    fire(e.btn, "pointerup", { pointerType: "touch", pointerId: 7 });
+    if (compat !== false) fire(e.btn, "click", { detail: 1, pointerType: "touch" });
+    e.curOp = "after-touch";
+  };
+  e.claimsSentAway = [];                          // [time, label] of every claim frame sent while away
+  const CLAIM_LBL = /^(ptt:on|vox:on|cw_tx|tune_atu)$/;
+  const orig2 = ws.send;
+  ws.send = (d) => {
+    const f = JSON.parse(d);
+    const lbl = f.action === "ptt" ? "ptt:" + (f.tx ? "on" : "off") : f.action === "rx_func" ? "vox:" + (f.on ? "on" : "off") : f.action;
+    if (CLAIM_LBL.test(lbl) && e.awayNow()) e.claimsSentAway.push([e.clock.now, lbl, e.curOp]);
+    orig2(d);
+  };
   return e;
 }
 
@@ -453,6 +479,125 @@ test("H a grant while the tab is visible is kept; after hide + show a new grant 
   e.ctx.RadioControl.send({ action: "cw_tx", text: "CQ", wpm: 18 });
   e.adv(1000);
   eq([...e.S.claims], ["cw"], "H back from the bfcache (pageshow): a new grant is kept");
+});
+
+// ---- I. no key is ever SENT while the tab is hidden or after pagehide (final review P2) --------------
+// A touch hold keys from a 300 ms timer. Before this fix, a hold still timing when the tab was hidden
+// (or the page left) fired anyway and sent ptt:true from the hidden page; only the grant's auto-release
+// (section H) took it back, after the radio had keyed. Now hide / pagehide cancel the hold, and no TX
+// claim (ptt, vox, cw, tune) leaves a hidden or departing page at all.
+for (const away of ["hidden", "pagehide"]) {
+  const goAway = (e) => (away === "hidden" ? e.hide() : e.pagehide());
+  const comeBack = (e) => (away === "hidden" ? e.show() : e.pageshow());
+  for (const heldMs of [40, 150, 290]) {
+    test(`I a touch hold ${heldMs} ms in when the tab is ${away}: it never keys, not even after the tab is back`, async () => {
+      const e = pageEnv(25);
+      e.touchDown();
+      e.adv(heldMs);
+      goAway(e);
+      e.curOp = "wait";
+      e.adv(600);                                  // the 300 ms hold timer would have fired in here
+      eq([e.frames(), e.claimsSentAway, e.S.keys], [[], [], 0], `I [${away}/${heldMs}] nothing sent while away, never keyed`);
+      comeBack(e);
+      e.adv(600);                                  // the finger is still down: a cancelled hold stays cancelled
+      eq([e.ons(), e.S.keyed], [0, false], `I [${away}/${heldMs}] back with the finger still down: still not keyed`);
+      e.touchUp();                                 // lift; the browser's compat click follows
+      e.adv(1500);
+      eq([e.frames(), e.S.keys, e.ctx.RadioTx.ownedOrPending(), e.label()], [[], 0, false, "PTT"],
+         `I [${away}/${heldMs}] the lift and its compat click key nothing`);
+      e.touch(400); e.adv(1000);                   // positive control: a new deliberate hold keys
+      eq([e.ptt(), e.S.keyed], [["ptt:on"], true], `I [${away}/${heldMs}] a fresh hold after the return keys`);
+    });
+  }
+  test(`I a touch hold that spans a short ${away} (back before 300 ms) is cancelled, not resumed`, async () => {
+    const e = pageEnv(25);
+    e.touchDown(); e.adv(80);
+    goAway(e); e.adv(60);
+    comeBack(e);
+    e.curOp = "wait"; e.adv(800);                  // the old timer would fire at 300 ms, on a visible page
+    eq([e.frames(), e.S.keys], [[], 0], `I [${away}] the interrupted hold keyed nothing`);
+    e.touchUp(); e.adv(1000);
+    eq([e.frames(), e.S.keys], [[], 0], `I [${away}] its lift + compat click keyed nothing`);
+  });
+  test(`I a touch hold lifted while the tab is ${away}: nothing is sent`, async () => {
+    const e = pageEnv(25);
+    e.touchDown(); e.adv(100);
+    goAway(e);
+    e.adv(100); e.touchUp(); e.adv(1000);
+    comeBack(e); e.adv(1000);
+    eq([e.frames(), e.claimsSentAway, e.S.keys], [[], [], 0], `I [${away}] a hold lifted while away sent nothing`);
+  });
+  for (const [name, msg] of [["PTT", { action: "ptt", tx: true }], ["VOX", { action: "rx_func", name: "vox", on: true }],
+                             ["CW", { action: "cw_tx", text: "CQ", wpm: 18 }], ["TUNE", { action: "tune_atu" }]]) {
+    test(`I a ${name} claim asked for while the tab is ${away} is not sent (RadioControl.send -> false)`, async () => {
+      const e = pageEnv(25);
+      goAway(e);
+      e.curOp = "radiocontrol";
+      eq(e.ctx.RadioControl.send(Object.assign({}, msg)), false, `I [${away}/${name}] send() refuses`);
+      e.adv(1000);
+      eq([e.frames(), [...e.S.claims], e.ctx.RadioTx.ownedOrPending(), e.S.hb], [[], [], false, 0],
+         `I [${away}/${name}] no frame, no claim, nothing pending, no heartbeat`);
+      comeBack(e);
+      eq(e.ctx.RadioControl.send(Object.assign({}, msg)), true, `I [${away}/${name}] back: the same send goes out`);
+    });
+  }
+  test(`I a click / Enter on PTT while the tab is ${away} sends nothing`, async () => {
+    const e = pageEnv(25);
+    goAway(e);
+    e.mouse(1); e.adv(200); e.key("Enter"); e.adv(200); e.pen(1); e.adv(1000);
+    eq([e.frames(), e.S.keys], [[], 0], `I [${away}] presses while away sent nothing`);
+  });
+}
+test("I property: random touches, holds, hides, pagehides and claims never send a claim while away", async () => {
+  let seed = 0x0A11D0E5;
+  const rnd = () => { seed ^= seed << 13; seed >>>= 0; seed ^= seed >>> 17; seed ^= seed << 5; seed >>>= 0; return seed / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  const CLAIM_MSGS = [{ action: "ptt", tx: true }, { action: "rx_func", name: "vox", on: true },
+                      { action: "cw_tx", text: "CQ", wpm: 18 }, { action: "tune_atu" }];
+  let bad = 0, holdKeysAfterAway = 0, holdKeys = 0, awayPeriods = 0, cancelledHolds = 0, firstBad = "";
+  for (let run = 0; run < 60; run++) {
+    const e = pageEnv(5 + Math.floor(rnd() * 100));
+    let state = "visible", down = false, awaySinceDown = false, downAt = 0;
+    const trace = [];
+    const orig = e.sock.send;
+    e.sock.send = (d) => {                        // a ptt:on while the finger is down and no press runs = the hold timer
+      const f = JSON.parse(d);
+      if (f.action === "ptt" && f.tx === true && down && e.curOp === "wait") {
+        holdKeys++;
+        if (awaySinceDown) { holdKeysAfterAway++; if (!firstBad) firstBad = `run ${run}: a hold keyed after an away; trace ${trace.join(" ")}`; }
+      }
+      orig(d);
+    };
+    for (let i = 0; i < 50; i++) {
+      const r = rnd();
+      let op;
+      if (r < 0.18 && !down) { op = "down"; e.touchDown(); down = true; awaySinceDown = false; downAt = e.clock.now; }
+      else if (r < 0.30 && down) {
+        op = "up"; if (e.clock.now - downAt < 300 && awaySinceDown) cancelledHolds++;
+        e.touchUp(rnd() < 0.8); down = false;
+      }
+      else if (r < 0.42) {
+        if (state === "visible") { if (rnd() < 0.6) { op = "hide"; e.hide(); state = "hidden"; } else { op = "pagehide"; e.pagehide(); state = "gone"; } awayPeriods++; if (down) awaySinceDown = true; }
+        else if (state === "hidden") { op = "show"; e.show(); state = "visible"; }
+        else { op = "pageshow"; e.pageshow(); state = "visible"; }
+      }
+      else if (r < 0.52) { op = "claim"; e.curOp = "radiocontrol"; e.ctx.RadioControl.send(Object.assign({}, pick(CLAIM_MSGS))); }
+      else if (r < 0.60 && state === "visible") { op = "click"; e.mouse(1); }
+      else if (r < 0.64) { op = "end"; e.curOp = "server"; e.serverEnds(); }
+      else { const ms = pick([50, 120, 200, 280, 350, 600, 1500]); op = "w" + ms; e.curOp = "wait"; e.adv(ms); }
+      trace.push(op);
+    }
+    e.curOp = "wait"; e.adv(4000);
+    if (e.claimsSentAway.length) {
+      bad += e.claimsSentAway.length;
+      if (!firstBad) firstBad = `run ${run}: ${JSON.stringify(e.claimsSentAway[0])} sent while away; trace ${trace.join(" ")}`;
+    }
+  }
+  check(bad === 0, `I property: ${bad} claim frames were sent while the page was away: ${firstBad}`);
+  check(holdKeysAfterAway === 0, `I property: ${holdKeysAfterAway} touch holds keyed although the tab went away during them: ${firstBad}`);
+  check(holdKeys > 20 && awayPeriods > 200 && cancelledHolds > 10,
+        `I property exercised holds (${holdKeys} hold keys), away periods (${awayPeriods}) and holds spanning an away (${cancelledHolds})`);
+  console.log(`info I property: 60 runs x 50 ops: ${holdKeys} hold keys, ${awayPeriods} away periods, ${cancelledHolds} holds spanning an away`);
 });
 
 (async () => {
