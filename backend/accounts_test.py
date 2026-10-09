@@ -584,6 +584,7 @@ d = use_dir("p2-reset-existing")
 accounts.ensure_initialized(reconcile_mode="skip")           # no config.json: the default seed, no copy
 (d / RETIRED).unlink(missing_ok=True)
 (d / "config.json").write_text(json.dumps({"allowed_hosts": ["radio-pc"]}), encoding="utf-8")
+settings._reset_for_tests()                                  # drop the 0.5 s stat cache: see the new config.json
 accounts.reset_admin("Reset#Exist-2030")
 C("P2 reset-admin on an existing store: the marker again, no config.v1.bak.json of a v2 config",
   ((d / RETIRED).exists(), (d / "config.v1.bak.json").exists()), (True, False))
@@ -621,6 +622,7 @@ accounts.ensure_initialized(reconcile_mode="skip")
 C("P2 fresh install: the marker is written, no config.v1.bak.json", ((d / RETIRED).exists(), (d / "config.v1.bak.json").exists()),
   (True, False))
 (d / "config.json").write_text(json.dumps({"password_hash": v1_hash("hunter22")}), encoding="utf-8")
+settings._reset_for_tests()                                  # drop the 0.5 s stat cache: see the new config.json
 (d / "auth.json").unlink()
 C("P2 fresh install, a v1 config.json copied in, auth.json deleted -> the default ADMIN", reseed(), DEFAULT_SEED)
 
