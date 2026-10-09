@@ -25,10 +25,14 @@ Rules (see the table in §2.13):
   * Reconciliation: a claim not shown in radio state for 1 s after the key grace is dropped (the
     radio failsafe, a finished CW message, a start that silently did nothing).
   * EXTERNAL needs 0.6 s of persistent radio TX while idle; a session the radio ended is reattached
-    to its still-open connection if TX shows again within 5 s (AR-47).
+    to its still-open connection if TX shows again within 5 s (AR-47). Only a session whose ptt or
+    cw claim the RADIO ended (reconciliation) qualifies: TX that shows after a tune claim lapsed at
+    its cap is never the TUNE owner's, so it is FRONT PANEL (F6).
   * Every transition to IDLE sets a release grace (2 s, +1.5 s after CW) (AR-10).
   * force_release() unkeys only what the app keyed unless explicit (STOP, shutdown), each step in
-    its own try (I4), and flushes buffered TX audio (AR-18).
+    its own try (I4), and flushes buffered TX audio (AR-18). A ptt / cw claim the app keyed is
+    always unkeyed, whatever the radio's last poll said (a Yaesu TX; answer in flight when TX1; went
+    out reads TX0 for one poll period); the polled state only decides for what the app did NOT key.
 """
 from __future__ import annotations
 
@@ -353,7 +357,12 @@ class TxArbiter:
                       claim: Optional[str] = None) -> None:
         """Release everything. Unkeys only what the app keyed unless explicit; each step on its own
         so nothing can skip an unkey (I4). `claim` names the claim whose cap ended the session (cw);
-        it rides on tx_revoked so the owner is told which limit was reached."""
+        it rides on tx_revoked so the owner is told which limit was reached.
+        A ptt / cw claim the app holds is ALWAYS stopped (like release() and stop()): the polled
+        state can lag the app's own key (a Yaesu TX; answer already in flight when TX1; went out
+        reads TX0 for one poll period), and trusting it here would leave the radio keyed while the
+        arbiter goes IDLE (I4, I5). The polled state decides only for an explicit stop of something
+        the app did not claim (a FRONT PANEL key, a stray CW)."""
         # A FRONT PANEL session's ptt was not keyed by the app: only an explicit STOP unkeys it.
         claims = set(self.claims) if self.owner != EXTERNAL else set()
         r = None
@@ -363,12 +372,12 @@ class TxArbiter:
             pass
         st = getattr(r, "state", None) or {}
         try:
-            if ("ptt" in claims or explicit) and st.get("ptt"):
+            if "ptt" in claims or (explicit and st.get("ptt")):
                 r.set_ptt(False)
         except Exception as e:
             self.log(f"TeleRig: unkey failed: {e!r}")
         try:
-            if ("cw" in claims or explicit) and st.get("cw_tx"):
+            if "cw" in claims or (explicit and st.get("cw_tx")):
                 r.stop_cw()
         except Exception as e:
             self.log(f"TeleRig: CW stop failed: {e!r}")
@@ -403,7 +412,9 @@ class TxArbiter:
         self.absent_since = {}
         self.tx_session = None
 
-    def _end_session(self, reason: str, by: Optional[str]) -> None:
+    def _end_session(self, reason: str, by: Optional[str], radio_ended=()) -> None:
+        """`radio_ended`: the claims whose end the RADIO reported (reconciliation) and that ended the
+        session. Only a session that ended with ptt or cw among them may be reattached (AR-47)."""
         now = self.clock()
         had_cw = "cw" in self.ever
         st = self._state()
@@ -419,6 +430,7 @@ class TxArbiter:
         self.last_session = {"conn": self.owner_conn if self.owner != EXTERNAL else None,
                              "claims": set(self.ever), "start": self.session_start,
                              "start_wall": self.session_wall, "ended_at": now, "reason": reason,
+                             "radio_ended": set(radio_ended or ()),
                              "tx_session": dict(self.tx_session or {})}
         self._reset_owner()
         self.release_grace_until = now + RELEASE_GRACE + (RELEASE_GRACE_CW if had_cw else 0.0)
@@ -505,7 +517,7 @@ class TxArbiter:
         if dropped:
             if not self.claims:
                 # reason `done` when a CW message finished on its own, else `radio`
-                self._end_session("done" if dropped == ["cw"] else "radio", None)
+                self._end_session("done" if dropped == ["cw"] else "radio", None, radio_ended=dropped)
             else:
                 self._bcast()
 
@@ -517,7 +529,10 @@ class TxArbiter:
           * tune: tuning is not observable and has no stop primitive, so the cap is the normal end of
             the claim: it is dropped, nothing is sent to the radio.
         With nothing else held the session ends: `timeout` (tx_revoked naming cw) when the CW cap
-        ended it, `done` when only the tune claim lapsed. Returns True when the session ended."""
+        ended it, `done` when only the tune claim lapsed. A lapsed tune claim is not a radio-ended
+        claim, so TX the radio shows afterwards is FRONT PANEL, never reattached to the TUNE owner
+        (F6: a front-panel or physical-mic over is never handed to a browser that could unkey it).
+        Returns True when the session ended."""
         if not (self.claims - set(expired)):
             if "cw" in expired:
                 self.force_release("timeout", claim="cw")
@@ -537,8 +552,15 @@ class TxArbiter:
         return False
 
     def _external_or_reattach(self, now: float, st: dict) -> None:
+        """Persistent radio TX while IDLE: reattach (AR-47) or FRONT PANEL. Reattach is only for the
+        cases AR-47 covers, a misread poll that ended the app's own ptt and the Yaesu CW break-in
+        hang: the last session must have ended because the radio stopped showing its ptt or cw
+        claim (`radio_ended`), within 5 s, with its connection still open. Anything else (a tune
+        claim that lapsed at its cap, a vox session, an owner release, a forced release) is FRONT
+        PANEL, which no browser drop, heartbeat or session clock can unkey (F6)."""
         ls = self.last_session
         if ls and ls.get("conn") is not None and ls.get("reason") in ("radio", "done") \
+                and (set(ls.get("radio_ended") or ()) & {"ptt", "cw"}) \
                 and now - ls.get("ended_at", -1e9) < REATTACH_WINDOW and self.conn_alive(ls["conn"]):
             c = ls["conn"]
             self.owner, self.owner_conn, self.owner_user = c.id, c, c.user

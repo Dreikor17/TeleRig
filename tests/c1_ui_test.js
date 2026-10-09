@@ -15,6 +15,10 @@
  *     RadioControl.send is called, for claims this tab ALREADY holds, so nothing is ever sent.
  *     admin.js Remote: a behind_proxy flag set by hand ("manual") is shown as such, never as stale,
  *     and no Clear flag is offered (not even through the notice's clearFlag path).
+ *  G. app.js PTT button (final review round 2): a double-click, a repeated key or a click right after
+ *     this page's own PTT ended never re-keys. The PTT button is a fake element of a FAKE page whose
+ *     "server" is a few lines of in-memory JS (the arbiter's ptt rules, a one-way latency); "keyed" is
+ *     a boolean in this test. Nothing here can reach a server or a radio.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -226,6 +230,7 @@ function appEnv() {
   env.load("tr.js");
   env.load("app.js");
   const ws = sockets[sockets.length - 1];
+  env.sock = ws;
   env.frame = (f) => ws.onmessage({ data: JSON.stringify(f) });
   env.frame({ type: "hello", v: 1, conn: 3, user: "ME", role: "operator",
               perms: ["view", "listen", "menu_read", "operate", "tx", "connect", "menu"], status: {}, tx: { owner: null }, hb_interval: 2 });
@@ -380,6 +385,152 @@ test("F Remote: a stale Tailscale-set flag still offers Clear flag", async () =>
   check(!!env.dialog().querySelector("#admClearFlag"), "F tailscale stale: Clear flag offered");
   check(env.text().includes("so this flag is stale") && env.text().includes("it is set when Tailscale confirms Serve is on"),
         "F tailscale stale: the stale warning and the Tailscale note");
+});
+
+// ---- G. app.js PTT button (final review round 2): a click can never turn a STOP into a new key -----------
+// The REAL tr.js + app.js; the PTT button is a fake element of a fake page. The "server" is a few lines of
+// in-memory JS applying the arbiter's ptt rules for this one connection, with a one-way latency: every
+// frame the page sends reaches it LAT ms later, every answer reaches the page LAT ms later. "keyed" is a
+// boolean in this test. No browser, no server process, no socket, no radio.
+function pttEnv(lat) {
+  const e = appEnv();
+  const radio ={ keyed: false, keys: 0, keyTimes: [], unkeyTimes: [] };
+  let owner = null;
+  e.lat = lat;
+  e.log = [];                                    // [time, "ptt:on"|"ptt:off"] as the page sent them
+  e.offSeen = [];                                // times the page saw ITS ptt end (a null tx frame while it owned ptt)
+  const deliver = (f) => {
+    e.clock.setTimeout(() => {
+      if (f.owner === null && e.ctx.RadioTx.ownedPtt()) e.offSeen.push(e.clock.now);
+      e.frame(f);
+    }, e.lat);
+  };
+  function onServer(f) {
+    if (f.action !== "ptt") return;
+    if (f.tx === true) {
+      if (!owner) {
+        owner = { conn: 3, user: "ME", claims: ["ptt"], elapsed_ms: 0, external: false };
+        radio.keyed = true; radio.keys++; radio.keyTimes.push(e.clock.now);
+      }
+      deliver({ type: "tx", owner, req: { conn: 3, seq: f.seq } });
+    } else if (owner) {                          // the owner's ptt false (auto or not)
+      owner = null; radio.keyed = false; radio.unkeyTimes.push(e.clock.now);
+      deliver({ type: "tx", owner: null });
+    }
+  }
+  e.serverEnds = () => {                         // the server ends the session (120 s clock, a STOP, a drop)
+    if (!owner) return;
+    owner = null; radio.keyed = false; radio.unkeyTimes.push(e.clock.now);
+    deliver({ type: "tx", owner: null });
+  };
+  const sock = e.sock;
+  const orig = sock.send;
+  sock.send = (d) => {
+    orig(d);
+    const f = JSON.parse(d);
+    if (f.action === "ptt") e.log.push([e.clock.now, "ptt:" + (f.tx ? "on" : "off") + (f.auto ? "(auto)" : "")]);
+    e.clock.setTimeout(() => onServer(f), e.lat);
+  };
+  e.radio = radio;
+  e.btn = e.doc.getElementById("pttBtn");
+  e.click = (detail) => e.btn.dispatchEvent(new e.Event("click", { detail: detail === undefined ? 1 : detail }));
+  e.frames = () => e.log.map((x) => x[1]);
+  e.label = () => e.btn.textContent;
+  return e;
+}
+const ON_AIR = /^ON AIR \d+s — STOP$/;
+for (const lat of [5, 25, 60]) {
+  test("G mouse double-click on 'ON AIR — STOP' (one-way " + lat + " ms): unkeys once, never re-keys", async () => {
+    const e = pttEnv(lat);
+    e.click(1); e.clock.advance(3000);
+    eq([e.frames(), e.radio.keyed], [["ptt:on"], true], "G keyed by one click");
+    check(ON_AIR.test(e.label()), "G the button reads ON AIR … — STOP (" + e.label() + ")");
+    e.click(1); e.clock.advance(200);            // a double-click: the 2nd click 200 ms later, detail 2
+    e.click(2); e.clock.advance(3000);
+    eq([e.frames(), e.radio.keyed, e.radio.keys, e.label()], [["ptt:on", "ptt:off"], false, 1, "PTT"],
+       "G the 2nd click of the double-click sends nothing: unkeyed, keyed once");
+  });
+}
+test("G two separate clicks 200 ms apart (or Enter pressed twice): the 2nd sends nothing (re-key guard)", async () => {
+  const e = pttEnv(25);
+  e.click(1); e.clock.advance(3000);
+  e.click(1); e.clock.advance(200);
+  e.click(1);                                    // a slow double-click reads detail 1
+  e.click(0); e.clock.advance(400);              // a keyboard click (Enter / Space) has detail 0
+  e.click(0); e.clock.advance(2000);
+  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on", "ptt:off"], false, 1], "G clicks right after the unkey are inert");
+  e.click(1); e.clock.advance(1000);
+  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on", "ptt:off", "ptt:on"], true, 2],
+     "G a deliberate click after the guard window keys again");
+});
+test("G the server ends our session as STOP is clicked: that click never re-keys", async () => {
+  const e = pttEnv(25);
+  e.click(1); e.clock.advance(3000);
+  e.serverEnds(); e.clock.advance(100);          // e.g. the 120 s session clock; the null frame has landed
+  eq([e.radio.keyed, e.label()], [false, "PTT"], "G the session ended by the server");
+  e.click(1); e.clock.advance(300); e.click(0); e.clock.advance(2000);
+  eq([e.frames(), e.radio.keys], [["ptt:on"], 1], "G clicks meant as STOP right after the end send nothing");
+  e.click(1); e.clock.advance(1000);
+  eq([e.frames(), e.radio.keyed], [["ptt:on", "ptt:on"], true], "G a click 2 s later keys as before");
+});
+test("G a double-click on an idle PTT keys once and stays keyed (no key/unkey blip)", async () => {
+  const e = pttEnv(25);
+  e.click(1); e.clock.advance(150); e.click(2); e.clock.advance(3000);
+  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on"], true, 1], "G idle double-click: one key, no unkey");
+  check(ON_AIR.test(e.label()), "G ... the button reads ON AIR … — STOP (" + e.label() + ")");
+});
+test("G a held Enter / Space: the auto-repeat keydowns are cancelled (no click), the first press is not", async () => {
+  const e = pttEnv(25);
+  const kd = (key, repeat) => e.btn.dispatchEvent(new e.Event("keydown", { key, repeat }));
+  eq([kd("Enter", true), kd(" ", true), kd("Spacebar", true)], [false, false, false], "G repeats: default prevented");
+  eq([kd("Enter", false), kd(" ", false), kd("a", true)], [true, true, true], "G first press / other keys: untouched");
+  eq(e.frames(), [], "G keydown alone sends nothing");
+});
+test("G touch: a double-TAP on 'ON AIR — STOP' unkeys once and never re-keys", async () => {
+  const e = pttEnv(25);
+  const pd = (t) => e.btn.dispatchEvent(new e.Event(t, { pointerType: "touch", pointerId: 7 }));
+  pd("pointerdown"); e.clock.advance(400); pd("pointerup"); e.click(1);   // a 400 ms hold keys
+  e.clock.advance(3000);
+  eq([e.radio.keyed, e.radio.keys], [true, 1], "G touch hold keyed");
+  pd("pointerdown"); e.clock.advance(80); pd("pointerup"); e.click(1);
+  e.clock.advance(120);
+  pd("pointerdown"); e.clock.advance(80); pd("pointerup"); e.click(2);
+  e.clock.advance(3000);
+  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on", "ptt:off"], false, 1], "G touch double-tap: unkeyed once");
+});
+// G property: random click / double-click / keyboard / server-end / latency sequences. No ptt:on may leave
+// the page less than 800 ms after its own ptt:off or after it saw its own ptt end, and the radio is never
+// keyed again less than 800 ms (minus one round trip) after this page's PTT ended.
+test("G property: no click re-keys within 800 ms of this page's own PTT ending", async () => {
+  let seed = 0x1F2E3D4C;
+  const rnd = () => { seed ^= seed << 13; seed >>>= 0; seed ^= seed >>> 17; seed ^= seed << 5; seed >>>= 0; return seed / 4294967296; };
+  let bad = 0, ons = 0, offs = 0, firstBad = "";
+  for (let run = 0; run < 60; run++) {
+    const e = pttEnv(5 + Math.floor(rnd() * 120));
+    const trace = [];
+    for (let i = 0; i < 40; i++) {
+      const r = rnd();
+      if (r < 0.35) { e.click(1); trace.push("c"); }
+      else if (r < 0.5) { e.click(1); e.clock.advance(80 + Math.floor(rnd() * 300)); e.click(2); trace.push("dbl"); }
+      else if (r < 0.6) { e.click(0); trace.push("k"); }
+      else if (r < 0.68) { e.serverEnds(); trace.push("end"); }
+      else { const ms = Math.floor(rnd() * 1500); e.clock.advance(ms); trace.push("w" + ms); }
+    }
+    e.clock.advance(3000);
+    let lastOff = -1e9;
+    const ends = e.offSeen.slice();
+    for (const [t, f] of e.log) {
+      if (f.startsWith("ptt:off")) { lastOff = t; offs++; continue; }
+      ons++;
+      const lastEnd = Math.max(lastOff, ...ends.filter((x) => x <= t), -1e9);
+      if (t - lastEnd < 800) {
+        bad++;
+        if (!firstBad) firstBad = "run " + run + ": ptt:on " + (t - lastEnd) + " ms after this page's PTT ended; trace " + trace.join(" ");
+      }
+    }
+  }
+  check(bad === 0, "G property: " + bad + " re-keys inside the guard: " + firstBad);
+  check(ons > 100 && offs > 100, "G property: the run exercised both sides (" + ons + " ptt:on, " + offs + " ptt:off)");
 });
 
 (async () => {

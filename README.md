@@ -36,7 +36,8 @@ and only one operator transmits at a time.
   (RS-BA1, for networked Icoms — MOD Input auto-routed on connect and restored on
   disconnect) or via the **host PC's sound card** for USB/serial radios (e.g. an
   FT-891 on a Digirig).
-- **PTT** tap-to-toggle (a short hold on touch screens) with a **failsafe time-out** — a
+- **PTT** tap-to-toggle (a short hold on touch screens; a double-click, a key's auto-repeat or a
+  click just after it unkeyed never re-keys) with a **failsafe time-out** — a
   client countdown, an independent server-side auto-unkey and a 120 s session limit, plus
   release on screen-lock / disconnect. A hardware TX time-out is set on connect as a backstop.
 - **One transmitter, many users** — accounts with roles (viewer / operator / admin); one

@@ -2,12 +2,14 @@
 
 In-process, with a fake clock and a fake (recording) radio: the arbiter state machine (§2.13),
 T41 (idempotent claims against a REAL Radio + SimTransport: the radio deadline is never pushed
-back), T46 (EXTERNAL debounce, flap, CW grace, reattach), T61 (session clock and caps), T62
-(phantom claim dropped by reconciliation), T63 (release grace on every IDLE transition + audio
-flush), T68 (lag-aware watchdog, a raising tick keeps the loop alive).
+back), T46 (EXTERNAL debounce, flap, CW grace, reattach only after a radio-ended ptt / cw claim, never
+after a lapsed tune claim), T61 (session clock and caps), T62 (phantom claim dropped by
+reconciliation), T63 (release grace on every IDLE transition + audio flush), T68 (lag-aware watchdog,
+a raising tick keeps the loop alive), and force_release always unkeying an app-keyed claim even when
+the radio's last poll is stale (a fake radio and the real Yaesu CAT parser).
 
-Only the built-in simulator is ever connected (T41), in this process; no server, socket, sound card
-or file is touched.
+Only the built-in simulators are ever connected (T41: Icom CI-V; the stale-poll case: Yaesu CAT), in
+this process; no server, socket, sound card or file is touched.
 """
 import asyncio
 import threading
@@ -174,6 +176,90 @@ C("T20 another client's drop never unkeys", (e.arb.owner, e.radio.calls), (1, []
 e.arb.on_conn_closed(a)
 C("T19 the owner's drop unkeys immediately", (e.arb.owner, e.radio.calls), (None, [("set_ptt", False)]))
 
+# A ptt / cw claim the APP keyed is always unkeyed by force_release, whatever the radio's last poll said
+# (final review round 2). On a Yaesu, a TX; answer already in flight when TX1; went out is parsed after the
+# key and reads TX0 for one poll period: a STOP, the owner's drop or kick, a heartbeat stall, an admin
+# switch, a radio change, a locked server or shutdown in that window must still send the unkey (I4, I5).
+def _stale_release(fn, k="ptt"):
+    env = Env(FakeRadio("ft991a"))
+    c, other = env.conn(1), env.conn(2)
+    env.arb.claim(c, k, args={"text": "CQ", "wpm": 20} if k == "cw" else None)
+    env.radio.state["ptt" if k == "ptt" else "cw_tx"] = False      # the stale poll answer
+    env.radio.calls.clear()
+    fn(env, c, other)
+    return env.arb.owner, env.radio.calls
+
+
+def _stale_kicked(env, c, other):
+    c.closing = True
+    env.tick(0.1, 0.1)
+
+
+def _stale_hb(env, c, other):
+    env.clock.t += 7
+    env.arb.tick(gap=0.5)
+
+
+_STALE_CASES = {"STOP by another operator": lambda env, c, o: env.arb.stop(o),
+                "HTTP STOP": lambda env, c, o: env.arb.stop(Principal()),
+                "owner's socket drop": lambda env, c, o: env.arb.on_conn_closed(c),
+                "owner kicked (watchdog backstop)": _stale_kicked,
+                "heartbeat stall": _stale_hb,
+                "admin_switch": lambda env, c, o: env.arb.force_release("admin_switch", by="ADM", explicit=True),
+                "radio_change": lambda env, c, o: env.arb.force_release("radio_change", by="OP2"),
+                "radio_disconnect": lambda env, c, o: env.arb.force_release("radio_disconnect", by="OP2"),
+                "server_locked": lambda env, c, o: env.arb.force_release("server_locked"),
+                "shutdown": lambda env, c, o: env.arb.force_release("shutdown", explicit=True)}
+C("stale TX0 right after the app keyed: every forced release still sends set_ptt(False)",
+  {k: _stale_release(f) for k, f in _STALE_CASES.items()}, {k: (None, [("set_ptt", False)]) for k in _STALE_CASES})
+C("... and a cw claim whose cw_tx reads False is still stopped (stop_cw is harmless)",
+  {k: _stale_release(f, "cw") for k, f in _STALE_CASES.items()}, {k: (None, [("stop_cw",)]) for k in _STALE_CASES})
+e = Env(FakeRadio("ft991a"))
+a = e.conn(1)
+e.arb.claim(a, "vox")
+e.radio.state["ptt"] = False
+e.radio.calls.clear()
+e.arb.force_release("heartbeat")
+C("... a claim the app did NOT key is still never unkeyed by a non-explicit release (F6)", e.radio.calls,
+  [("set_rx_func", "vox", False)])
+
+# The same with the REAL Yaesu CAT parser on the built-in simulator (no port, socket or radio; the
+# simulator's TX is a string field). The poll is stopped so the stale answer can be placed exactly: a
+# "TX0;" delivered after TX1; (as a reply already in flight is) makes state.ptt False. A STOP or the
+# owner's drop right then must leave the simulator unkeyed (before the fix it stayed TX1, and 2.6 s later
+# the arbiter called TeleRig's own carrier FRONT PANEL).
+from backend.transport import YaesuSimTransport  # noqa: E402
+from backend.yaesu import YaesuRadio  # noqa: E402
+
+_yprof = profiles.PROFILES["ft991a"]
+_ytp = YaesuSimTransport(_yprof)
+_yr = YaesuRadio(_yprof)
+_yr.connect(_ytp, _yprof)
+try:
+    C("Yaesu stale TX0: the in-process radio is the CAT simulator", type(_yr._tp).__name__, "YaesuSimTransport")
+    _yr._poll_stop.set()
+    _yr._poll_thread.join(timeout=2.0)
+    for how in ("STOP by another operator", "owner's socket drop", "heartbeat stall"):
+        env = Env(radio=_yr)
+        c, other = env.conn(1), env.conn(2)
+        C(f"Yaesu stale TX0 ({how}): OP1 keys", (env.arb.claim(c, "ptt"), _ytp.tx), ("started", "1"))
+        _yr._on_bytes(b"TX0;")                     # the answer to a TX; query sent before the key
+        C("... the real parser now reads receive (state.ptt False) while the simulator is keyed",
+          (_yr.state["ptt"], _ytp.tx), (False, "1"))
+        {"STOP by another operator": lambda: env.arb.stop(other),
+         "owner's socket drop": lambda: env.arb.on_conn_closed(c),
+         "heartbeat stall": lambda: _stale_hb(env, c, other)}[how]()
+        C(f"... {how}: IDLE and the simulator is unkeyed (TX0;)", (env.arb.owner, _ytp.tx), (None, "0"))
+        for _ in range(8):                         # 4 s of watchdog, a TX; read before each tick (the poll)
+            _yr._send("TX;")                       # the simulator answers at once: state.ptt = its TX
+            env.arb.on_radio_state(dict(_yr.state))
+            env.tick()
+        C("... 4 s later still IDLE: TeleRig's own carrier is not left up as FRONT PANEL",
+          (env.arb.owner, _ytp.tx, _yr.state["ptt"]), (None, "0", False))
+finally:
+    _yr.disconnect()
+C("Yaesu stale TX0: simulator disconnected, unkeyed", (_yr.state["connected"], _ytp.tx), (False, "0"))
+
 # -- T46: EXTERNAL debounce, busy, end; flap; CW grace; reattach -----------------------------------------
 e = Env(FakeRadio("ft991a"))
 a, b = e.conn(1), e.conn(2)
@@ -272,6 +358,135 @@ C("... the session clock continues from the first start", e.arb.session_start, s
 C("... audit tx_reattach", len(e.evs("tx_reattach")), 1)
 e.arb.on_conn_closed(a)
 C("... and the drop rule applies again (owner close unkeys)", (e.arb.owner, e.radio.calls[-1]), (None, ("set_ptt", False)))
+
+# T46 (final review round 2): only a session whose ptt or cw claim the RADIO ended is reattached (AR-47:
+# a misread poll, the Yaesu CW break-in hang). A tune claim that lapses at its 20 s cap is not one: TX the
+# radio shows after it (a front-panel or physical-mic over keyed during the tune claim, in the release
+# grace, or just after it) is FRONT PANEL. The TUNE owner's drop, ptt false, PTT claim, silence or session
+# clock can never unkey it, and its mic never reaches it (F6, I10); the audit never names OP1 (I21).
+class _MicRadio(FakeRadio):
+    def __init__(self, pid):
+        super().__init__(pid)
+        self.audio = 0
+
+    def write_audio(self, data):
+        self.audio += len(data)
+
+
+class _HubStub:
+    conns = {}
+
+    def send_to(self, c, f):
+        pass
+
+
+def _run_until(env, c, t_end, key_at=None, key=True):
+    """Watchdog ticks every 0.5 s to t_end; OP1's browser heartbeats every 2 s (a no-op unless it owns
+    TX); from key_at on the radio reports TX that TeleRig did not key (`key` False: receive)."""
+    n = 0
+    while env.clock.t < t_end - 1e-9:
+        env.clock.t += 0.5
+        n += 1
+        if key_at is not None and env.clock.t >= key_at:
+            env.radio.state["ptt"] = key
+        if n % 4 == 0:
+            env.arb.on_tx_hb(c)
+        env.arb.on_radio_state(dict(env.radio.state))
+        env.arb.tick(gap=0.5)
+
+
+def _front_panel_is_safe(env, c, alive, tag):
+    C(tag + ": the radio's TX is FRONT PANEL, not OP1's",
+      (env.arb.owner, env.arb.label(), sorted(env.arb.claims)), (txarb.EXTERNAL, "FRONT PANEL", ["ptt"]))
+    C("... no tx_reattach; tx_start kind external; nothing in the audit names OP1 for this TX",
+      (len(env.evs("tx_reattach")), [k["kind"] for k in env.evs("tx_start")][1:], env.evs("tx_start")[-1]["user"]),
+      (0, ["external"], "FRONT PANEL"))
+    router = AudioRouter(_HubStub(), HostAudio(lambda pcm: None), lambda: env.radio, lambda: "lan")
+    router.arb = env.arb
+    c.tx_audio = True
+    C("... OP1's mic frame is not passed to the radio (I10)", (router.mic_in(c, b"\x00" * 640), env.radio.audio), (False, 0))
+    env.radio.calls.clear()
+    C("... OP1's ptt false (a PTT click, a hidden-tab autoRelease) -> not the owner, nothing sent",
+      (env.arb.release(c, "ptt"), env.radio.calls), (False, []))
+    C("... OP1's PTT / TUNE -> busy, nothing sent", (env.arb.claim(c, "ptt", seq=9), env.arb.claim(c, "tune", seq=10),
+                                                     env.radio.calls), ("busy", "busy", []))
+    alive[c.id] = False
+    env.arb.on_conn_closed(c)                       # OP1 closes the tab / its socket drops
+    _run_until(env, c, env.clock.t + 130.0)         # no heartbeat and past any 120 s session clock
+    C("... OP1's drop and 130 s of silence never unkey the local operator",
+      (env.radio.calls, env.radio.state["ptt"], env.arb.owner), ([], True, txarb.EXTERNAL))
+    env.radio.calls.clear()
+    C("... only an explicit STOP does", (env.arb.stop(env.conn(2)), env.radio.calls[:1], env.arb.owner),
+      (True, [("set_ptt", False)], None))
+
+
+for key_at in (8.0, 21.0, 23.0):                    # during the tune claim / in the release grace / after it
+    e = Env(_MicRadio("ft991a"))
+    a = e.conn(1)
+    alive = {1: True}
+    e.arb.conn_alive = lambda x, alive=alive: alive.get(getattr(x, "id", None), False)
+    t0 = e.clock.t
+    e.arb.claim(a, "tune", seq=1)
+    _run_until(e, a, t0 + 20.5, key_at=t0 + key_at)
+    C(f"T46 TUNE at t0, a front-panel key at t+{key_at:g}: the tune claim lapsed at t20, reason done",
+      ([k["reason"] for k in e.evs("tx_end")], e.arb.last_session["reason"], e.radio.calls), (["done"], "done", [("tune_atu",)]))
+    _run_until(e, a, t0 + 30.0, key_at=t0 + key_at)
+    _front_panel_is_safe(e, a, alive, f"T46 TUNE then a front-panel key at t+{key_at:g}")
+
+# TUNE + PTT, the owner unkeys, the tune claim lapses at its cap: the session held ptt once, but the RADIO
+# did not end it, so a front-panel key 3 s later is FRONT PANEL too.
+e = Env(_MicRadio("ft991a"))
+a = e.conn(1)
+alive = {1: True}
+e.arb.conn_alive = lambda x: alive.get(getattr(x, "id", None), False)
+t0 = e.clock.t
+e.arb.claim(a, "tune", seq=1)
+_run_until(e, a, t0 + 2.0)
+e.arb.claim(a, "ptt", seq=2)
+e.radio.state["ptt"] = True                         # (the fake radio reports the app's key)
+_run_until(e, a, t0 + 6.0)
+e.arb.release(a, "ptt")
+_run_until(e, a, t0 + 20.5)
+C("T46 TUNE+PTT, the owner unkeyed, tune cap -> done", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "done"))
+_run_until(e, a, t0 + 30.0, key_at=t0 + 23.0)
+_front_panel_is_safe(e, a, alive, "T46 TUNE+PTT (released), then a front-panel key")
+
+# A vox session that the radio ended (state.vox reads off) is not reattached either: the TX that follows
+# is FRONT PANEL (a reattach would hand it a ptt claim, and with it the drop unkey and the mic gate).
+e = Env(_MicRadio("ft991a"))
+a = e.conn(1)
+alive = {1: True}
+e.arb.conn_alive = lambda x: alive.get(getattr(x, "id", None), False)
+t0 = e.clock.t
+e.arb.claim(a, "vox", seq=1)
+e.radio.state["vox"] = 0                            # VOX turned off on the radio
+_run_until(e, a, t0 + 3.5)
+C("T46 vox session ended by the radio -> reason radio", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "radio"))
+_run_until(e, a, t0 + 10.0, key_at=t0 + 6.0)
+_front_panel_is_safe(e, a, alive, "T46 vox ended by the radio, then a front-panel key")
+
+# Positive control: the Yaesu CW break-in hang (AR-47) still reattaches. A CW message ends (cw_tx False,
+# reconciliation, reason done) and the radio still shows TX 3.6 s later (past the 3.5 s CW grace,
+# within 5 s): that TX is the CW owner's, so the owner's drop unkeys it.
+e = Env(FakeRadio("ft991a"))
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "cw", args={"text": "CQ", "wpm": 20})
+e.radio.state["cw_tx"] = False
+_run_until(e, a, t0 + 3.0)
+C("T46 CW finished on its own -> reason done", (e.arb.owner, e.evs("tx_end")[-1]["reason"],
+                                                sorted(e.arb.last_session.get("radio_ended") or [])), (None, "done", ["cw"]))
+ended = e.arb.last_session["ended_at"]
+e.clock.t = ended + 3.6                             # past the 3.5 s CW release grace: a state push shows TX
+e.radio.state["ptt"] = True
+e.arb.on_radio_state(dict(e.radio.state))
+e.clock.t = ended + 4.3                             # 0.7 s of persistent TX, inside the 5 s window
+e.arb.tick(gap=0.5)
+C("T46 TX 3.6 s after the CW ended -> reattached to the CW owner (AR-47)", (e.arb.owner, sorted(e.arb.claims),
+                                                                          len(e.evs("tx_reattach"))), (1, ["ptt"], 1))
+e.radio.calls.clear()
+e.arb.on_conn_closed(a)
+C("... and the CW owner's drop unkeys it", (e.arb.owner, e.radio.calls), (None, [("set_ptt", False)]))
 
 # -- T61: the arbiter's own session clock and caps (I18) -----------------------------------------------
 e = Env()

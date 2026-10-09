@@ -54,6 +54,7 @@
     if (!TR.can("operate") && !viewerMay(obj)) return false;
     const k = claimOf(obj);
     if (k) return txSendClaim(obj, k);           // TX claims: seq + heartbeats (G-1)
+    if (obj.action === "ptt" && obj.tx === false) pttOffAt = performance.now();   // re-key guard
     return rawSend(obj);
   }
 
@@ -122,6 +123,11 @@
   let hbTimer = 0, hbMs = 2000;
   let wasOwnedAtDrop = false;
   let failsafeSent = false;
+  // performance.now() when this tab's own PTT last ended: it sent ptt:false (any path), or a tx frame /
+  // a socket close took its ptt claim away. A mouse/keyboard PTT click this soon after is the tail of a
+  // STOP (a slow double-click, a repeated key, the session ending as STOP was clicked), never a new key.
+  let pttOffAt = -1e9;
+  const PTT_REKEY_GUARD_MS = 800;
 
   function nextSeq() { return ++txSeq; }
   function claimOf(o) {
@@ -199,7 +205,9 @@
   }
   function applyTx(m) {
     const o = m.owner && typeof m.owner === "object" ? m.owner : null;
+    const hadPtt = ownedPtt();
     TR.tx = { owner: o };
+    if (hadPtt && !ownedPtt()) pttOffAt = performance.now();   // our PTT ended (any reason): re-key guard
     txSince = o ? performance.now() - Math.max(0, +o.elapsed_ms || 0) : 0;
     if (!ownedPtt()) failsafeSent = false;
     if (TR.isTxOwner()) startHb();
@@ -224,6 +232,7 @@
   }
   function txOnSocketClosed() {
     if (ownedOrPending()) wasOwnedAtDrop = true;   // the server released our claims with the socket
+    if (ownedPtt() || pttPending) pttOffAt = performance.now();
     pendingClaims.clear(); pttPending = null; heldTx = null; answeredSeq = 0;
     TR.myConn = null;
     TR.tx = { owner: null };
@@ -868,7 +877,10 @@
   // ---- PTT (G-1): owner-aware, from the server's tx frames ----
   // Mouse and keyboard: click toggles. Touch: hold 300 ms to key (a scroll, cancel or early release
   // keys nothing); when owned, touching unkeys at once; the compat click after a touch is swallowed.
-  // When this tab owns ptt, a click sends ptt:false and never ptt:true again.
+  // When this tab owns ptt, a click sends ptt:false and never ptt:true again. A click can never turn
+  // a STOP into a new key: the 2nd+ click of a double-click is ignored, a held key's auto-repeat is
+  // ignored, and a click within PTT_REKEY_GUARD_MS of this tab's own PTT ending sends nothing (on a
+  // fast link the {owner:null} frame lands between the two clicks of a double-click).
   const ptt = $("pttBtn");
   function pttLeft() {
     const since = ownedPtt() ? txSince : (pttPending ? pttPending.at : performance.now());
@@ -893,7 +905,7 @@
     pttPending = null;
     renderTx();
   }
-  function pttClick() {
+  function pttClick(fromClick) {
     if (ownedPtt() || pttPending) { pttRelease(); return; }
     const o = otherOwner();
     if (o) {
@@ -902,6 +914,9 @@
       return;
     }
     if (!TR.can("tx")) return;
+    // mouse / keyboard: right after our own PTT ended, a click is the tail of the STOP, not a key
+    // (touch keys only after a deliberate 300 ms hold, so it needs no guard)
+    if (fromClick && performance.now() - pttOffAt < PTT_REKEY_GUARD_MS) return;
     send({ action: "ptt", tx: true });           // seq + heartbeats added by send() (txSendClaim)
   }
   function tickTx() {
@@ -945,7 +960,12 @@
     window.addEventListener("scroll", cancelHold, { capture: true, passive: true });
     ptt.addEventListener("click", (e) => {
       if (performance.now() < swallowClickUntil) { e.preventDefault(); return; }   // compat click after touch
-      pttClick();
+      if (e.detail > 1) return;                  // 2nd+ click of a double-click: never a second toggle
+      pttClick(true);
+    });
+    // A held Enter/Space auto-repeats: only the first press may toggle (a repeat would chatter the TX)
+    ptt.addEventListener("keydown", (e) => {
+      if (e.repeat && (e.key === "Enter" || e.key === " " || e.key === "Spacebar")) e.preventDefault();
     });
   }
   document.addEventListener("visibilitychange", () => { if (document.hidden) autoRelease(); });

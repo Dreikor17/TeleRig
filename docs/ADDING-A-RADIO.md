@@ -31,13 +31,19 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    else gets `busy`. The handler gets each start call **once**: re‑sending a claim the owner
    already holds is a no‑op that never reaches the radio, so it can't push the 120 s deadline
    back. While keyed:
-   - **the TX owner's drop unkeys immediately** (its WebSocket closes);
+   - **the TX owner's drop unkeys immediately** (its WebSocket closes). Whatever ends an app
+     owner's session (its drop, a STOP, a heartbeat stall, a radio change, a locked server) sends
+     the unkey for the PTT / CW the app keyed **without** first checking `state.ptt`: a TX poll
+     answer already in flight when the key went out can read "receive" for one poll period;
    - **a silent owner is unkeyed after 6 s** (no `tx_hb` heartbeat; the page sends one every
      2 s, and a heartbeat never touches the radio);
    - **other clients' drops never unkey** — a viewer closing a tab doesn't cut the operator off;
    - **a front‑panel or physical‑mic key is never unkeyed by a browser drop.** It shows as
      FRONT PANEL and only an explicit STOP stops it. This holds only for radios that report their
-     TX state (Yaesu CAT: the `TX;` poll) — see the Icom limitation below;
+     TX state (Yaesu CAT: the `TX;` poll) — see the Icom limitation below. TX that shows up to 5 s
+     after a session ended is handed back to that session's browser only when the radio itself
+     ended its PTT or CW (a misread poll, the CW break‑in hang); after a TUNE (its 20 s claim
+     lapsed), a VOX session or a release it is FRONT PANEL;
    - **the arbiter's own 120 s session clock:** a session holding `ptt` or `vox` is
      force‑released 120 s after it started (a monotonic clock that a new claim does not restart),
      whatever the radio's deadline says. A CW message is capped at its duration + 5 s (≤ 300 s)
