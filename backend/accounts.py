@@ -820,11 +820,23 @@ def _config_corrupt() -> Optional[StoreCorrupt]:
 
 def _seed() -> Optional[str]:
     """auth.json is missing: migrate the v1 shared password (M1/M3a) or seed the default ADMIN
-    with a setup code (M2/M3b). Returns "migrated" | "default" | None (another process won)."""
+    with a setup code (M2/M3b). Returns "migrated" | "default" | None (another process won).
+
+    The v1 password is imported ONCE. The first seed of this config folder writes
+    config.v1.bak.json (whenever a config.json exists) before it seeds; when that file exists, a
+    store was already seeded here, so auth.json was moved aside / deleted since and the v1
+    password_hash still in config.json (config.json is never rewritten, T27) is a retired password
+    by now: re-seeding brings back the default ADMIN + a setup code instead, never the old shared
+    password (with its remote access)."""
     v1 = settings.raw() or {}
     cfg = settings.path()
     bak = cfg.with_name("config.v1.bak.json")
     ph = v1.get("password_hash")
+    if ph and bak.exists():
+        console("  TeleRig: auth.json was missing, so it was set up again. config.json still holds the old "
+                "shared password, but it was already migrated once (config.v1.bak.json) and is NOT imported "
+                "again: sign in as admin on this PC with the setup code, or run the recovery command.")
+        ph = None
     if ph:
         try:
             h = v1_to_v2(ph)

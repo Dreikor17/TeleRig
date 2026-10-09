@@ -503,6 +503,35 @@ C("F17: migrated ADMIN off the host PC = operator (effective), admin stored",
 C("F17: migrated ADMIN direct-local = admin", (pr_local.role, pr_local.migrated_remote), ("admin", False))
 C("banner_info for M1", accounts.banner_info()["migrated_v1"], True)
 
+# round 3: the v1 password is imported ONCE. The admin retires it, auth.json is then moved aside (or
+# deleted): the re-seed is the default ADMIN + a setup code, never the old shared password again.
+accounts.set_password("ADMIN", "Retired#Club-2026")
+bak_bytes = (d / "config.v1.bak.json").read_bytes()
+(d / "auth.json").rename(d / "auth.json.bad")
+accounts._reset_for_tests()
+accounts.ensure_initialized(reconcile_mode="skip")
+a = accounts.get("ADMIN")
+C("M1 re-seed: default ADMIN (default_pw, must_change), not migrated again",
+  (a.default_pw, a.must_change, a.migrated_v1, a.created_by), (True, True, False, "system"))
+C("M1 re-seed: the old v1 password does not verify", accounts.verify(a.hash, "hunter22")[0], False)
+C("M1 re-seed: the default password + a setup code", (accounts.verify(a.hash, "admin")[0],
+  bool(accounts.SETUP_RE.fullmatch(accounts.setup_code() or ""))), (True, True))
+C("M1 re-seed: config.json and config.v1.bak.json byte-identical",
+  ((d / "config.json").read_bytes(), (d / "config.v1.bak.json").read_bytes()), (cfg_bytes, bak_bytes))
+(d / "auth.json").unlink()
+accounts._reset_for_tests()
+accounts.ensure_initialized(reconcile_mode="skip")
+C("M1 deleted again: still the default ADMIN", (accounts.get("ADMIN").migrated_v1, accounts.get("ADMIN").default_pw),
+  (False, True))
+
+d = use_dir("m1-once-malformed")                     # a stale v1 hash after the first seed is not even parsed
+(d / "config.json").write_text(json.dumps({"password_hash": "not-a-v1-hash"}))
+(d / "config.v1.bak.json").write_text("{}")
+C("bak present + malformed v1 hash -> no StoreCorrupt",
+  raises(lambda: accounts.ensure_initialized(reconcile_mode="skip"), StoreCorrupt), False)
+adm = accounts.get("ADMIN") if (d / "auth.json").exists() else None
+C("... the default ADMIN is seeded", (adm.default_pw, adm.migrated_v1) if adm else None, (True, False))
+
 d = use_dir("m1-bad")
 (d / "config.json").write_text(json.dumps({"password_hash": "not-a-v1-hash"}))
 C("malformed v1 password_hash -> StoreCorrupt (refuse to seed)",

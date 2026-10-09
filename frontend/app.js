@@ -54,7 +54,7 @@
     if (!TR.can("operate") && !viewerMay(obj)) return false;
     const k = claimOf(obj);
     if (k) return txSendClaim(obj, k);           // TX claims: seq + heartbeats (G-1)
-    if (obj.action === "ptt" && obj.tx === false) pttOffAt = performance.now();   // re-key guard
+    if (obj.action === "ptt" && obj.tx === false) pttGuard();   // our PTT ends: re-key guard
     return rawSend(obj);
   }
 
@@ -123,11 +123,21 @@
   let hbTimer = 0, hbMs = 2000;
   let wasOwnedAtDrop = false;
   let failsafeSent = false;
-  // performance.now() when this tab's own PTT last ended: it sent ptt:false (any path), or a tx frame /
-  // a socket close took its ptt claim away. A mouse/keyboard PTT click this soon after is the tail of a
-  // STOP (a slow double-click, a repeated key, the session ending as STOP was clicked), never a new key.
-  let pttOffAt = -1e9;
+  // The re-key guard (asymmetric, fail-safe): this tab sends no ptt:true before pttGuardUntil. It is
+  // set PTT_REKEY_GUARD_MS ahead whenever this tab's own PTT ends (it sent ptt:false on any path, or
+  // a tx frame / a socket close took its ptt claim away) and pushed out again by every press it
+  // refuses, like cwtool.js's STOP_GUARD_MS: a burst of STOP clicks (a double-click, a slow
+  // double-click, clicks every 300 ms, the session ending as STOP is clicked) never turns into a new
+  // key. It only ever holds back KEYING; an unkey is never held back (I4).
+  let pttGuardUntil = -1e9;
   const PTT_REKEY_GUARD_MS = 800;
+  function pttGuard(now) {
+    const t = (now === undefined ? performance.now() : now) + PTT_REKEY_GUARD_MS;
+    if (t > pttGuardUntil) pttGuardUntil = t;
+  }
+  // The tab is hidden or being left (pagehide): a claim granted now is released at once (G-1 c).
+  let pageGone = false;
+  function pageAway() { return pageGone || !!document.hidden; }
 
   function nextSeq() { return ++txSeq; }
   function claimOf(o) {
@@ -207,12 +217,15 @@
     const o = m.owner && typeof m.owner === "object" ? m.owner : null;
     const hadPtt = ownedPtt();
     TR.tx = { owner: o };
-    if (hadPtt && !ownedPtt()) pttOffAt = performance.now();   // our PTT ended (any reason): re-key guard
+    if (hadPtt && !ownedPtt()) pttGuard();       // our PTT ended (any reason): re-key guard
     txSince = o ? performance.now() - Math.max(0, +o.elapsed_ms || 0) : 0;
     if (!ownedPtt()) failsafeSent = false;
     if (TR.isTxOwner()) startHb();
     renderTx();
     document.dispatchEvent(new CustomEvent("tr:tx", { detail: TR.tx }));
+    // A claim that was still pending when the tab was hidden (or left) is granted now: hiding
+    // released only what was held then, so release this one too (the same auto path).
+    if (TR.isTxOwner() && pageAway()) autoRelease();
   }
   function onTxRevoked(m) {
     const by = m.by ? " by " + m.by : "";
@@ -232,7 +245,7 @@
   }
   function txOnSocketClosed() {
     if (ownedOrPending()) wasOwnedAtDrop = true;   // the server released our claims with the socket
-    if (ownedPtt() || pttPending) pttOffAt = performance.now();
+    if (ownedPtt() || pttPending) pttGuard();
     pendingClaims.clear(); pttPending = null; heldTx = null; answeredSeq = 0;
     TR.myConn = null;
     TR.tx = { owner: null };
@@ -875,12 +888,15 @@
   });
 
   // ---- PTT (G-1): owner-aware, from the server's tx frames ----
-  // Mouse and keyboard: click toggles. Touch: hold 300 ms to key (a scroll, cancel or early release
-  // keys nothing); when owned, touching unkeys at once; the compat click after a touch is swallowed.
-  // When this tab owns ptt, a click sends ptt:false and never ptt:true again. A click can never turn
-  // a STOP into a new key: the 2nd+ click of a double-click is ignored, a held key's auto-repeat is
-  // ignored, and a click within PTT_REKEY_GUARD_MS of this tab's own PTT ending sends nothing (on a
-  // fast link the {owner:null} frame lands between the two clicks of a double-click).
+  // Mouse, pen and keyboard: click toggles. Touch: hold 300 ms to key (a scroll, cancel or early
+  // release keys nothing); when owned, touching unkeys at once; the compat click after a touch is
+  // swallowed (the touch already acted at its pointerdown).
+  // The rule is asymmetric and fail-safe (I4, G-1 c): while this tab owns ptt or has a ptt claim
+  // pending, EVERY press — any click (whatever its e.detail), Enter, Space, a pen or touch tap, a
+  // key's auto-repeat — sends ptt:false. Only KEYING is ever held back: an idle click that is the
+  // 2nd+ click of a burst (e.detail > 1), an auto-repeated key, and any press inside the re-key guard
+  // (pttGuardUntil, after this tab's own PTT ended or a refused press) send nothing. So a STOP can
+  // never be swallowed, and a double-click / a burst of STOP clicks can never re-key.
   const ptt = $("pttBtn");
   function pttLeft() {
     const since = ownedPtt() ? txSince : (pttPending ? pttPending.at : performance.now());
@@ -905,8 +921,17 @@
     pttPending = null;
     renderTx();
   }
-  function pttClick(fromClick) {
-    if (ownedPtt() || pttPending) { pttRelease(); return; }
+  // One press on the PTT button: a click (mouse, pen, keyboard, assistive tech; `detail` is the
+  // pointer click count, 0 from the keyboard), a touch on an owned / busy button, or a completed
+  // 300 ms touch hold.
+  function pttPress(detail) {
+    if (ownedPtt() || pttPending) { pttRelease(); return; }   // ours: every press unkeys, never refused
+    // From here on the press can only KEY (or hint), and only keying is ever refused:
+    const now = performance.now();
+    if (detail > 1 || now < pttGuardUntil) {     // the tail of a double-click / a STOP burst
+      pttGuard(now);                             // each refused press keeps the guard shut (cwtool.js)
+      return;
+    }
     const o = otherOwner();
     if (o) {
       TR.toast((o.external ? "The radio is keyed from its front panel" : o.user + " is transmitting") +
@@ -914,9 +939,6 @@
       return;
     }
     if (!TR.can("tx")) return;
-    // mouse / keyboard: right after our own PTT ended, a click is the tail of the STOP, not a key
-    // (touch keys only after a deliberate 300 ms hold, so it needs no guard)
-    if (fromClick && performance.now() - pttOffAt < PTT_REKEY_GUARD_MS) return;
     send({ action: "ptt", tx: true });           // seq + heartbeats added by send() (txSendClaim)
   }
   function tickTx() {
@@ -928,10 +950,13 @@
   }
   setInterval(tickTx, 400);
   if (ptt) {
-    // The compat click a browser fires after a touch must never reach pttClick() (it would unkey a
-    // hold, or re-key after the touch unkeyed). Clicks are swallowed from the touch's pointerdown
-    // until SWALLOW_MS after ITS pointerup/pointercancel, however long the finger was held. A
-    // mouse/pen press ends the window at once (its click is a real one).
+    // The compat click a browser fires after a touch is not a second press: that touch already acted
+    // at its pointerdown (unkeyed, hinted, or started its hold), and the click would otherwise unkey
+    // a hold that just keyed. Pointer clicks are swallowed from the touch's pointerdown until
+    // SWALLOW_MS after ITS pointerup/pointercancel, however long the finger was held. A mouse/pen
+    // press ends the window at once (its click is a real one), and only a touch-made click is ever
+    // swallowed: a keyboard / assistive-tech click is always a real press, so it always unkeys an
+    // owned PTT.
     const SWALLOW_MS = 800;
     let touchTimer = 0, touchHeld = false, touchId = null, swallowClickUntil = 0;
     const cancelHold = () => { touchHeld = false; clearTimeout(touchTimer); };
@@ -945,10 +970,10 @@
       touchId = e.pointerId;
       // until this touch ends (touchEnded); bounded so a lost pointerup can't block clicks forever
       swallowClickUntil = performance.now() + 130000;
-      if (ownedPtt() || pttPending || otherOwner()) { pttClick(); return; }   // unkey at once / busy hint
+      if (ownedPtt() || pttPending || otherOwner()) { pttPress(1); return; }  // unkey at once / busy hint
       cancelHold();
       touchHeld = true;
-      touchTimer = setTimeout(() => { const go = touchHeld; touchHeld = false; if (go) pttClick(); }, 300);
+      touchTimer = setTimeout(() => { const go = touchHeld; touchHeld = false; if (go) pttPress(1); }, 300);
     });
     ptt.addEventListener("pointerup", cancelHold);
     ptt.addEventListener("pointercancel", cancelHold);
@@ -959,17 +984,30 @@
     window.addEventListener("pointercancel", touchEnded, true);
     window.addEventListener("scroll", cancelHold, { capture: true, passive: true });
     ptt.addEventListener("click", (e) => {
-      if (performance.now() < swallowClickUntil) { e.preventDefault(); return; }   // compat click after touch
-      if (e.detail > 1) return;                  // 2nd+ click of a double-click: never a second toggle
-      pttClick(true);
+      const detail = +e.detail || 0;
+      // the compat click of a touch: pointerType "touch" (a PointerEvent click), or a plain
+      // MouseEvent click (no pointerType) with a click count; "" / detail 0 is a keyboard or
+      // assistive-tech click and "mouse" / "pen" a real one: those are never swallowed
+      const touchy = e.pointerType === "touch" || (e.pointerType === undefined && detail !== 0);
+      if (touchy && performance.now() < swallowClickUntil) { e.preventDefault(); return; }
+      pttPress(detail);                          // owned/pending: unkeys at ANY detail; idle: may key
     });
-    // A held Enter/Space auto-repeats: only the first press may toggle (a repeat would chatter the TX)
+    // A held Enter/Space auto-repeats. A repeat never KEYS (it would chatter the TX); while this tab
+    // owns or is claiming ptt it is let through, so it unkeys like any other press (I4).
     ptt.addEventListener("keydown", (e) => {
-      if (e.repeat && (e.key === "Enter" || e.key === " " || e.key === "Spacebar")) e.preventDefault();
+      if (!e.repeat || !(e.key === "Enter" || e.key === " " || e.key === "Spacebar")) return;
+      if (!(ownedPtt() || pttPending)) e.preventDefault();
     });
   }
-  document.addEventListener("visibilitychange", () => { if (document.hidden) autoRelease(); });
-  window.addEventListener("pagehide", autoRelease);
+  // Hiding the tab or leaving the page releases what this tab holds; a claim still pending then is
+  // released when its grant lands (applyTx -> pageAway()). Back from the bfcache (pageshow) or
+  // visible again, grants are kept as usual.
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) autoRelease();
+    else pageGone = false;
+  });
+  window.addEventListener("pagehide", () => { pageGone = true; autoRelease(); });
+  window.addEventListener("pageshow", () => { pageGone = false; });
 
   // ---- ON-AIR chip, two-tap STOP and the STOP FAB (§4.5) ----
   function fmtMmSs(ms) {

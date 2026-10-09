@@ -45,6 +45,25 @@ def c1_ui_fixes_in_node_vm(ctx):
 
 
 @test("unit")
+def ptt_failsafe_in_node_vm(ctx):
+    """app.js PTT (final review round 3): while this tab owns or claims ptt, every press unkeys (any
+    e.detail, keyboard, touch, pen); only keying is held back (idle detail > 1, a key's auto-repeat, the
+    re-key guard). A VOX / CW / PTT claim granted while the tab is hidden is released. The real tr.js +
+    app.js in a Node vm against an in-memory fake server (no browser, no server, no radio)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "ptt_failsafe_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"ptt_failsafe_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"ptt_failsafe_test.js output: {r.stdout}")
+    app = _strip_comments(_read("app.js"))
+    m = re.search(r"function pttPress\(detail\) \{(.*?)\n  \}", app, re.S)
+    check(m, "app.js pttPress")
+    body = m.group(1)
+    i_rel, i_guard, i_key = body.find("pttRelease()"), body.find("pttGuardUntil"), body.find("tx: true")
+    check(0 <= i_rel < i_guard < i_key, "pttPress order: release first (never refused), then the guard, then the key")
+    check("e.detail > 1) return" not in app, "no click handler drops a press by its detail before the release path")
+
+
+@test("unit")
 def c1_cw_stop_never_transmits_wiring(ctx):
     cw = _strip_comments(_read("cwtool.js"))
     # the STOP role: kept while CW is on the air (poll + tap), checked before the TX path, extended by a guarded tap

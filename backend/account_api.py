@@ -66,9 +66,21 @@ def err(status: int, error: str, message: str = "", **extra) -> JSONResponse:
     return JSONResponse(body, status_code=status, headers=NO_STORE)
 
 
+def parse_json_body(raw: bytes):
+    """bytes -> (True, the decoded JSON value), or (False, None) when it is not valid UTF-8 JSON.
+    Never raises: a deeply nested body ([[[[...) makes json.loads raise RecursionError, which is a
+    bad body too, not a server error (a 500 would also miss the normal headers)."""
+    try:
+        return True, json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, RecursionError, MemoryError):
+        return False, None
+
+
 async def read_json(request, max_bytes: int = BODY_MAX):
     """The JSON object body (§2.9): {} when bodiless; 413 too_large above max_bytes; 400
-    invalid_json for bad JSON or a non-object. Returns a dict or the error response."""
+    invalid_json for bad JSON (including a nesting too deep to decode) or a non-object. Returns a
+    dict or the error response. Every JSON-body route (account, admin, connect / disconnect /
+    tx_stop) reads its body through here."""
     cl = request.headers.get("content-length")
     if cl and cl.strip().isdigit() and int(cl) > max_bytes:
         return err(413, "too_large", f"The request body is larger than {max_bytes} bytes.")
@@ -79,9 +91,8 @@ async def read_json(request, max_bytes: int = BODY_MAX):
             return err(413, "too_large", f"The request body is larger than {max_bytes} bytes.")
     if not bytes(buf).strip():
         return {}
-    try:
-        obj = json.loads(bytes(buf).decode("utf-8"))
-    except (ValueError, UnicodeDecodeError):
+    ok, obj = parse_json_body(bytes(buf))
+    if not ok:
         return err(400, "invalid_json", "The request body must be a JSON object.")
     if not isinstance(obj, dict):
         return err(400, "invalid_json", "The request body must be a JSON object.")

@@ -246,18 +246,36 @@ def local_reason(scope) -> Optional[str]:
 
 
 def effective_host(scope) -> tuple:
-    """The (host, port) the browser addressed: the Host header, or X-Forwarded-Host/-Port when the
-    TCP peer is loopback (a local reverse proxy reporting the external host; nginx $host drops the
-    port). A browser page cannot set these cross-origin (preflight never granted; WS can't)."""
+    """The (host, port) the browser addressed: the Host header, or X-Forwarded-Host when the TCP peer
+    is loopback (a local reverse proxy reporting the external host). The port is the one in that
+    host value, else a trusted (loopback-peer) X-Forwarded-Port (nginx $host drops the port), else
+    None (the scheme's default; see effective_origin). A browser page cannot set these headers
+    cross-origin (preflight never granted; a WebSocket can't)."""
     hh, hp = split_host(header(scope, "host"))
     if is_loopback(peer_ip(scope)):
         xh = _first(header(scope, "x-forwarded-host"))
         if xh:
             hh, hp = split_host(xh)
-            xp = (header(scope, "x-forwarded-port") or "").strip()
+        if hh and hp is None:
+            xp = _first(header(scope, "x-forwarded-port")) or ""
             if xp.isdigit() and 0 < int(xp) < 65536:
                 hp = int(xp)
     return hh, hp
+
+
+def default_port(scheme_: str) -> int:
+    return 443 if scheme_ == "https" else 80
+
+
+def effective_origin(scope) -> tuple:
+    """(scheme, host, port) of the address the browser used, as the Origin check compares it (I15):
+    the effective scheme (scheme(): X-Forwarded-Proto only from a loopback peer, else the
+    connection's own), the effective host (effective_host()) and the effective port (the host's own
+    port, else a trusted X-Forwarded-Port, else the effective scheme's default). host is "" when the
+    Host header is missing or malformed."""
+    s = scheme(scope)
+    hh, hp = effective_host(scope)
+    return s, hh, (hp if hp is not None else default_port(s))
 
 
 # -- Host allowlist (DNS rebinding) + exact Origin (CSWSH) ------------------------------------
@@ -287,34 +305,51 @@ def host_denied_text(host_header: Optional[str], scope) -> str:
             f"http://localhost:{bound_port(scope)} → Admin → Access and add it.")
 
 
-def origin_ok(origin: Optional[str], scope) -> bool:
-    """Exact Origin rule (I15): scheme http(s), and host AND port equal to the effective request
-    host (§2.8), or the full origin is in the allowlist. A bare allowlisted name relaxes host_ok
-    only, never this check. Missing, "null", file:, data: and anything malformed are refused."""
+def parse_origin(origin: Optional[str]) -> Optional[tuple]:
+    """'https://Name:443' -> ('https', 'name', 443); None for a missing, "null", non-http(s), or
+    malformed Origin, or one with a path / query / fragment / user info."""
     if not origin:
-        return False
+        return None
     try:
         u = urlparse(origin.strip())
         oh = (u.hostname or "").lower()
         port = u.port
     except ValueError:
-        return False
+        return None
     if u.scheme not in ("http", "https") or not oh:
-        return False
+        return None
     if u.path not in ("", "/") or u.query or u.fragment or u.params or u.username or u.password:
+        return None
+    return u.scheme, oh, (port or default_port(u.scheme))
+
+
+def same_origin(o: tuple, scope) -> bool:
+    """The parsed Origin `o` is exactly the address the browser used: scheme, host and port all equal
+    to effective_origin(scope)."""
+    es, eh, ep = effective_origin(scope)
+    return bool(eh) and o == (es, eh, ep)
+
+
+def origin_ok(origin: Optional[str], scope) -> bool:
+    """Exact Origin rule (I15): scheme, host AND port all equal to the effective request origin
+    (effective_origin, §2.8), or the full origin is in the allowlist (compared exactly). The scheme
+    counts: http://name is not https://name, and https://127.0.0.1:P is not a plain-http server on
+    P. A bare allowlisted name relaxes host_ok only, never this check. Missing, "null", file:,
+    data: and anything malformed are refused."""
+    o = parse_origin(origin)
+    if o is None:
         return False
-    op = port or (443 if u.scheme == "https" else 80)
-    hh, hp = effective_host(scope)
-    if hh and oh == hh and op == (hp or (443 if u.scheme == "https" else 80)):
+    if same_origin(o, scope):
         return True
-    return f"{u.scheme}://{oh}:{op}" in settings.allowed_origins()
+    return f"{o[0]}://{o[1]}:{o[2]}" in settings.allowed_origins()
 
 
 def origin_denied_text(origin: Optional[str], scope) -> str:
-    hh, hp = effective_host(scope)
-    where = f"{hh}:{hp}" if hp else (hh or "?")
+    es, eh, ep = effective_origin(scope)
+    shown = f"[{eh}]" if ":" in eh else eh
+    where = f"{es}://{shown}:{ep}" if eh else "?"
     if not origin:
-        return f"Cross-site request blocked: no Origin header (host {where})."
+        return f"Cross-site request blocked: no Origin header (this address is {where})."
     return (f"Origin {origin} does not match {where} — if a reverse proxy rewrites Host, add {origin} "
             "under Admin → Access (from the host PC).")
 

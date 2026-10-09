@@ -14,7 +14,18 @@
 
 The source `src` is "direct-local" when auth.direct_local(scope), else auth.client_ip(scope).
 Success clears K2 for (user, src) and records src as known. A restart, an admin unlock or
-`--reset-admin` (meta.limiter_reset) clears keys. At most MAX_KEYS keys, swept every 5 minutes.
+`--reset-admin` (meta.limiter_reset) clears keys. Swept every 5 minutes (expired windows go).
+
+Memory is bounded per table: at most MAX_KEYS keys in each of K1, K2 and K3. A flood of failed
+logins for junk names / from many addresses must not be able to flush a real user's K3 count (and
+so dodge the per-user lock), so the tables never evict each other's keys, and when a table is full:
+  - K1 / K2 drop the key whose last failure is oldest (LRU);
+  - K3 drops the key with the FEWEST failures in the window (ties: the oldest last failure). A user
+    with c failures is dropped only when every other K3 key holds at least c, i.e. after about
+    MAX_KEYS * c failed logins inside one window (scrypt-bound: far beyond reach), and a junk name
+    can hold at most K3_LIMIT - 1 (its 30th failure trips its own lock and empties its window).
+  - An active user lock (self._locks) is never evicted; only the sweep drops it, once it has
+    expired and decayed.
 Standard library only; thread-safe; no I/O.
 """
 from __future__ import annotations
@@ -59,9 +70,10 @@ class Limiter:
                  wall: Callable[[], float] = time.time):
         self._clock, self._wall = clock, wall
         self._mu = threading.Lock()
-        self._k1: dict = {}             # src -> deque[t]
-        self._k2: dict = {}             # (user, src) -> deque[t]
-        self._k3: dict = {}             # user -> deque[t]
+        # each table is kept in last-failure order (oldest first): _push moves a key to the end
+        self._k1: OrderedDict = OrderedDict()   # src -> deque[t]
+        self._k2: OrderedDict = OrderedDict()   # (user, src) -> deque[t]
+        self._k3: OrderedDict = OrderedDict()   # user -> deque[t]
         self._locks: dict = {}          # user -> {"until", "level", "last_trip"}
         self._known: dict = {}          # user -> OrderedDict[src -> t]
         self._last_sweep = clock()
@@ -83,31 +95,44 @@ class Limiter:
         t = dq[len(dq) - limit]
         return max(0.0, t + WINDOW - self._clock())
 
-    def _push(self, table: dict, key) -> deque:
+    def _push(self, table: OrderedDict, key) -> deque:
         dq = table.get(key)
         if dq is None:
-            self._enforce_max()                  # make room BEFORE the new key exists
+            self._make_room(table)               # make room BEFORE the new key exists
             dq = table[key] = deque()
+        else:
+            table.move_to_end(key)               # last-failure order
         dq.append(self._clock())
         return dq
 
-    def _nkeys(self) -> int:
-        return len(self._k1) + len(self._k2) + len(self._k3)
-
-    def _enforce_max(self) -> None:
-        if self._nkeys() < MAX_KEYS:
+    def _make_room(self, table: OrderedDict) -> None:
+        """At most MAX_KEYS keys in THIS table; the other tables are never touched (a flood of K1 /
+        K2 keys can't push a K3 count out). K1 / K2: the oldest last failure goes. K3: the fewest
+        failures in the window goes (ties: the oldest), so a real user's count survives a flood of
+        junk names."""
+        if len(table) < MAX_KEYS:
             return
-        self._sweep_locked()
-        while self._nkeys() >= MAX_KEYS:
-            oldest, otab, okey = math.inf, None, None
-            for tab in (self._k1, self._k2, self._k3):
-                for k, dq in tab.items():
-                    last = dq[-1] if dq else -math.inf
-                    if last < oldest:
-                        oldest, otab, okey = last, tab, k
-            if otab is None:
+        cut = self._clock() - WINDOW
+        while table:                             # expired windows first: they sit at the front
+            k, dq = next(iter(table.items()))
+            if dq and dq[-1] > cut:
                 break
-            del otab[okey]
+            del table[k]
+        while len(table) >= MAX_KEYS:
+            victim = self._k3_victim() if table is self._k3 else next(iter(table))
+            del table[victim]
+
+    def _k3_victim(self):
+        cut = self._clock() - WINDOW
+        best, best_n = None, math.inf
+        for k, dq in self._k3.items():           # oldest last failure first, so ties go to the oldest
+            while dq and dq[0] <= cut:
+                dq.popleft()
+            if len(dq) < best_n:
+                best, best_n = k, len(dq)
+                if best_n == 0:
+                    break
+        return best
 
     def _sweep_locked(self) -> None:
         cut = self._clock() - WINDOW

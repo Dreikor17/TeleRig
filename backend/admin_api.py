@@ -495,18 +495,8 @@ def _host_ok_with(h: str, names: set) -> bool:
 
 
 def _origin_key(origin: Optional[str]) -> Optional[tuple]:
-    """(scheme, host, port) of a request Origin, or None."""
-    if not origin:
-        return None
-    try:
-        from urllib.parse import urlparse
-        u = urlparse(origin.strip())
-        h, port = (u.hostname or "").lower(), u.port
-    except ValueError:
-        return None
-    if u.scheme not in ("http", "https") or not h:
-        return None
-    return u.scheme, h, port or (443 if u.scheme == "https" else 80)
+    """(scheme, host, port) of a request Origin, or None (auth.parse_origin, the Origin check's own)."""
+    return auth.parse_origin(origin)
 
 
 def _browser_origin(scheme: str, host: str, port: Optional[int]) -> Optional[str]:
@@ -541,8 +531,7 @@ def would_lock_out(values: list, host_header: Optional[str], origin: Optional[st
                 "accepted. Add it to the list first.")
     ok = _origin_key(origin)
     if ok is not None:
-        eh, ep = auth.effective_host(scope)
-        same = bool(eh) and ok[1] == eh and ok[2] == (ep or (443 if ok[0] == "https" else 80))
+        same = auth.same_origin(ok, scope)            # the exact-origin rule (scheme, host, port)
         key = f"{ok[0]}://{ok[1]}:{ok[2]}"
         if not same and key in settings.allowed_origins() and key not in values:
             return (f"Saving this list would lock this browser out: its origin {key} is allowed only "

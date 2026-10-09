@@ -62,6 +62,9 @@ def t26a_unparsable_config_locks_the_server(ctx):
     r = c.get("/login")
     eq(r.status, 503, "/login")
     check("locked" in r.text.lower() and "config.json" in r.text, r.text[:300])
+    # round 3: with config.json unreadable behind_proxy is unknown, so even this loopback request is
+    # not taken for the host PC: the page names the file, never its folder (the console does)
+    check(str(tmp).lower() not in r.text.lower(), "the locked page showed the folder: " + r.text[:300])
     eq(r.headers.get("cache-control"), "no-store")
     for path in ("/", "/static/app.js", "/api/radios", "/api/ports"):
         eq(c.get(path).status, 503, path)

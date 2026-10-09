@@ -15,10 +15,11 @@
  *     RadioControl.send is called, for claims this tab ALREADY holds, so nothing is ever sent.
  *     admin.js Remote: a behind_proxy flag set by hand ("manual") is shown as such, never as stale,
  *     and no Clear flag is offered (not even through the notice's clearFlag path).
- *  G. app.js PTT button (final review round 2): a double-click, a repeated key or a click right after
- *     this page's own PTT ended never re-keys. The PTT button is a fake element of a FAKE page whose
- *     "server" is a few lines of in-memory JS (the arbiter's ptt rules, a one-way latency); "keyed" is
- *     a boolean in this test. Nothing here can reach a server or a radio.
+ *  G. app.js PTT button (final review round 2, adjusted in round 3): a double-click, a repeated key or
+ *     a click right after this page's own PTT ended never re-keys (round 3: and a click while the PTT
+ *     is ours always unkeys; the full matrix is tests/ptt_failsafe_test.js). The PTT button is a fake
+ *     element of a FAKE page whose "server" is a few lines of in-memory JS (the arbiter's ptt rules, a
+ *     one-way latency); "keyed" is a boolean in this test. Nothing here can reach a server or a radio.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -473,13 +474,18 @@ test("G the server ends our session as STOP is clicked: that click never re-keys
   e.click(1); e.clock.advance(1000);
   eq([e.frames(), e.radio.keyed], [["ptt:on", "ptt:on"], true], "G a click 2 s later keys as before");
 });
-test("G a double-click on an idle PTT keys once and stays keyed (no key/unkey blip)", async () => {
+// Round 3: the fail-safe rule is asymmetric. The 2nd click of a double-click on an idle PTT lands while
+// the claim is pending or owned, so it UNKEYS (an unkey is never suppressed, I4): one key, then off.
+// The full round 3 matrix (detail 2..N STOPs, bursts, pending claims, keyboard / touch / pen, the
+// randomized property) is tests/ptt_failsafe_test.js.
+test("G a double-click on an idle PTT keys once, and its 2nd click unkeys (never re-keys)", async () => {
   const e = pttEnv(25);
   e.click(1); e.clock.advance(150); e.click(2); e.clock.advance(3000);
-  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on"], true, 1], "G idle double-click: one key, no unkey");
-  check(ON_AIR.test(e.label()), "G ... the button reads ON AIR … — STOP (" + e.label() + ")");
+  eq([e.frames(), e.radio.keyed, e.radio.keys], [["ptt:on", "ptt:off"], false, 1],
+     "G idle double-click: one key, the 2nd click (detail 2, the claim granted by then) unkeys");
+  eq(e.label(), "PTT", "G ... the button reads PTT again");
 });
-test("G a held Enter / Space: the auto-repeat keydowns are cancelled (no click), the first press is not", async () => {
+test("G a held Enter / Space on an idle PTT: the auto-repeat keydowns are cancelled (no click), the first press is not", async () => {
   const e = pttEnv(25);
   const kd = (key, repeat) => e.btn.dispatchEvent(new e.Event("keydown", { key, repeat }));
   eq([kd("Enter", true), kd(" ", true), kd("Spacebar", true)], [false, false, false], "G repeats: default prevented");

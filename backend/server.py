@@ -1040,10 +1040,28 @@ def _recovery_cmd() -> str:
     return "run.bat --reset-admin" if sys.platform == "win32" else "python3 run.py --reset-admin"
 
 
-def _locked_message(e: StoreCorrupt) -> str:
-    return (f"TeleRig is locked: {e.path} cannot be read ({e.detail or 'corrupt'}). Nothing has been "
-            f"changed. On the host PC, fix that file or move it aside (or run {_recovery_cmd()}); "
-            "TeleRig unlocks within a few seconds, no restart needed.")
+def _locked_message(e: StoreCorrupt, local: bool = True) -> str:
+    """The locked-mode text. The console and a browser on the host PC itself (local) get the file's
+    full path and the parse error; anyone else gets the file's NAME only: the folder (it carries the
+    OS user name) and the file's content details are not for unauthenticated network clients."""
+    if local:
+        return (f"TeleRig is locked: {e.path} cannot be read ({e.detail or 'corrupt'}). Nothing has been "
+                f"changed. On the host PC, fix that file or move it aside (or run {_recovery_cmd()}); "
+                "TeleRig unlocks within a few seconds, no restart needed.")
+    name = Path(str(e.path)).name if e.path else ""
+    what = f"its {name}" if name else "a settings file"
+    return (f"TeleRig is locked: {what} on the host PC cannot be read. Nothing has been changed. On the "
+            f"host PC, fix that file or move it aside (the TeleRig window shows where it is), or run "
+            f"{_recovery_cmd()}; TeleRig unlocks within a few seconds, no restart needed.")
+
+
+def _locked_local(scope) -> bool:
+    """auth.direct_local() for the locked page, failing closed: with config.json unreadable,
+    behind_proxy is unknown, so no request counts as on the host PC (the console has the path)."""
+    try:
+        return auth.direct_local(scope)
+    except Exception:
+        return False
 
 
 def _store_problem() -> Optional[StoreCorrupt]:
@@ -1080,6 +1098,7 @@ def _enter_locked(e: StoreCorrupt) -> None:
 def _leave_locked() -> None:
     global _locked
     try:
+        reseed = accounts.status() == "missing"  # auth.json moved aside / deleted while locked
         accounts.ensure_initialized(reconcile_mode="thread")   # on the loop: CLI calls in a thread
     except StoreCorrupt as e:
         _locked = e
@@ -1089,6 +1108,8 @@ def _leave_locked() -> None:
         return
     console(f"  TeleRig: {_locked.path if _locked else 'config'} is readable again; unlocked.")
     _locked = None
+    if reseed:
+        _announce_reseed()
 
 
 def _check_locked() -> Optional[StoreCorrupt]:
@@ -1103,7 +1124,7 @@ def _check_locked() -> Optional[StoreCorrupt]:
 
 
 def _locked_response(request, e: StoreCorrupt):
-    msg = _locked_message(e)
+    msg = _locked_message(e, local=_locked_local(request.scope))
     hdrs = {"Cache-Control": "no-store"}
     if request.url.path.startswith("/api/"):
         return JSONResponse({"ok": False, "error": "server_locked", "message": msg},
@@ -1194,6 +1215,12 @@ async def _ensure_accounts() -> None:
     if accounts.status() != "missing":
         return
     await run_in_threadpool(accounts.ensure_initialized, None, reconcile_mode="skip")
+    _announce_reseed()
+
+
+def _announce_reseed() -> None:
+    """auth.json was created again (deleted while running, or moved aside while locked): show the
+    first-run setup code on the console (F1: the console shows it on purpose)."""
     try:
         info = accounts.banner_info()
         if info["default_pw"] and info["setup_code"]:
@@ -1339,6 +1366,10 @@ class Gate(BaseHTTPMiddleware):
             resp = JSONResponse({"ok": False, "error": "store_busy"}, status_code=503)
         except StoreError:
             resp = JSONResponse({"ok": False, "error": "store_error"}, status_code=500)
+        except Exception as e:                   # a bug: still a JSON 500 WITH the security headers (I14)
+            import traceback
+            console(f"TeleRig: {request.method} {path} failed: {e!r}\n{traceback.format_exc()}")
+            resp = JSONResponse({"ok": False, "error": "internal_error"}, status_code=500)
         return add_security_headers(resp, path)
 
     async def _dispatch(self, request, call_next, path):

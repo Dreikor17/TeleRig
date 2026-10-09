@@ -133,7 +133,7 @@ L.clear_all()
 C("clear_all clears every key and lock", (L.check("A", "203.0.113.200"), L.stats()),
   (0.0, {"k1": 0, "k2": 0, "k3": 0, "locks": 0, "known": 0}))
 
-# key cap
+# key cap: at most MAX_KEYS keys per table
 L, clk = new()
 real_max = ratelimit.MAX_KEYS
 ratelimit.MAX_KEYS = 50
@@ -142,8 +142,63 @@ try:
         clk.t += 0.01
         L.fail(f"U{i}", f"10.0.{i // 250}.{i % 250}")
     st = L.stats()
-    C("at most MAX_KEYS keys (oldest evicted)", st["k1"] + st["k2"] + st["k3"] <= 50, True)
+    C("at most MAX_KEYS keys in each table", (st["k1"] <= 50, st["k2"] <= 50, st["k3"] <= 50), (True, True, True))
     C("the newest failure is still counted", L._k3.get("U199") is not None, True)
+    L2, clk2 = new()
+    L2.fail(None, "198.51.100.1")                                 # K1: refreshed later -> kept
+    L2.fail(None, "198.51.100.2")                                 # K1: the oldest -> evicted first
+    clk2.t += 1
+    L2.fail(None, "198.51.100.1")
+    for i in range(49):
+        clk2.t += 0.01
+        L2.fail(None, f"203.0.113.{i}")
+    C("K1 / K2 evict the oldest LAST failure (LRU)", ("198.51.100.1" in L2._k1, "198.51.100.2" in L2._k1), (True, False))
+
+    # round 3: a flood of junk names can't flush a real user's K3 count (the per-user lock still trips)
+    L, clk = new()
+    for i in range(29):                                           # 29 wrong passwords for A2, from 29 sources
+        clk.t += 0.1
+        L.fail("A2", f"203.0.113.{i + 1}")
+    for n in range(10 * 50):                                      # junk names from many sources: 10x the cap
+        clk.t += 0.01
+        L.fail(f"JUNK{n}", f"2001:db8::{n + 1:x}")
+    C("flood: A2's K3 count survived 10x MAX_KEYS junk failures", len(L._k3.get("A2") or ()), 29)
+    C("flood: the K3 table stayed bounded", len(L._k3) <= 50, True)
+    C("flood: the 30th A2 failure trips the lock", L.fail("A2", "203.0.114.1"), True)
+    C("flood: a fresh source for A2 is refused", L.check("A2", "203.0.114.99") > 0, True)
+    for n in range(10 * 50):                                      # another flood while A2 is locked
+        clk.t += 0.01
+        L.fail(f"JUNK2-{n}", f"2001:db8:1::{n + 1:x}")
+    C("flood: an active lock is never evicted", (L.check("A2", "203.0.114.98") > 0,
+                                                  [u["key"] for u in L.lockouts()["users"]]), (True, ["A2"]))
+
+    # fewest failures first: a key with c failures goes only when every other K3 key holds >= c
+    L, clk = new()
+    for i in range(3):
+        L.fail("REAL", f"198.18.0.{i}")                          # REAL: 3 failures, the OLDEST key
+    for n in range(49):
+        clk.t += 0.01
+        for j in range(2):
+            L.fail(f"J{n}", f"198.18.{n + 1}.{j}")               # 49 junk keys with 2 failures each
+    L.fail("NEW", "198.18.200.1")                                 # the table is full: one key must go
+    C("K3 evicts a 2-failure junk key, never the older 3-failure key", ("REAL" in L._k3, len(L._k3)), (True, 50))
+    C("... and the newest key is kept", "NEW" in L._k3, True)
+    L, clk = new()
+    L.fail("OLD1", "198.18.0.1")
+    for n in range(49):
+        clk.t += 0.01
+        L.fail(f"K{n}", f"198.18.1.{n}")
+    clk.t += 0.01
+    L.fail("NEWEST", "198.18.2.1")
+    C("K3 ties (one failure each): the oldest last failure goes", ("OLD1" in L._k3, "K0" in L._k3), (False, True))
+    L, clk = new()
+    L.fail("STALE", "198.18.3.1")
+    clk.t += 901                                                  # STALE's window expired
+    for n in range(49):
+        clk.t += 0.01
+        L.fail(f"S{n}", f"198.18.4.{n}")
+    L.fail("ONE-MORE", "198.18.5.1")
+    C("an expired K3 window goes first (the sweep)", ("STALE" in L._k3, len(L._k3)), (False, 50))
 finally:
     ratelimit.MAX_KEYS = real_max
 

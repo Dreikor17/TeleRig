@@ -477,6 +477,85 @@ def t55_reset_admin_without_uvicorn_and_demotion(ctx):
 
 
 @test("auth")
+def t26c_locked_page_names_the_folder_only_on_the_host_pc(ctx):
+    """Final review round 3: the locked-mode 503 (page and API) shows the config file's full path
+    (which carries the OS user name) and the parse error only to a browser on the host PC itself;
+    a network client gets the file's name and the recovery command, nothing more. The console
+    always has the full path."""
+    tmp = ctx.tmp()
+    srv = ctx.server(tmp)
+    harness.ready_admin(srv)
+    port = srv.port
+    auth_p = tmp / "auth.json"
+    auth_p.write_text('{"version": 2, "users": {', encoding="utf-8")
+    c = srv.client()
+    end = time.monotonic() + 8
+    while c.get("/login").status != 503:
+        check(time.monotonic() < end, "the server did not lock")
+        time.sleep(0.2)
+    folder, home = str(tmp).lower(), str(Path.home()).lower()       # the server prints normcase'd paths
+    r = c.get("/login")                                               # direct-local
+    check(str(auth_p).lower() in r.text.lower() and "--reset-admin" in r.text, f"host PC: the full path: {r.text[:400]}")
+    for label, hdrs in (("remote (X-Forwarded-For)", xff("198.51.100.4")),
+                        ("LAN name", {"Host": f"radio-pc:{port}"}),
+                        ("Tailscale Serve", {"Host": "pc.tailnet.ts.net", "X-Forwarded-Proto": "https"})):
+        for path in ("/login", "/api/auth_status", "/"):
+            r = srv.client().get(path, headers=hdrs)
+            eq(r.status, 503, f"{label} {path}")
+            t = r.text
+            check("locked" in t.lower() and "auth.json" in t and "--reset-admin" in t,
+                  f"{label} {path}: names the file and the recovery command: {t[:300]}")
+            tl = t.lower().replace("\\\\", "\\")                      # JSON doubles the backslashes
+            check(folder not in tl and home not in tl, f"{label} {path}: the folder leaked: {t[:400]}")
+            check("Expecting" not in t and "line 1" not in t, f"{label} {path}: the parse error leaked: {t[:400]}")
+        missing = [h for h in HDRS if not r.headers.get(h)]
+        eq(missing, [], f"{label}: security headers on the 503")
+    check(str(auth_p).lower() in srv.log_text().lower(), "the console names the full path")
+    auth_p.unlink()                                                   # recover: seeded again, unlocked
+    end = time.monotonic() + 8
+    while c.get("/login").status != 200:
+        check(time.monotonic() < end, "did not unlock")
+        time.sleep(0.2)
+
+
+@test("auth")
+def t29b_deeply_nested_json_body_is_a_400_with_headers(ctx):
+    """Final review round 3: a deeply nested JSON body (json.loads raises RecursionError) is a bad
+    body, 400 invalid_json with the normal security headers, on the PUBLIC /api/login and on every
+    JSON-body route (they share account_api.read_json); never a 500. No TX route can act on it:
+    the body is refused before anything is read from it."""
+    srv = ctx.server()
+    port = srv.port
+    o = {"Origin": f"http://127.0.0.1:{port}", "Content-Type": "application/json"}
+    anon = srv.client()
+    # under the 64 KB body cap; json.loads raises RecursionError on these (CPython 3.14: a C stack
+    # overflow from ~20000 levels), the object one only after it has started a dict
+    deep = b"[" * 30000 + b"]" * 30000
+    bodies = {"[ x30000 ]": deep, "[ x60000 unclosed": b"[" * 60000, '{"a": [ x30000 ]}': b'{"a":' + deep + b"}"}
+    for label, body in bodies.items():
+        check(len(body) <= 65536, f"{label}: under the body cap")
+        r = anon.raw("POST", "/api/login", body=body, headers=o)
+        eq((r.status, _err(r)), (400, "invalid_json"), f"/api/login {label}")
+        eq([h for h in HDRS if not r.headers.get(h)], [], f"/api/login {label}: security headers")
+    c = harness.ready_admin(srv)
+    nested = bodies['{"a": [ x30000 ]}']
+    for method, path in (("POST", "/api/me/password"), ("PUT", "/api/me/layout"), ("POST", "/api/connect"),
+                         ("POST", "/api/disconnect"), ("POST", "/api/tx_stop"), ("POST", "/api/admin/reauth"),
+                         ("POST", "/api/admin/users"), ("PUT", "/api/admin/allowed_hosts"),
+                         ("POST", "/api/admin/lockouts/unlock_ip"), ("PUT", "/api/admin/audio"),
+                         ("PUT", "/api/admin/radio_transport")):
+        r = c.raw(method, path, body=nested, headers=o)
+        want = (413, "too_large") if path == "/api/me/layout" else (400, "invalid_json")   # its cap is 16 KB
+        eq((r.status, _err(r)), want, f"{method} {path} nested body")
+        eq([h for h in HDRS if not r.headers.get(h)], [], f"{method} {path}: security headers")
+    r = c.raw("PUT", "/api/me/layout", body=b'{"a":' + b"[" * 8000 + b"]" * 8000 + b"}", headers=o)
+    check(r.status == 400 and _err(r) in ("invalid_json", "invalid"), f"PUT /api/me/layout deep (16 KB) body: {r!r}")
+    eq(anon.get("/api/auth_status").status, 200, "the server still answers")
+    check("RecursionError" not in srv.log_text(), "no RecursionError reached the server log")
+    check(srv.alive(), "server died")
+
+
+@test("auth")
 def auth_json_deleted_at_runtime_is_seeded_again(ctx):
     """A deleted auth.json is treated like a first start (never an open server): every session
     ends, a new default ADMIN with a NEW setup code is created and the code goes to the console."""
@@ -534,6 +613,54 @@ def t27_v1_shared_password_becomes_admin(ctx):
     s = srv.client().get("/api/auth_status").json()
     eq(s["setup"]["kind"], "migrated", "direct-local login hint")
     eq(srv.client().get("/api/auth_status", headers=xff("198.51.100.3")).json()["setup"]["kind"], None, "remote: no hint")
+
+
+@test("auth")
+def t27b_v1_password_is_imported_once(ctx):
+    """Final review round 3: the v1 shared password is migrated ONCE. After auth.json is damaged and
+    moved aside (as the locked page says), or deleted while running, the re-seed is the default ADMIN
+    with a setup code: the old shared password (retired or not) never signs in again, locally or
+    remotely, and config.json / config.v1.bak.json stay byte-identical."""
+    tmp = ctx.tmp()
+    cfg = _v1_config(tmp)
+    srv = ctx.server(tmp)
+    remote = xff("198.51.100.20")
+    eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 200, "the migrated password, remote")
+    bak = (tmp / "config.v1.bak.json").read_bytes()
+    auth_p = tmp / "auth.json"
+    auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")       # damaged
+    c = srv.client()
+    end = time.monotonic() + 8
+    while c.get("/api/auth_status").status != 503:
+        check(time.monotonic() < end, "the server did not lock on the damaged auth.json")
+        time.sleep(0.2)
+    auth_p.rename(tmp / "auth.json.bad")                                                # "move it aside"
+    end = time.monotonic() + 8
+    while c.get("/login").status != 200:
+        check(time.monotonic() < end, "the server did not re-seed and unlock")
+        time.sleep(0.2)
+    a = harness.read_auth(tmp)["users"]["ADMIN"]
+    eq({k: a[k] for k in ("default_pw", "must_change", "migrated_v1", "created_by")},
+       {"default_pw": True, "must_change": True, "migrated_v1": False, "created_by": "system"}, "re-seeded ADMIN")
+    eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, "old shared password, remote")
+    eq(harness.login(srv.client(), "admin", "hunter22").status, 401, "old shared password, on the host PC")
+    code = harness.setup_code(tmp)
+    log = srv.log_text()
+    check(code and "-".join(code[i:i + 4] for i in (0, 4, 8)) in log, "the new setup code is on the console")
+    check("NOT imported" in log, "the console says why the old password was not imported")
+    eq(harness.admin_login(srv.client(), tmp, headers=remote).status, 401, "the default password is local-only")
+    eq(harness.admin_login(srv.client(), tmp).status, 200, "first-run login on this PC with the setup code")
+    # deleted while running: the same
+    auth_p.unlink()
+    end = time.monotonic() + 6
+    while not auth_p.exists():
+        check(time.monotonic() < end, "auth.json was not created again")
+        time.sleep(0.1)
+    time.sleep(0.3)
+    eq(harness.read_auth(tmp)["users"]["ADMIN"]["migrated_v1"], False, "deleted while running: not migrated again")
+    eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, "deleted: old password, remote")
+    eq(((tmp / "config.json").read_bytes(), (tmp / "config.v1.bak.json").read_bytes()), (cfg, bak),
+       "config.json and config.v1.bak.json byte-identical")
 
 
 @test("auth")
@@ -869,9 +996,51 @@ def t58_exact_origin_with_allowlisted_origins(ctx):
         eq(ws.wait_closed(), (4403, "bad_origin"), "bare allowlisted name, other port (WS)")
     same = {"Host": f"radio-pc:{port}", "Origin": f"http://radio-pc:{port}"}
     eq(c.raw("POST", "/api/disconnect", headers=same).status, 200, "radio-pc same host+port")
-    fwd = {"Origin": "https://radio.lan:8443", "X-Forwarded-Host": "radio.lan", "X-Forwarded-Port": "8443"}
-    eq(c.raw("POST", "/api/disconnect", headers=fwd).status, 200, "X-Forwarded-Host/Port from 127.0.0.1 (POST)")
-    with c.ws(origin="https://radio.lan:8443", headers={"X-Forwarded-Host": "radio.lan", "X-Forwarded-Port": "8443"}) as ws:
-        eq(ws.recv_json().get("type"), "hello", "X-Forwarded-Host/Port from 127.0.0.1 (WS)")
+    # a local TLS proxy reports the external origin: X-Forwarded-Host/Port AND -Proto (round 3: the scheme counts)
+    xf = {"X-Forwarded-Host": "radio.lan", "X-Forwarded-Port": "8443", "X-Forwarded-Proto": "https"}
+    eq(c.raw("POST", "/api/disconnect", headers=dict(xf, Origin="https://radio.lan:8443")).status, 200,
+       "X-Forwarded-Host/Port/Proto from 127.0.0.1 (POST)")
+    with c.ws(origin="https://radio.lan:8443", headers=xf) as ws:
+        eq(ws.recv_json().get("type"), "hello", "X-Forwarded-Host/Port/Proto from 127.0.0.1 (WS)")
     eq(c.raw("GET", "/login", headers={"Host": f"radio.lan:{port}"}).status, 403,
        "with an allowlist, an unlisted LAN name is refused (v1 rule)")
+
+
+@test("auth")
+def t58b_origin_scheme_must_match_the_request(ctx):
+    """Final review round 3: the Origin's scheme must equal the request's EFFECTIVE scheme
+    (X-Forwarded-Proto only from a loopback peer, else the connection's own), and its port the
+    effective port (the Host's port, else a trusted X-Forwarded-Port, else the default of the
+    effective scheme). Before, a Host without a port took the default port from the ORIGIN's scheme
+    and the scheme was never compared. No allowlist here: only the exact-origin rule can pass."""
+    srv = ctx.server()
+    c = harness.ready_admin(srv)
+    port = srv.port
+    serve = {"Host": "pc.tailnet.ts.net", "X-Forwarded-Proto": "https"}      # what Tailscale Serve sends
+    eq(c.raw("POST", "/api/disconnect", headers=dict(serve, Origin="https://pc.tailnet.ts.net")).status, 200,
+       "Serve Host + X-Forwarded-Proto https: Origin https://pc.tailnet.ts.net (POST)")
+    with c.ws(origin="https://pc.tailnet.ts.net", host_header="pc.tailnet.ts.net",
+              headers={"X-Forwarded-Proto": "https"}) as ws:
+        eq(ws.recv_json().get("type"), "hello", "... (WS)")
+    for bad in ("http://pc.tailnet.ts.net", "https://pc.tailnet.ts.net:8443", "http://pc.tailnet.ts.net:443"):
+        r = c.raw("POST", "/api/disconnect", headers=dict(serve, Origin=bad))
+        eq(r.status, 403, f"Serve Host + X-Forwarded-Proto https: Origin {bad} (POST)")
+        check("https://pc.tailnet.ts.net:443" in r.text, f"the refusal names the effective origin: {r.text[:200]}")
+        with c.ws(origin=bad, host_header="pc.tailnet.ts.net", headers={"X-Forwarded-Proto": "https"}) as ws:
+            eq(ws.wait_closed(), (4403, "bad_origin"), f"Serve Host + X-Forwarded-Proto https: Origin {bad} (WS)")
+    # the plain-http server: an https:// Origin for the very same host and port is not this origin
+    https_same = f"https://127.0.0.1:{port}"
+    eq(c.raw("POST", "/api/disconnect", headers={"Origin": https_same}).status, 403, f"{https_same} on plain http (POST)")
+    with c.ws(origin=https_same) as ws:
+        eq(ws.wait_closed(), (4403, "bad_origin"), f"{https_same} on plain http (WS)")
+    # a Host without a port on plain http: https://name is refused, http://name (port 80) passes
+    eq(c.raw("POST", "/api/disconnect", headers={"Host": "radio-pc", "Origin": "https://radio-pc"}).status, 403,
+       "Host radio-pc on plain http: Origin https://radio-pc")
+    eq(c.raw("POST", "/api/disconnect", headers={"Host": "radio-pc", "Origin": "http://radio-pc"}).status, 200,
+       "Host radio-pc on plain http: Origin http://radio-pc")
+    # the cases that passed before still pass
+    eq(c.raw("POST", "/api/disconnect", headers={"Origin": f"http://127.0.0.1:{port}"}).status, 200, "same origin")
+    with c.ws() as ws:
+        eq(ws.recv_json().get("type"), "hello", "same-origin WS")
+    v6 = f"[::1]:{port}"
+    eq(c.raw("POST", "/api/disconnect", headers={"Host": v6, "Origin": f"http://{v6}"}).status, 200, "IPv6 literal")

@@ -225,7 +225,7 @@ g = call("GET", "/api/admin/allowed_hosts", None, ADM, headers=lan).json()
 C("GET: entries with kinds, current host and origin, behind_proxy",
   (g["entries"][0], g["current_host"], g["current_origin"], g["behind_proxy"]),
   ({"value": "radio-pc", "kind": "name"}, "radio-pc", f"http://radio-pc:{PORT}", False))
-pub = {"host": "pub.example", "origin": "https://pub.example"}
+pub = {"host": "pub.example", "origin": "https://pub.example", "x-forwarded-proto": "https"}   # a local TLS proxy
 write_cfg({"allowed_hosts": ["pub.example"]})
 C("emptying the list from a public name it allowed -> would_lock_out (F21 rule for the empty list)",
   e(call("PUT", "/api/admin/allowed_hosts", {"entries": []}, ADM, headers=pub)), (400, "would_lock_out"))

@@ -36,8 +36,9 @@ and only one operator transmits at a time.
   (RS-BA1, for networked Icoms — MOD Input auto-routed on connect and restored on
   disconnect) or via the **host PC's sound card** for USB/serial radios (e.g. an
   FT-891 on a Digirig).
-- **PTT** tap-to-toggle (a short hold on touch screens; a double-click, a key's auto-repeat or a
-  click just after it unkeyed never re-keys) with a **failsafe time-out** — a
+- **PTT** tap-to-toggle (a short hold on touch screens). Fail-safe: while you are on the air every
+  click, tap or key press on it unkeys — however fast you click — and a double-click, a key's
+  auto-repeat or a click just after it unkeyed never re-keys. With a **failsafe time-out** — a
   client countdown, an independent server-side auto-unkey and a 120 s session limit, plus
   release on screen-lock / disconnect. A hardware TX time-out is set on connect as a backstop.
 - **One transmitter, many users** — accounts with roles (viewer / operator / admin); one
@@ -60,7 +61,12 @@ and only one operator transmits at a time.
 - **LAN (network)** — Icom's RS-BA1 UDP protocol (control 50001 / CI-V 50002 /
   audio 50003), for radios with an Ethernet port (IC-9700, IC-7300MK2). The Yaesu
   radios are COM-only.
-- **Simulator** — auto-connects on load for operators (until you pick a real radio + transport).
+- **Simulator** — a built-in simulated radio, to try everything without hardware: pick it as the
+  transport and press Connect. Nothing connects by itself on a first visit. A page load only
+  reconnects the connection this browser last chose for the selected radio (Simulator, COM port or
+  LAN), and only when no radio is connected, the account may connect (not a viewer), nobody pressed
+  Disconnect since the server started, and the server was not started with `--no-autoconnect`;
+  operators reconnect only the current radio on the connection an admin pinned.
 
 ## Install & run (Windows)
 

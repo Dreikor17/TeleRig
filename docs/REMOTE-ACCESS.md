@@ -67,6 +67,12 @@ A plain `python run.py` usually lacks the dependencies on Windows.) It asks for 
 It never starts the server. `--password-stdin` (one line on stdin, for scripts) is refused unless
 `TELERIG_CONFIG` is set or you add `--real-config`.
 
+While `auth.json` or `config.json` can't be read, every page answers "TeleRig is locked" (and every
+WebSocket closes). The TeleRig window, and a browser on the host PC itself, show the file's full
+path and what is wrong with it; other devices only see the file's name and the recovery command
+(the folder's path contains your user name). With `config.json` itself unreadable even the
+host PC's browser gets the short text; the TeleRig window always has the path.
+
 ## Sessions
 
 - A sign-in lasts **30 days** on that browser (a fixed expiry, not renewed by use).
@@ -98,7 +104,8 @@ Failed sign-ins are counted over a 15-minute window:
 | per account, all sources | 30 failures, then the account is locked for 15 min, doubling up to 4 h on repeats (forgotten after 24 h without one) |
 
 A locked source or account gets "Too many attempts. Try again in m:ss", even with the right
-password. The account-wide lock never applies **on the host PC**, nor from a device that signed in
+password. The counts live in memory (a restart clears them); a flood of failed sign-ins for made-up
+names or from many addresses can't push an account's count out to dodge its lock. The account-wide lock never applies **on the host PC**, nor from a device that signed in
 to that account successfully in the last 30 days and has no recent failures, so an attacker can't
 keep you locked out. Admins see a notice in the top bar and the list in **Administration →
 Lockouts**, with **Unlock** buttons. Ways back in:
@@ -128,6 +135,12 @@ Lockouts**, with **Unlock** buttons. Ways back in:
   An amber notice reminds admins. Change it on the host PC (user menu → Change password), or run the
   recovery command; then create individual accounts so the old shared password can retire. Until
   then the shared admin account may have 24 pages open at once.
+
+  The old password is imported **once**. If `auth.json` is later deleted or moved aside (for
+  example after the "TeleRig is locked" page), it is set up again like a fresh install — admin /
+  admin with a new setup code in the TeleRig window — even though `config.json` still holds the old
+  `password_hash`: `config.v1.bak.json` shows the migration already happened, so a retired shared
+  password never comes back.
 - **Tailscale Serve was on (`behind_proxy`) and no password was set.** At start-up TeleRig clears a
   stale `behind_proxy` flag when Tailscale says Serve isn't running for this port. If Serve really
   runs, every visitor — the host PC included — arrives through the proxy, so nobody counts as "on the
@@ -212,16 +225,31 @@ names only: single-label names (`radio-pc`), `*.local`, `*.lan`, `*.home.arpa`, 
 so. Once the list has entries, only those names (plus `localhost` and IPs) are accepted.
 
 **Origin check (the exact-origin rule).** Every WebSocket and every request that changes something
-must carry an `Origin` whose scheme, **name and port** match the address the browser used, or that
-equals an allowed **origin** exactly. A bare allowed *name* never relaxes this: a page served from
-the same host on another port (another web app on `:8077` or `:8443`) can't drive TeleRig. Command-line
-tools must send `Origin: http://<host>:<port>` themselves.
+must carry an `Origin` whose **scheme, name and port** all equal the address the browser used, or
+that equals an allowed **origin** exactly (scheme, name and port). A bare allowed *name* never relaxes
+this: a page served from the same host on another port (another web app on `:8077` or `:8443`) can't
+drive TeleRig, and neither can `http://<name>` when the browser reached TeleRig as `https://<name>`
+(or the other way round). Command-line tools must send `Origin: http://<host>:<port>` themselves.
 
-**Behind a reverse proxy.** When the proxy rewrites `Host` (nginx `proxy_set_header Host $host` drops
-a non-default port), TeleRig compares the Origin with `X-Forwarded-Host` / `X-Forwarded-Port` — only
-when the proxy connects from the same machine (a loopback peer). Otherwise add the public origin
-(e.g. `https://shack.example.org`) under Access. The refusal says which origin and which host didn't
-match.
+The address the browser used is worked out from the request:
+
+- **scheme** — `https` when the connection itself is TLS (`--ssl-certfile`), else `http`; from a proxy
+  on the same machine (a loopback peer) its `X-Forwarded-Proto` (`http` / `https`) wins;
+- **name** — the `Host` header, or a loopback proxy's `X-Forwarded-Host`;
+- **port** — the port in that name, else a loopback proxy's `X-Forwarded-Port`, else the default port
+  **of that scheme** (443 for https, 80 for http). The Origin's own scheme never picks the port.
+
+So `https://127.0.0.1:8700` is refused by a plain-HTTP server on 8700, and a TLS proxy that reports
+`Host: radio-pc.tailnet.ts.net` without `X-Forwarded-Proto: https` makes the address
+`http://radio-pc.tailnet.ts.net:80`, which an `https://` page never matches.
+
+**Behind a reverse proxy.** Tailscale Serve reports the `*.ts.net` name with `X-Forwarded-Proto:
+https`, and **Turn on** also adds `https://<name>.ts.net` as an allowed origin. For nginx and friends, set
+`X-Forwarded-Proto` (and `X-Forwarded-Host` / `X-Forwarded-Port` when the proxy rewrites `Host`;
+nginx `proxy_set_header Host $host` drops a non-default port). TeleRig reads these headers only when
+the proxy connects from the same machine (a loopback peer). Otherwise add the public origin (e.g.
+`https://shack.example.org`) under Access. The refusal names the origin it got and the address it
+expected.
 
 **Saving can't lock you out:** Access refuses a list that would no longer accept the browser you are
 saving from ("Saving this list would lock this browser out …"); add this browser's address first.
