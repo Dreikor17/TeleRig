@@ -1,5 +1,8 @@
 /* B4: the two-tap STOP of SOMEONE ELSE's transmission is bound to the owner it was armed for (D-16, F18,
- * I23). Runs the REAL frontend/tr.js (TR.stopArm) and the REAL frontend/cwtool.js click handler in a Node
+ * I23). C1: a tap on the CW STOP control can never START a transmission (S9-S16: the cw_tx:false frame
+ * landing between the taps of a double-tap, for our own CW, nobody's and someone else's; a message that
+ * ends just before a single STOP tap; a randomized property run).
+ * Runs the REAL frontend/tr.js (TR.stopArm) and the REAL frontend/cwtool.js click handler in a Node
  * vm with a tiny fake DOM, a fake clock and a recording RadioControl.send stub. No browser, no server, no
  * socket: nothing here can reach a radio. Run by tests/t_admin_ui.py (unit group):
  *
@@ -145,6 +148,14 @@ function cwEnv() {
   env.ctx.RadioControl = { send: (o) => env.sent.push(JSON.parse(JSON.stringify(o))), state: () => st };
   env.ctx.RadioTx = { owner: () => (TR.tx && TR.tx.owner) || null, nextSeq: (() => { let s = 0; return () => ++s; })() };
   env.load("cwtool.js");
+  // the time cwtool's 400 ms state poll last SAW a CW message on the air (the S16 property counts
+  // from what the tab could see: a CW that came and went between two polls never showed a STOP)
+  env.lastSeenOn = -1e9;
+  for (const t of env.clock.tasks) {
+    if (t.every !== 400) continue;
+    const f = t.fn;
+    t.fn = () => { if (st.cw_tx) env.lastSeenOn = env.clock.now; f(); };
+  }
   env.tx = (owner, cw) => {                                        // a tx frame + the radio's state
     TR.tx = { owner };
     st.cw_tx = !!cw;
@@ -215,6 +226,115 @@ const OP1 = { conn: 5, user: "OP1", claims: ["cw"] }, OP9 = { conn: 9, user: "OP
   e.tx({ conn: 3, user: "ME", claims: ["cw"] }, true); e.tap();
   e.tx(null, true); e.tap();
   eq(e.actions(), ["cw_stop", "cw_stop"], "S8 own CW / no owner: one tap sends cw_stop");
+}
+
+// ---- C1: a tap on a STOP control can never START a transmission -----------------------------------
+// The race: the first tap of a STOP double-tap stops the CW, the state frame (cw_tx:false) lands before
+// the second tap, and the second tap used to fall through to the TX path and send the typed message
+// again as a new cw_tx. Own CW, nobody's CW and someone else's CW, plus a message that ends by itself
+// just before a single STOP tap.
+const ME = { conn: 3, user: "ME", claims: ["cw"] };
+{ // S9: OUR CW, the cw_tx:false frame arrives between the two taps
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ CQ TEST";
+  e.tx(ME, true); e.tap();
+  e.tx(null, false);                                               // our cw_stop landed: nobody on air
+  e.tap();
+  eq(e.actions(), ["cw_stop"], "S9 own CW: the second tap after the stop frame sends nothing (no cw_tx)");
+  check(/nothing sent/.test(e.hint()), "S9 says nothing was sent (hint: " + e.hint() + ")");
+}
+{ // S9b: OUR CW, only the radio state changes between the taps (no tx frame yet)
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(ME, true); e.tap();
+  e.st.cw_tx = false;                                              // state poll first, tx frame later
+  e.tap(); e.clock.advance(300); e.tap();
+  eq(e.actions(), ["cw_stop"], "S9b own CW, state-only change: later taps send nothing");
+}
+{ // S10: NOBODY's CW (owner null, radio still sending), the frame lands between the taps
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(null, true); e.tap(); e.clock.advance(250);
+  e.tx(null, false); e.tap();
+  eq(e.actions(), ["cw_stop"], "S10 nobody's CW: the second tap sends nothing");
+}
+{ // S11: someone else's CW ends by itself just before a SINGLE tap meant as STOP
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(OP1, true); e.clock.advance(450);                           // the button showed "Tap twice to stop OP1"
+  e.tx(null, false); e.clock.advance(200); e.tap();
+  eq(e.actions(), [], "S11 other's CW just ended: a tap meant as STOP sends nothing");
+}
+{ // S12: OUR CW ends by itself just before a single tap meant as STOP
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(ME, true); e.clock.advance(1250);
+  e.tx(null, false); e.clock.advance(150); e.tap();
+  eq(e.actions(), [], "S12 own CW just ended: a tap meant as STOP sends nothing");
+}
+{ // S13: a burst of taps never transmits: every guarded tap extends the STOP role
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(ME, true); e.tap(); e.tx(null, false);
+  e.tap(); e.clock.advance(2500); e.tap(); e.clock.advance(2900); e.tap();
+  eq(e.actions(), ["cw_stop"], "S13 a burst of taps after the stop: only the cw_stop");
+  e.clock.advance(3100); e.tap();
+  eq(e.actions(), ["cw_stop", "cw_tx"], "S13 a deliberate tap 3 s after the last tap transmits again");
+}
+{ // S14: the button shows the guard: disabled right after the CW ended, enabled once it lapses
+  const e = cwEnv();
+  e.tx(ME, true); e.clock.advance(400);
+  eq([e.els.cwTx.textContent, e.els.cwTx.disabled], ["■", false], "S14 on air: an enabled STOP");
+  e.tx(null, false); e.clock.advance(400);
+  eq([e.els.cwTx.textContent, e.els.cwTx.disabled], ["TX", true], "S14 just ended: TX shown but inert");
+  check(/just ended/.test(e.els.cwTx.title), "S14 the title says why (" + e.els.cwTx.title + ")");
+  e.clock.advance(3200);
+  eq(e.els.cwTx.disabled, false, "S14 enabled again after the guard window");
+}
+{ // S15: someone else's CW: arm, the CW ends, two more taps -> nothing; no cw_tx at any point
+  const e = cwEnv();
+  e.els.cwSend.value = "CQ";
+  e.tx(OP1, true); e.tap(); e.tx(null, false); e.tap(); e.tap();
+  eq(e.actions(), [], "S15 other's CW ended while armed: the later taps send nothing");
+}
+// S16: a randomized property check over tap / frame / clock sequences (seeded, reproducible). Every
+// cw_tx this tab sends must come at least 3 s after its last STOP tap (a tap while CW was on the air)
+// and at least 3 s after its state poll last showed a CW message on the air.
+{
+  let seed = 0x2545F491;
+  const rnd = () => { seed ^= seed << 13; seed >>>= 0; seed ^= seed >>> 17; seed ^= seed << 5; seed >>>= 0; return seed / 4294967296; };
+  const pick = (a) => a[Math.floor(rnd() * a.length)];
+  let bad = 0, cwTxSent = 0, stopTaps = 0, firstBad = "";
+  for (let run = 0; run < 1500; run++) {
+    const e = cwEnv();
+    e.els.cwSend.value = "CQ TEST";
+    let lastStopTap = -1e9;
+    const trace = [];
+    for (let i = 0; i < 40; i++) {
+      const op = pick(["tap", "tap", "tap", "own", "other", "nobody", "off", "offkeep", "wait", "wait"]);
+      const before = e.sent.length;
+      if (op === "tap") { if (e.st.cw_tx) { lastStopTap = e.clock.now; stopTaps++; } e.tap(); }
+      else if (op === "own") e.tx(ME, true);
+      else if (op === "other") e.tx(pick([OP1, OP9]), true);
+      else if (op === "nobody") e.tx(null, true);
+      else if (op === "off") e.tx(null, false);
+      else if (op === "offkeep") e.st.cw_tx = false;                // radio state only, no tx frame
+      else e.clock.advance(Math.floor(rnd() * 1500));
+      trace.push(op + "@" + (e.clock.now - 1_000_000));
+      for (const f of e.sent.slice(before)) {
+        if (f.action !== "cw_tx") continue;
+        cwTxSent++;
+        const sinceSeen = e.clock.now - e.lastSeenOn, sinceStop = e.clock.now - lastStopTap;
+        if (sinceSeen < 3000 || sinceStop < 3000) {
+          bad++;
+          if (!firstBad) firstBad = "run " + run + ": cw_tx " + sinceSeen + " ms after CW was seen on air, " + sinceStop +
+                                    " ms after a STOP tap; trace " + trace.join(" ");
+        }
+      }
+    }
+  }
+  check(bad === 0, "S16 a STOP tap or a just-seen CW never leads to a cw_tx (" + bad + " bad of " + cwTxSent + "): " + firstBad);
+  check(cwTxSent > 50 && stopTaps > 1000, "S16 the run exercised both sides (" + cwTxSent + " deliberate cw_tx, " + stopTaps + " STOP taps)");
 }
 
 console.log(failures ? failures + " of " + checks + " checks FAILED" : "ALL PASS (" + checks + " checks)");

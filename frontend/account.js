@@ -127,29 +127,47 @@
   });
 
   // ---- sign out (§5.3, §2.16) -------------------------------------------------------------------
+  // Only a 2xx answer means the sign-out happened: then the page goes to /login?reason=signed_out.
+  // A 401 means this session had already ended. For a plain sign-out that is the same result (the
+  // page goes to /login), but "sign out everywhere" did NOT run, so it says so on the sign-in page
+  // (reason=expired) instead of claiming every device was signed out. Anything else (403 origin or
+  // migrated_local_only, 429, 5xx, no network) changed nothing: the error is shown and the page stays.
+  // While the request runs, tr.js holds back WebSocket closes (ours would be the 4401 that follows a
+  // sign-out); TR.cancelLeave() hands any held close back to it when the page stays.
   let leaving = false;
-  async function leaveVia(url, json) {
+  async function leaveVia(url, what) {
     if (leaving) return false;
     leaving = true;
-    TR._leaving = true;                    // the 4401 close that follows is ours: tr.js must not handle it
+    TR._leaving = true;
+    let outcome = "error", err = null;
     try {
-      await TR.api(url, { method: "POST", json: json || {}, noRedirect: true, quiet: true });
+      await TR.api(url, { method: "POST", json: {}, noRedirect: true, quiet: true });
+      outcome = "ok";
     } catch (e) {
-      if (e.status === 0 || (e.status === 403 && e.code === "migrated_local_only") || e.status >= 500) {
-        leaving = false; TR._leaving = false;           // nothing happened: stay here
-        TR.toast(e.message || "Could not sign out.", "error");
-        return false;
-      }
-      // 401: the session had already ended. Either way it is over now.
+      err = e;
+      if (e && e.status === 401) outcome = "gone";      // no session any more: nothing left to sign out here
     }
-    location.replace("/login?reason=signed_out");
-    return true;
+    if (outcome === "ok") { location.replace("/login?reason=signed_out"); return true; }
+    if (outcome === "gone") {
+      location.replace(what === "everywhere" ? "/login?reason=expired" : "/login?reason=signed_out");
+      return true;
+    }
+    leaving = false;
+    if (typeof TR.cancelLeave === "function") TR.cancelLeave(); else TR._leaving = false;
+    const why = (err && err.status === 0) ? "Can't reach the server — check the connection."
+      : (err && err.status === 429) ? "Too many requests — try again in a moment."
+      : ((err && err.message) || "The server refused it.");
+    const msg = (what === "everywhere" ? "Not signed out everywhere — nothing changed. " : "Not signed out. ") + why;
+    TR.toast(msg, "error", { force: true, ms: 8000 });
+    TR.srLive(msg);
+    return false;
   }
-  function signOut() { leaveVia("/api/logout"); }
+  function signOut() { return leaveVia("/api/logout", "here"); }
   async function signOutEverywhere() {
     const ok = await TR.confirm("Sign out everywhere? Every TeleRig session of " + (TR.user || "this account") +
                                 " ends, on every device — including this one.", { ok: "Sign out everywhere", danger: true });
-    if (ok) leaveVia("/api/me/signout_all");
+    if (ok) return leaveVia("/api/me/signout_all", "everywhere");
+    return false;
   }
 
   // ---- change password (voluntary, §5.2) ----------------------------------------------------------

@@ -952,19 +952,17 @@
   }
   // The two-tap STOP is armed for ONE owner: the owner's conn (EXTERNAL = -1) and name at the first
   // tap. The second tap sends tx_stop only while that same owner still holds TX; any other owner (or
-  // none) disarms it, so a stale arm can never stop someone else's transmission (D-16, I23).
-  let stopArmed = 0, stopArmedFor = null;
-  function ownerKey(o) { return o ? String(o.conn) + "|" + (o.external ? "ext" : (o.user || "")) : null; }
-  function disarmStop() {
-    if (stopArmed) { clearTimeout(stopArmed); stopArmed = 0; }
-    stopArmedFor = null;
+  // none) disarms it, so a stale arm can never stop someone else's transmission (D-16, I23). The rule
+  // is TR.stopArm (tr.js), shared with the CW STOP and Admin → Activity; this only draws the chip.
+  const topStop = TR.stopArm((o) => {             // armed for owner o (3 s), or disarmed (null)
     const b = $("onAirStop"), l = $("onAirStopLbl");
-    if (b) b.classList.remove("armed");
-    if (l && l.textContent !== "STOP") l.textContent = "STOP";
-  }
-  function checkStopArm() {                      // every tx frame: the armed owner gone -> disarm
-    if (stopArmedFor !== null && ownerKey(txOwner()) !== stopArmedFor) disarmStop();
-  }
+    if (b) b.classList.toggle("armed", !!o);
+    const text = o ? "Tap again to stop " + ownerName(o) : "STOP";
+    if (l && l.textContent !== text) l.textContent = text;
+    if (o) TR.srLive("Tap STOP again within 3 seconds to stop " + ownerName(o));
+  });
+  function disarmStop() { topStop.disarm(); }
+  function checkStopArm() { topStop.check(txOwner()); }   // every tx frame: the armed owner gone -> disarm
   function renderOnAir() {
     const chip = $("onAir");
     if (!chip) return;
@@ -985,18 +983,8 @@
     if (!o) { disarmStop(); return; }
     if (TR.isTxOwner()) { disarmStop(); txStop(); return; }          // the owner: one tap
     if (!TR.can("tx")) return;
-    if (stopArmed) {                                                   // second tap (F18)
-      const same = stopArmedFor !== null && ownerKey(o) === stopArmedFor;
-      disarmStop();
-      if (same) send({ action: "tx_stop" });     // only the owner the first tap was armed for
-      return;
-    }
-    $("onAirStop").classList.add("armed");
-    const l = $("onAirStopLbl");
-    if (l) l.textContent = "Tap again to stop " + ownerName(o);
-    TR.srLive("Tap STOP again within 3 seconds to stop " + ownerName(o));
-    stopArmedFor = ownerKey(o);
-    stopArmed = setTimeout(disarmStop, 3000);
+    // first tap: arm for o; second tap: "fire" only for the owner the first tap was armed for (F18)
+    if (topStop.tap(o) === "fire") send({ action: "tx_stop" });
   });
   let pttVisible = true;                          // the IntersectionObserver's view of #pttBtn
   if (ptt && "IntersectionObserver" in window) {

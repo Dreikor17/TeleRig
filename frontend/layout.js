@@ -66,7 +66,9 @@
   const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"];
   const TILES = {
     vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 64,  bodyPxAlt: 120 },
-    ptt:      { title: "Transmit", icon: "mic",                minW: 2, bodyPx: 52,  bodyPxAlt: 96 },
+    // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
+    // phone 44 + 6 + a 52 px row (its keys keep the 44 px touch height) + 2 -> 6 phone rows (§3.6)
+    ptt:      { title: "Transmit", icon: "mic",                minW: 2, bodyPx: 52,  bodyPxAlt: 84, bodyPxAltPhone: 104 },
     audio:    { title: "Audio",    icon: "volume-2",           minW: 2, bodyPx: 72 },
     meter:    { title: "Meter",    icon: "gauge",              minW: 3, bodyPx: 48 },
     scope:    { title: "Scope",    icon: "audio-waveform",     minW: 4, bodyPx: 200 },
@@ -258,17 +260,17 @@
     return b ? b.classList.contains("dual") : caps.dual;
   }
   function atasShown() { const a = $("atasTune"); return !!a && !a.hidden; }
-  function bodyPx(id) {
+  function bodyPx(id, d) {
     const t = TILES[id];
     if (id === "vfo" && dualWatch()) return t.bodyPxAlt;
-    if (id === "ptt" && atasShown()) return t.bodyPxAlt;
+    if (id === "ptt" && atasShown()) return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;
     return t.bodyPx;
   }
   function minFor(d, id) {
     const head = d === "phone" ? 38 : 30;
     const c = d === "phone" ? 32 : (grid && dev === "desktop" ? grid.getCellHeight() : desktopCell());
     return { w: Math.min(TILES[id].minW, d === "phone" ? 1 : B.desktop.cols),
-             h: Math.max(HEAD_ROWS, Math.ceil((head + bodyPx(id) + 16 + 2 * 4 + 2) / c)) };
+             h: Math.max(HEAD_ROWS, Math.ceil((head + bodyPx(id, d) + 16 + 2 * 4 + 2) / c)) };
   }
   function phoneH(it) {
     const m = minFor("phone", it.id).h;

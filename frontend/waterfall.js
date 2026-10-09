@@ -292,15 +292,14 @@
         ctx.fillStyle = "rgba(255,80,80,.9)"; ctx.font = "11px monospace";
         ctx.fillText("OUT OF RANGE", w / 2 - 40, this.specH / 2);
       }
-      // frequency scale: left/right edge (MHz) + the CENTRE (tuned) freq by the marker,
-      // so the frequency shown on the scope is explicit and verifiable.
+      // frequency scale: the CENTRE (tuned) freq by the marker, so the frequency shown on the
+      // scope is explicit and verifiable. The left/right EDGE frequencies are the HTML labels
+      // #lblLeft/#lblRight over the scope (app.js updateScopeLabels, same visible range); they are
+      // drawn only there, never also on this canvas (that drew every edge twice, one over the other).
       const [flo, fhi] = this.visibleRange();
       if (fhi > flo) {
         ctx.font = "10px Consolas, monospace";
         ctx.textBaseline = "top";
-        ctx.fillStyle = "rgba(150,190,220,.7)";
-        ctx.textAlign = "left";  ctx.fillText((flo / 1e6).toFixed(3), 3, 2);
-        ctx.textAlign = "right"; ctx.fillText((fhi / 1e6).toFixed(3), w - 3, 2);
         if (tuned) {                                            // centre indicator = the tuned freq
           const cx = Math.max(40, Math.min(w - 40, this.freqToX(tuned)));
           ctx.textAlign = "center"; ctx.fillStyle = "#ffb15a";

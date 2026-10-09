@@ -58,8 +58,8 @@
   // 3 s. The second tap answers "fire" only while that same owner still holds TX; any other owner (or
   // none) disarms it and answers "none". check(owner) runs on every tx frame and disarms as soon as the
   // owner changes, so a stale arm can never stop another user's transmission. The caller sends tx_stop
-  // on "fire" and nothing otherwise. Used by cwtool.js (CW STOP) and admin.js (Activity); app.js's
-  // top-bar STOP applies the same rule with its own copy (B2b).
+  // on "fire" and nothing otherwise. Used by app.js (the top-bar STOP chip), cwtool.js (CW STOP) and
+  // admin.js (Activity).
   TR.ownerKey = (o) => (o ? String(o.conn) + "|" + (o.external ? "ext" : (o.user || "")) : null);
   TR.stopArm = function (onChange, ms) {
     let armedFor = null, armedOwner = null, timer = 0;
@@ -485,10 +485,16 @@
 
   // 4401: the session ended. If it is still valid (our own password change re-issued the cookie),
   // reconnect; otherwise sign in again. Two consecutive 4401 closes within 30 s go straight to the
-  // sign-in page, so a loop can never form (AR-62).
+  // sign-in page, so a loop can never form (AR-62). The reason rides along to the sign-in page
+  // (§2.11): unauthenticated / expired, session_revoked, signed_out, and role_changed (an admin
+  // changed this account's role: "Your role changed — sign in again"); the cap keeps role_changed
+  // and says session_revoked otherwise.
   async function onAuthLost(reason, reconnect) {
     const now = Date.now();
-    if (link.last4401 && now - link.last4401 < 30000) { TR.goLogin("session_revoked"); return; }
+    if (link.last4401 && now - link.last4401 < 30000) {
+      TR.goLogin(reason === "role_changed" ? "role_changed" : "session_revoked");
+      return;
+    }
     link.last4401 = now;
     const j = await authStatus();
     if (j && j.authed && !j.must_change) { reconnect(); return; }
@@ -518,8 +524,19 @@
     server_locked: "The server is locked: a settings file is unreadable. Fix it on the host PC (see the TeleRig window), then reload.",
     forbidden: "The server refused this connection.",
   };
+  // While a sign-out request runs (account.js sets TR._leaving), a close is held back: on success the
+  // page leaves anyway; if the sign-out failed, TR.cancelLeave() hands the held close back here, so a
+  // socket that dropped meanwhile still reconnects (or goes to the sign-in page).
+  let heldClose = null;
+  TR.cancelLeave = function () {
+    TR._leaving = false;
+    const c = heldClose;
+    heldClose = null;
+    if (c) TR.handleClose(c.code, c.reason, c.reconnect);
+  };
   TR.handleClose = function (code, reason, reconnect) {
-    if (TR._leaving || link.fatal) return;
+    if (link.fatal) return;
+    if (TR._leaving) { heldClose = { code, reason, reconnect }; return; }
     if (code === 4401) { onAuthLost(reason, reconnect); return; }
     link.last4401 = 0;                           // only CONSECUTIVE 4401 closes count toward the cap
     if (code === 4403) {

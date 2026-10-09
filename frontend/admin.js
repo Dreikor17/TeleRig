@@ -94,7 +94,19 @@
   let panel = null, resultEl = null, sudoLayer = null;
   let cur = null, renderSeq = 0;         // the open tab; a newer render supersedes an older async one
   let timers = [];                       // the open tab's intervals (sessions poll, on-air clock)
-  let secret = null;                     // a temporary password to show ONCE (cleared on Done / tab / close)
+  // A temporary password is shown exactly ONCE. `secret` holds it only until the next Users render
+  // takes it (secretPanel); from then on it lives only in that panel. The panel goes away on Done and
+  // on ANY later render (a role change, another action, a refresh, the tab switch, closing the
+  // dialog): scrubSecret() then blanks the shown text and drops the value, so a re-render can never
+  // show it again.
+  let secret = null;
+  let shownSecret = null;                // {s, code}: the one on screen
+  function scrubSecret() {
+    if (!shownSecret) return;
+    shownSecret.s.pw = null;
+    shownSecret.code.textContent = "";
+    shownSecret = null;
+  }
 
   function clearTimers() {                // leaving a tab (or closing): its intervals and any STOP arm end
     for (const t of timers) clearInterval(t);
@@ -265,6 +277,7 @@
     clearTimers();
     renderSeq++;
     secret = null;                                    // shown once: gone with the dialog
+    scrubSecret();
     if (sudoLayer) sudoLayer.cancel();
     say("");
     if (panel) panel.textContent = "";
@@ -273,6 +286,7 @@
   function select(id, opts) {
     if (!TABS.some((t) => t[0] === id)) id = "users";
     if (cur !== id) secret = null;                    // leaving the tab ends the one-time display
+    scrubSecret();                                    // every re-render ends it too (shown once)
     clearTimers();
     cur = id;
     try { sessionStorage.setItem(TAB_KEY, id); } catch (_) {}
@@ -369,19 +383,23 @@
   function secretPanel() {
     if (!secret) return null;
     const s = secret;
+    secret = null;                                    // taken: no later render can show it again
+    scrubSecret();
     const lines = [h("b", { text: s.what === "added" ? s.user + " was added as " + s.role + "."
                                                        : s.user + "'s password was reset — their open sessions ended." })];
     if (s.pw) {
-      const copyB = btn("Copy", { icon: "copy", cls: "sm", on: () => copyText(s.pw, copyB) });
+      const copyB = btn("Copy", { icon: "copy", cls: "sm", on: () => { if (s.pw) copyText(s.pw, copyB); } });
+      const code = h("code", { class: "tm-secret", text: s.pw });
+      shownSecret = { s, code };
       lines.push(h("div", { class: "tm-secret-row" }, h("span", { text: "Temporary password (shown once): " }),
-                   h("code", { class: "tm-secret", text: s.pw }), copyB));
+                   code, copyB));
     } else if (s.typed) {
       lines.push(note("The password you typed is set."));
     }
     lines.push(note(s.must_change ? "They choose their own password at their first sign-in."
                                   : "They keep this password (no change required)."));
     const el = h("div", { class: "tm-box ok tm-secret-panel", role: "status" }, lines);
-    el.append(h("div", { class: "tm-actions" }, btn("Done", { on: () => { secret = null; el.remove(); } })));
+    el.append(h("div", { class: "tm-actions" }, btn("Done", { on: () => { secret = null; scrubSecret(); el.remove(); } })));
     return el;
   }
 

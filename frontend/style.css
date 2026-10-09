@@ -940,12 +940,24 @@ body.arranging .tile-body{opacity:.6}
 .tile:has(#bands){border-color:rgba(16,185,129,.30)}
 .tile:has(#bands.sub-active){border-color:rgba(59,130,246,.35)}
 .tile:has(#bands.split){border-color:rgba(245,158,11,.40)}
-/* PTT tile: the button fills the body; ATAS is a fixed row under it (G-15) */
+/* PTT tile: the button fills the body; ATAS is ONE fixed compact row under it (G-15, D-11). The default
+   5-row desktop tile fits with and without that row (1280×800 and up; 1280×720 through the short-body
+   rule below), so TUNER SELECT = ATAS never makes the tile scroll or resize. The row is 31 px: label,
+   ▲ ▼ and a one-line hint (cut with …, left out when the tile is too narrow for it). layout.js
+   TILES.ptt.bodyPxAlt (84 px) is this content: PTT 44 + gap 6 + ATAS 31 (+3). On a phone the keys keep
+   their 44 px touch height (a 52 px row), and the phone tile takes 6 rows with ATAS (bodyPxAltPhone). */
 .tile-ptt{container-type:size}
 .tile-ptt>.tile-fit{height:100%;display:flex;flex-direction:column;gap:6px}
 .tile-ptt #pttBtn{flex:1 1 auto;width:100%;min-height:44px;font-size:clamp(14px,11cqmin,28px)}
-.tile-ptt #atasTune{flex:0 0 auto;flex-direction:row;align-items:center;justify-content:space-between;min-width:0}
-.tile-ptt #atasTune .atas-btn{flex:0 0 auto;min-width:40px;padding:6px 10px}
+.tile-ptt #atasTune{flex:0 0 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;min-width:0;
+  padding:3px 6px;border-radius:8px}
+.tile-ptt #atasTune .atas-btn{flex:0 0 auto;min-width:40px;padding:3px 10px}
+.tile-ptt #atasTune .atas-hint{flex:1 1 0;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@container (max-width:240px){ .tile-ptt #atasTune .atas-hint{display:none} }   /* a 2-column tile: label + ▲ ▼ only */
+@container (max-height:80px){                                               /* a short desktop body (cells < 26 px) */
+  .tile-ptt>.tile-fit{gap:4px}
+  .tile-ptt #pttBtn{min-height:34px}
+}
 .tile:has(#pttBtn.tx-mine){border-color:var(--danger);box-shadow:0 0 0 1px var(--danger),0 0 24px rgba(239,68,68,.25)}
 .tile:has(#pttBtn.tx-busy),.tile:has(#pttBtn.tx-external){border-color:rgba(245,158,11,.55)}
 /* scope tile (§3.16): spectrum fixed, waterfall flexes; the split is a fraction applied by app.js */

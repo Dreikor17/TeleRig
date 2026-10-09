@@ -376,9 +376,19 @@
   // two-tap STOP: the first tap arms it for 3 s ("Tap again to stop <USER>"), the second sends tx_stop.
   // The arm is bound to the owner of the first tap (TR.stopArm, the top-bar STOP's rule, I23): any
   // owner change disarms it (every tx frame and every state poll), and the second tap sends tx_stop
-  // only while that same owner still sends CW. A tap that belongs to a STOP double-tap never starts a
-  // transmission: when the CW being stopped has ended, the rest of the arm window sends nothing.
-  let armedHint = "", stopGuardUntil = 0;
+  // only while that same owner still sends CW.
+  //
+  // A tap on this button while it is, or just was, a STOP control never starts a transmission. The
+  // button keeps its STOP role for STOP_GUARD_MS after this tab last saw a CW message on the air
+  // (every 400 ms state poll and every tap) and after every tap: inside that window a tap with no CW
+  // on the air sends nothing, and each such tap extends the window. So when the CW message ends
+  // between the two taps of a STOP double-tap (our own cw_stop landed, or someone else's message
+  // finished while armed), or just before a single STOP tap, the tap can't re-send the typed text as
+  // a new cw_tx. A message is sent only by a tap after STOP_GUARD_MS with nothing on the air.
+  const STOP_GUARD_MS = 3000;
+  let armedHint = "", stopRoleUntil = 0;
+  function keepStopRole(now) { stopRoleUntil = Math.max(stopRoleUntil, now + STOP_GUARD_MS); }
+  const inStopRole = (now) => now < stopRoleUntil;
   const TRo = TRx();
   const stopArm = TRo && typeof TRo.stopArm === "function" ? TRo.stopArm((o) => {
     if (o) { armedHint = "Tap again to stop " + ownerName(o); setTxHint(armedHint); return; }
@@ -394,19 +404,21 @@
       const st = rc.state() || {};
       const o = txOwner();
       const now = Date.now();
-      if (st.cw_tx) {                                // a CW message is on the air
-        if (mineTx() || !o) { disarm(); stopGuardUntil = 0; rc.send({ action: "cw_stop" }); return; }   // ours (or nobody's)
+      if (st.cw_tx) {                                // a CW message is on the air: this tap is a STOP tap
+        keepStopRole(now);
+        if (mineTx() || !o) { disarm(); rc.send({ action: "cw_stop" }); return; }   // ours (or nobody's)
         if (!stopArm) return;
         const r = stopArm.tap(o);                    // "arm" | "fire" (same owner still sending) | "none"
-        if (r === "arm") stopGuardUntil = now + 3000;
-        else if (r === "fire") rc.send({ action: "tx_stop" });
+        if (r === "fire") rc.send({ action: "tx_stop" });
         return;
       }
-      if (armed() || now < stopGuardUntil) {         // the CW being stopped ended: this tap sends nothing
-        disarm(); stopGuardUntil = 0;
+      if (armed() || inStopRole(now)) {              // the CW being stopped ended: this tap sends nothing
+        disarm();
+        keepStopRole(now);                           // a further tap of the same burst only stops, too
         const msg = "nothing sent — that CW message already ended";
         setTxHint(msg);
-        setTimeout(() => { if (txHint && txHint.textContent === msg) setTxHint(""); }, 3000);
+        setTimeout(() => { if (txHint && txHint.textContent === msg) setTxHint(""); }, STOP_GUARD_MS);
+        syncTx();
         return;
       }
       if (o && !mineTx()) { setTxHint("busy — " + ownerName(o) + " is transmitting"); return; }
@@ -449,13 +461,18 @@
     const tx = !!st.cw_tx;
     const ready = !!st.cw_tx_ready;
     const o = txOwner(), other = o && !mineTx() ? o : null;
+    const now = Date.now();
+    if (tx) keepStopRole(now);                      // the button is a STOP control now (and just after)
+    const guard = !tx && inStopRole(now);
     if (stopArm) stopArm.check(o);                  // the armed owner gone (a missed tx event) -> disarm
     if (!tx && armed()) disarm();
     txBtn.textContent = tx ? "■" : "TX";
     txBtn.classList.toggle("on", tx);
-    // someone else holds TX (not CW): nothing to send and nothing to stop here (top-bar STOP does that)
-    txBtn.disabled = tx ? false : (!!other || !st.connected || !ready);
+    // someone else holds TX (not CW): nothing to send and nothing to stop here (top-bar STOP does that).
+    // Right after a CW message (stopped or ended) the button stays inert for the STOP guard window.
+    txBtn.disabled = tx ? false : (guard || !!other || !st.connected || !ready);
     txBtn.title = tx ? (other ? "Tap twice to stop " + ownerName(other) : "Stop transmitting")
+      : guard ? "The CW message just ended — TX is available again in a moment"
       : other ? ownerName(other) + " is transmitting"
       : !st.connected ? "Connect a radio to transmit"
       : !ready ? "CW key port not found"
