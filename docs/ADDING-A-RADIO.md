@@ -13,42 +13,83 @@ needs a backstop**. A radio is **not "done"** until every applicable item below 
 or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't transmit / unkey).
 
 1. **Operator‑triggered only — no *unattended* transmission.** Every keyed path is the
-   direct result of an operator action *now*: **PTT** (press = key, release = unkey) and the
-   **CW message send** (one bounded message per TX press — the rig's own keyer generates it,
-   the operator can stop it). What is **not** shipped is transmission the app *originates on
+   direct result of an operator action *now*, by a signed‑in operator or admin: **PTT** (press =
+   key, press again = unkey), **VOX**, **TUNE** and the **CW message send** (one bounded message
+   per TX press, which the operator can stop). What is **not** shipped is transmission the app *originates on
    its own*: auto‑CQ on a timer, beacons, scheduled/unattended keying — those would need
    explicit local‑control safeguards and are never an implicit feature. (Hard rule for the
    assistant maintaining this repo: it wires operator‑triggered transmit, but never
    triggers or tests a transmission itself — on‑air testing is the operator's.)
-2. **PTT stuck‑TX failsafe (120 s).** Keying arms `PTT_TIMEOUT`; the poll loop auto‑unkeys
-   past the deadline, the client shows a countdown and unkeys too, **disconnect unkeys**,
-   and **ANY client drop while keyed unkeys**. Mirror `Radio.set_ptt`, the `_poll`
-   failsafe, and the `disconnect` unkey.
-3. **Auto‑keying paths bound to the same failsafe.** Any mode that can key TX off audio
-   (VOX) arms the same deadline and is dropped on disconnect.
-4. **Hardware TOT set on connect.** Set the radio's own time‑out timer to ≈120 s (closest
+2. **PTT stuck‑TX failsafe (120 s), in the radio handler.** Keying arms `PTT_TIMEOUT`; the poll
+   loop auto‑unkeys past the deadline, the client shows a countdown and unkeys too, and
+   **disconnect unkeys**. Mirror `Radio.set_ptt`, the `_poll` failsafe, and the `disconnect`
+   unkey. Every `set_ptt(True)` (and an Icom VOX‑on) re‑arms the deadline, so a handler must
+   never see repeated start calls; the TX arbiter (item 3) guarantees that.
+3. **One TX owner, and who is unkeyed when a browser goes away (the server's TX arbiter,
+   `backend/txarb.py`).** Every keyed path (PTT, VOX, the CW message, TUNE) is a *claim* by one
+   browser connection. At most one connection (or the radio's own front panel) owns TX; anyone
+   else gets `busy`. The handler gets each start call **once**: re‑sending a claim the owner
+   already holds is a no‑op that never reaches the radio, so it can't push the 120 s deadline
+   back. While keyed:
+   - **the TX owner's drop unkeys immediately** (its WebSocket closes);
+   - **a silent owner is unkeyed after 6 s** (no `tx_hb` heartbeat; the page sends one every
+     2 s, and a heartbeat never touches the radio);
+   - **other clients' drops never unkey** — a viewer closing a tab doesn't cut the operator off;
+   - **a front‑panel or physical‑mic key is never unkeyed by a browser drop.** It shows as
+     FRONT PANEL and only an explicit STOP stops it. This holds only for radios that report their
+     TX state (Yaesu CAT: the `TX;` poll) — see the Icom limitation below;
+   - **the arbiter's own 120 s session clock:** a session holding `ptt` or `vox` is
+     force‑released 120 s after it started (a monotonic clock that a new claim does not restart),
+     whatever the radio's deadline says. A CW message is capped at its duration + 5 s (≤ 300 s)
+     and TUNE at 20 s. The handler's failsafe (item 2) stays as a second, independent layer;
+   - **only an explicit STOP stops someone else's transmission**: `tx_stop`, from the two‑tap
+     STOP in the page or `POST /api/tx_stop`. A non‑owner's `ptt false`, `cw_stop` or VOX‑off
+     gets `busy`, so one stray tap can't cut another operator off;
+   - **viewers can never key**: only operators and admins may claim TX, and every TX session,
+     forced stop and critical menu write is recorded in `audit-tx.log`.
+
+   **Icom TX‑state limitation (Phase 1).** The Icom CI‑V handler does not read TX state:
+   `state.ptt` is set optimistically by `set_ptt` (`radio.py`), and the only `1C` read is
+   `1C 01` (tuner). On an Icom a front‑panel or hand‑mic key is therefore **invisible**: there
+   is no FRONT PANEL owner and no front‑panel `busy`, and releasing an app owner's `ptt` sends
+   `1C 00 00` even while someone holds the radio's own PTT. Reading `1C 00` in the Icom poll is a
+   Phase 2 item. A new handler must state which case it is: if it can report TX, put it in
+   `state.ptt`; if it can't, document the same limitation.
+4. **Auto‑keying paths bound to the same failsafe.** Any mode that can key TX off audio
+   (VOX) arms the same deadline, is a `vox` claim in the arbiter, and is dropped on
+   disconnect.
+5. **Hardware TOT set on connect.** Set the radio's own time‑out timer to ≈120 s (closest
    the radio supports) as a backstop for **control‑link loss** — if the network drops
    mid‑transmit the app failsafe can't fire, but the rig's own timer will. The profile
    carries the command; `N/A` if the radio doesn't expose it over the control link (then
-   the app‑level failsafe is the only backstop — note it).
-5. **CW message send is bounded + stoppable** (if `cw_send` is set). The rig's keyer
-   generates the CW at the WPM the app sets — never host‑timed PTT keying. Cap the message
-   length, only fire in CW/CW‑R mode, arm an auto‑stop deadline (`_cw_deadline`, the poll
-   stops it — Icom `17 FF`), expose a stop, and stop on disconnect / client‑drop. The
-   hardware TOT (item 4) is the hard backstop where a clean CAT abort isn't available
-   (FT‑991A keyer playback).
-6. **High‑SWR cutoff + warning.** While keyed, read the SWR meter; warn in the UI and
+   the app‑level failsafe is the only backstop — note it). Mark the radio's TX TOT menu item
+   `tx_tot=True` (and `critical=True`): writing **OFF** then needs an admin **and** an explicit
+   confirmation, decided by comparing the encoded bytes with the encoding of OFF.
+6. **CW message send is bounded + stoppable** (if `cw_send` is set). The handler keys one
+   bounded message (Icom: the rig's keyer via CI‑V `17`; FT‑991A: host‑timed DTR on its
+   Standard USB port). Cap the message length, only fire in a CW mode, arm an auto‑stop
+   deadline (`_cw_deadline`, the poll stops it — Icom `17 FF`), expose a stop, and stop on
+   disconnect. The arbiter treats it as a `cw` claim (the owner's drop stops it). The hardware
+   TOT (item 5) is the hard backstop.
+7. **PTT routing is flagged.** Mark every menu item that routes PTT or keying to a serial
+   control line (its options name **RTS** or **DTR**: PTT SELECT, PC KEYING, USB SEND/Keying)
+   `tx_route=True` (and `critical=True`). TeleRig holds the CAT serial port open with RTS/DTR
+   asserted (pyserial's default, which CAT relies on), so routing PTT to one of those lines can
+   key the radio outside the arbiter. Choosing an RTS/DTR value therefore needs an admin, an
+   **idle** arbiter (nobody on the air) and an explicit confirmation, and is audited.
+8. **High‑SWR cutoff + warning.** While keyed, read the SWR meter; warn in the UI and
    auto‑unkey above the threshold to protect the PA. Reads + a protective un‑key only.
-7. **Power read — not forced — on connect.** The app **reads and displays** the radio's
+9. **Power read — not forced — on connect.** The app **reads and displays** the radio's
    current RF power (and AF/RF/SQL) on connect so the panel mirrors the rig; it does **not**
    zero power. (Earlier builds forced 0 % on connect — removed by request so the operator's
    real settings show. Transmit stays guarded by operator‑only keying, the 120 s PTT
    failsafe, the hardware TOT, and unkey‑on‑disconnect.)
-8. **Unkey + restore on disconnect.** Never leave the radio keyed; restore any borrowed
-   state (e.g. the MOD source on the Icom LAN path).
+10. **Unkey + restore on disconnect.** Never leave the radio keyed; restore any borrowed
+    state (e.g. the MOD source on the Icom LAN path).
 
-Items 1–5, 8 ship today; 6 (high‑SWR cutoff) is being added per‑radio; 7 is read‑and‑display
-(power is no longer forced to 0). The profile fields make every safety feature
+Items 1–7 and 10 ship today. Item 8 (high‑SWR cutoff) is **not implemented in any handler
+yet** — it stays a requirement for new radios and an open item for the existing ones. Item 9 is
+read‑and‑display (power is no longer forced to 0). The profile fields make every safety feature
 inherit‑by‑filling for future radios.
 
 ## Completeness — expose *every* setting the radio has
@@ -108,7 +149,10 @@ FT‑991A has no CAT active‑VFO selector → `vfo_select=False`).
    `backend/menus/<id>_menu.py`: one `MenuItem` per entry (num, name, group,
    `kind`=enum|int|signed‑int, **`digits` = the manual's exact wire width** — for signed it
    INCLUDES the sign char, options *or* min/max/step/unit), marking `readonly` and `critical`
-   (connection/transmit‑sensitive) items. Reference it from the profile (`menu=<ID>_MENU`).
+   (connection/transmit‑sensitive: only an admin may write them, and every write is audited)
+   items, plus the two transmit flags of the contract: `tx_tot` on the TX time‑out timer
+   (item 5) and `tx_route` on every PTT/keying‑routing item whose options name RTS/DTR
+   (item 7). Reference it from the profile (`menu=<ID>_MENU`).
    Compile it from the manufacturer's CAT/menu reference (a research pass over the PDF).
    **Verify a sample of `digits` on the real radio (read → echo) before trusting the table** —
    a wrong width is silently ignored by the radio. The shared `backend/menu_engine.py` handles
@@ -125,8 +169,8 @@ FT‑991A has no CAT active‑VFO selector → `vfo_select=False`).
      the UI hides every control the radio can't drive rather than shipping dead buttons. The
      transmit-safety contract is **N/A** — with no CI-V key, the app physically cannot transmit.
 4. **New protocol/make** → a new handler class exposing the server's method surface (incl.
-   `get_menu`/`set_menu`/`read_menu_group`) **and the full safety contract above**, plus a
-   menu‑engine encoder for that protocol.
+   `get_menu`/`set_menu`/`read_menu_group`) **and the full safety contract above** (including whether it can report TX state, item 3),
+   plus a menu‑engine encoder for that protocol.
 5. Register it in `PROFILES`; add any new **frontend** asset to `server.py`'s versioned‑asset
    list (or it 404s / serves stale). Menu tables are pure backend data — no asset entry needed.
 6. Verify on real hardware **RX‑side only** (the maintainer never tests TX by transmitting).

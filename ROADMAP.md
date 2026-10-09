@@ -7,6 +7,27 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
+### Phase 1 (unreleased) — modular panels, multi-user sign-in, one TX owner
+- **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
+  CW — that can be moved, resized, collapsed, hidden and added back in **Arrange** mode (mouse,
+  keyboard, or ▲/▼ on a phone), with Reset + Undo. Layouts are stored on the server per user, one
+  for desktop and one for phone. Fresh dark/day look with an offline icon set (GridStack 14,
+  Lucide; see NOTICE).
+- **Multi-user sign-in.** Everyone signs in, on the host PC too; roles **viewer / operator / admin**.
+  A new install's `admin` / `admin` works only on the host PC with a one-time setup code and forces
+  a new password; `run.bat --reset-admin` / `python3 run.py --reset-admin` recovers. Sessions with
+  sign-out / sign-out-everywhere, lockouts after repeated failures, exact-origin + allowed-names
+  checks, and an **Administration** dialog: users, access, remote access (Tailscale Serve), radio &
+  audio pins, activity (who is on, who transmitted, security log) and lockouts. Radio WebOp's shared
+  password migrates (admin rights only on the host PC until changed). See
+  [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md).
+- **One TX owner.** One connection transmits at a time; everyone sees **ON AIR · *callsign***, others
+  get "busy", and any operator can stop it with a two-tap **STOP**. The owner's dropped link unkeys
+  at once, a silent one after 6 s, other users' drops never do; the server keeps its own 120 s
+  session clock on top of the radio's failsafe, and every TX session is logged (`audit-tx.log`).
+  The transmit-safety contract in [docs/ADDING-A-RADIO.md](docs/ADDING-A-RADIO.md) is updated to
+  match, including the Icom limitation (no front-panel TX detection yet).
+
 ### v0.2.25 — FT-991A ATAS manual tuning
 - When TUNER SELECT = **ATAS** (read over CAT via `EX143`), **ATAS ▲/▼** controls appear next to PTT
   to step the motorized antenna (mic UP/DN emulation) while transmitting, with the meter auto‑switched
@@ -192,9 +213,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ### Platform
 - **More radios** — IC-705, IC-7610, IC-905, IC-7300, etc. (each is just a profile).
-- **Authentication** for safe remote use (today there is no login — restrict by
-  interface / firewall / VPN). *Built-in HTTPS shipped* — serve TLS directly with
+- **Authentication** for safe remote use — *shipped (Phase 1)*: everyone signs in, with roles and
+  a single TX owner (see Done). *Built-in HTTPS shipped* — serve TLS directly with
   `run.py --ssl-certfile/--ssl-keyfile` (or `TELERIG_SSL_CERT/_KEY`).
+- **Phase 2 follow-ups** to sign-in and TX ownership: front-panel TX detection on the Icom radios
+  (a `1C 00` read), the high-SWR cutoff, LAN radio credentials kept on the server (admin-only)
+  instead of in each browser, server-side session ids with a shorter admin session, stable host
+  audio device ids, and a per-radio serial-line (RTS/DTR) policy.
 - **Remote power-on** from networked standby where the radio supports it.
 - Audio: selectable **codec / sample-rate**, lower-latency options.
 

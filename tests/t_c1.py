@@ -132,3 +132,85 @@ def c1_role_changed_close_reason(ctx):
     check('"role_changed"' in tr.split("LOGIN_REASONS", 1)[1].split("\n", 1)[0], "tr.js passes reason=role_changed to /login")
     check('reason === "role_changed" ? "role_changed" : "session_revoked"' in tr, "the 4401 cap keeps role_changed")
     check('role_changed: "Your role changed' in login, "login.html explains it")
+
+
+# ---- C1 documentation (spec §7 C1) ---------------------------------------------------------------
+def _doc(rel: str) -> str:
+    return (REPO / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+@test("unit")
+def c1_docs_tx_safety_contract_matches_f6(ctx):
+    d = _doc("docs/ADDING-A-RADIO.md")
+    check("ANY client drop while keyed unkeys" not in d, "the pre-F6 rule is gone")
+    for must in ("the TX owner's drop unkeys immediately", "a silent owner is unkeyed after 6 s",
+                 "other clients' drops never unkey", "never unkeyed by a browser drop",
+                 "only for radios that report their", "Icom TX‑state limitation", "1C 00",
+                 "120 s session clock", "`tx_route=True`", "`tx_tot=True`", "only an explicit STOP stops"):
+        check(must in d, f"ADDING-A-RADIO.md says: {must}")
+    p = _doc("backend/profiles.py").split('"""', 2)[1]
+    check("RF power 0% on connect" not in p and "read (not forced)" in p, "profiles.py: power is read, not forced")
+    for must in ("owner's drop unkeys at once", "after 6 s", "other clients' drops never", "120 s session clock",
+                 "does not read TX state", "tx_route"):
+        check(must in p, f"profiles.py docstring says: {must}")
+    cw = _read("cwtool.js").split("*/", 1)[0]
+    check("NO transmit; it never keys" not in cw and "CW TX:" in cw and "DOES key the radio" in cw,
+          "cwtool.js header: the coder CAN key the radio via CW TX for operators")
+
+
+@test("unit")
+def c1_docs_remote_access_readme_roadmap_notice(ctx):
+    ra = _doc("docs/REMOTE-ACCESS.md")
+    check("no login" not in ra.lower() and "🌐" not in ra, "REMOTE-ACCESS.md: no v1 'no login' / Remote-button text")
+    for must in ("`run.bat --reset-admin`", "`python3 run.py --reset-admin`", "setup code", "only on the host PC",
+                 "Tailscale Serve", "Do NOT use Tailscale Funnel", "Allowed names", "Allowed origins",
+                 "exact-origin rule", "X-Forwarded-Host", "behind_proxy", "loopback isn't the host PC",
+                 "`*.ts.net`", "`~/.telerig`", "`~/.radio-webop`", "migrated password", "Lockouts",
+                 "**8**", "role_changed", "Turn on"):
+        check(must in ra, f"REMOTE-ACCESS.md covers: {must}")
+    rd = _doc("README.md")
+    check("## Sign-in & users" in rd, "README: Sign-in & users section")
+    for gone in ("no login", "optional\nshared-password", "optional shared password", "🌐 Remote", "the local host is exempt"):
+        check(gone not in rd, f"README no longer says: {gone!r}")
+    for must in ("**viewer**", "**operator**", "**admin**", "Arrange mode", "**Administration**", "setup code"):
+        check(must in rd, f"README mentions {must}")
+    rm = _doc("ROADMAP.md")
+    done = rm.split("## Done", 1)[1].split("## Planned", 1)[0]
+    check("### Phase 1" in done and done.index("### Phase 1") < done.index("### v0.2.25"), "ROADMAP: Phase 1 is the newest Done entry")
+    for must in ("Modular panels", "Multi-user sign-in", "One TX owner"):
+        check(must in done, f"ROADMAP Done: {must}")
+    check("today there is no login" not in rm and "*shipped (Phase 1)*" in rm, "ROADMAP: Authentication marked shipped")
+    nt = _doc("NOTICE")
+    check("GridStack" in nt and "Lucide" in nt, "NOTICE lists GridStack and Lucide")
+    check("permanent Source button in the top bar" in nt and "sign-in" in nt, "NOTICE: the AGPL §13 source links")
+
+
+STALE = re.compile(r"no login|local_exempt|set_password|host_rx|host_tx|rw_session|python run\.py --reset-admin")
+# every remaining hit is intentional: the v2 password setters and the admin reset route, the legacy cookie
+# that login/logout expire, the removed host-audio actions (denied, I2), comments/tests about the removals,
+# and the migration notes in REMOTE-ACCESS.md
+STALE_OK = {
+    "backend/accounts.py": ("def set_password(", "def admin_set_password("),
+    "backend/account_api.py": ('"""set_password with a precomputed hash',),
+    "backend/admin_api.py": ("reset_password", "admin_set_password"),
+    "backend/auth.py": ('LEGACY_COOKIES = ("tr_session", "rw_session")',),
+    "backend/policy.py": ('REMOVED = frozenset({"host_rx", "host_tx"})',),
+    "backend/server.py": ("REMOVED (host_rx / host_tx)", "like /api/set_password."),
+    "frontend/admin.js": ('"/reset_password"',),
+    "docs/REMOTE-ACCESS.md": ("`rw_session` cookies", "`/api/set_password` are gone"),
+}
+
+
+@test("unit")
+def c1_no_stale_auth_terms(ctx):
+    files = sorted({*REPO.glob("backend/*.py"), *REPO.glob("frontend/*.js"), *REPO.glob("frontend/*.html"),
+                    *REPO.glob("docs/*.md"), REPO / "run.py", REPO / "README.md"})
+    bad = []
+    for f in files:
+        rel = f.relative_to(REPO).as_posix()
+        if rel.endswith("_test.py"):
+            continue                                  # unit tests name the removed things on purpose
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
+            if STALE.search(line) and not any(ok in line for ok in STALE_OK.get(rel, ())):
+                bad.append(f"{rel}:{n}: {line.strip()[:100]}")
+    eq(bad, [], "unexpected stale auth terms")

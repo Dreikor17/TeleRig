@@ -8,7 +8,10 @@ published by the Free Software Foundation. See the LICENSE file for the full tex
 The project is AGPL-3.0 because its neural CW decoder bundles the DeepCW model, which
 is AGPL-3.0. If you run a modified version of this software and let users interact
 with it over a network, AGPL section 13 requires you to offer them the corresponding
-source. The app links to its source in the top bar, the user menu and the sign-in page.
+source. The app links to its source (https://github.com/Dreikor17/TeleRig) everywhere a
+user can reach it: the permanent Source button in the top bar (on phones, the user menu's
+"Source & license" item, which desktop has too) and the footer of the sign-in and
+change-password pages. If you run a modified copy, point those links at your source.
 
 Bundled / third-party components
 --------------------------------

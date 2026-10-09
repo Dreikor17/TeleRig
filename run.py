@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Launch the TeleRig server.
 
-    python run.py [--host H] [--port P] [--sim-only] [--no-autoconnect] [--no-browser]
-    python run.py --reset-admin [--password-stdin] [--real-config] [--demote-other-admins]
+    run.bat [--host H] [--port P] [--sim-only] [--no-autoconnect] [--no-browser]     (Windows)
+    python3 run.py [same options]                                                    (elsewhere)
+    run.bat --reset-admin [--password-stdin] [--real-config] [--demote-other-admins]  (Windows)
+    python3 run.py --reset-admin [same options]                                      (elsewhere)
+
+On Windows the dependencies live in the app's .venv, which run.bat uses (the long form is
+.venv/Scripts/python.exe run.py ...); a plain `python run.py` usually can't import them.
 
 `--reset-admin` never starts the server. It runs on a standard-library-only path (no uvicorn or
 Starlette import), so it works even when the web dependencies cannot be imported.

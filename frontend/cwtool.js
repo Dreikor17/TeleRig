@@ -5,8 +5,16 @@
  * cw-worker.js over a growing window, committing text at pauses. Far more
  * robust than a timing decoder under QSB/QRM/weak signals.
  *
- * Coder: types -> Morse -> a soft-keyed sidetone (NO transmit; it never keys the
- * radio). The sidetone feeds the same rxBus, so playing it self-tests the decoder.
+ * Coder: types -> Morse -> a soft-keyed sidetone. The sidetone (Play) never keys the radio; it
+ * feeds the same rxBus, so playing it self-tests the decoder.
+ *
+ * CW TX: for operators (role >= operator, TX permission) the TX button DOES key the radio: it sends
+ * the typed message once as a `cw_tx` claim. An Icom sends it with its own keyer (CI-V 17); the
+ * FT-991A is keyed by the server on the DTR line of its Standard USB port. The claim goes through the
+ * server's TX arbiter like PTT: one owner at a time, heartbeats, a per-message cap, the radio's CW
+ * deadline and its TOT. The same button stops it: one tap for this tab's own CW (cw_stop), two taps
+ * for someone else's (tx_stop, F18). A tap on it while it is or just was a STOP control never starts
+ * a transmission (below). Viewers never see it (data-tx, role channel).
  *
  * SPDX-License-Identifier: AGPL-3.0-only
  * The decode path links the AGPL-3.0 DeepCW model (github.com/e04/deepcw-engine),
@@ -358,9 +366,10 @@
   }
 
   // ---- transmit (operator-triggered): key the message on the radio as CW ----
-  // Same act as pressing PTT — one bounded message, fully operator-controlled. The
-  // backend hands the text to the rig's own keyer, which generates clean CW at the
-  // WPM and drops back to RX. Press again to stop. Bound by the 120 s failsafe + TOT.
+  // Same act as pressing PTT — one bounded message, fully operator-controlled, a TX claim
+  // in the server's arbiter. The backend keys the radio (Icom keyer / FT-991A DTR line) at
+  // the WPM and drops back to RX. Press again to stop. Bound by the per-message cap, the
+  // radio's CW deadline and TOT.
   const txBtn = $("cwTx"), txRow = $("cwTxRow"), txHint = $("cwTxHint");
   const TX = () => window.RadioTx || null;        // server-derived TX ownership (app.js, G-1)
   const TRx = () => window.TR || null;

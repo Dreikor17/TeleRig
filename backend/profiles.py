@@ -8,9 +8,15 @@ audio; Yaesu: CAT) — only address/baud, band plan, mode set, filter widths and
 of menu numbers change per model.
 
 >>> ADDING A RADIO? Follow the transmit-safety contract in docs/ADDING-A-RADIO.md.
-Every radio that can key TX MUST have: the 120 s PTT stuck-TX failsafe, TOT set on
-connect, the high-SWR cutoff + warning, RF power 0% on connect, unkey-on-disconnect, and
-NO autonomous transmission (PTT relays the operator only). Not optional. <<<
+Every radio that can key TX MUST have: operator-triggered keying only (NO autonomous
+transmission), the 120 s PTT stuck-TX failsafe in its handler, TOT set on connect, a
+bounded + stoppable CW send, unkey + restore on disconnect, RF power read (not forced) on
+connect, and `tx_tot` / `tx_route` (plus `critical`) on its TX time-out and PTT-routing menu
+items. On top, the server's TX arbiter allows one TX owner: the owner's drop unkeys at once,
+a silent owner after 6 s, other clients' drops never; it keeps its own 120 s session clock;
+a front-panel key is never unkeyed by a browser drop -- only on radios that report TX (Yaesu
+CAT). The Icom CI-V handler does not read TX state (Phase 2: a 1C 00 read). The high-SWR
+cutoff + warning is required but not implemented in any handler yet. Not optional. <<<
 """
 from __future__ import annotations
 
