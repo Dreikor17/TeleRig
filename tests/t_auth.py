@@ -725,13 +725,15 @@ def t27b_v1_password_is_imported_once(ctx):
     eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 200, "the migrated password, remote")
     bak = (tmp / "config.v1.bak.json").read_bytes()
     auth_p = tmp / "auth.json"
-    auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")       # damaged
+    with harness.store_lock(tmp):                        # not under the login's record_login write
+        auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")   # damaged
     c = srv.client()
     end = time.monotonic() + 8
     while c.get("/api/auth_status").status != 503:
         check(time.monotonic() < end, "the server did not lock on the damaged auth.json")
         time.sleep(0.2)
-    auth_p.rename(tmp / "auth.json.bad")                                                # "move it aside"
+    with harness.store_lock(tmp):
+        harness.retry_sharing(lambda: auth_p.rename(tmp / "auth.json.bad"))           # "move it aside"
     end = time.monotonic() + 8
     while c.get("/login").status != 200:
         check(time.monotonic() < end, "the server did not re-seed and unlock")
@@ -748,7 +750,8 @@ def t27b_v1_password_is_imported_once(ctx):
     eq(harness.admin_login(srv.client(), tmp, headers=remote).status, 401, "the default password is local-only")
     eq(harness.admin_login(srv.client(), tmp).status, 200, "first-run login on this PC with the setup code")
     # deleted while running: the same
-    auth_p.unlink()
+    with harness.store_lock(tmp):
+        harness.retry_sharing(auth_p.unlink)
     end = time.monotonic() + 6
     while not auth_p.exists():
         check(time.monotonic() < end, "auth.json was not created again")
@@ -786,7 +789,12 @@ def t27c_v1_password_never_returns_after_reset_admin(ctx):
     wrote, so after such a reset every re-seed imported the retired shared password again. Now every
     seeding path brings the default ADMIN + a setup code instead: the runtime re-seed (auth.json
     deleted while running), the move-aside unlock (a damaged auth.json renamed while locked) and the
-    startup seed (auth.json deleted while stopped). config.json stays byte-identical (T27)."""
+    startup seed (auth.json deleted while stopped). config.json stays byte-identical (T27).
+
+    Every change to auth.json under the running server is made under the store's lock
+    (harness.store_lock): each sign-in here ends with a record_login write that the server makes
+    AFTER the 200, and without the lock that write could put back a file the test had just damaged
+    or deleted."""
     tmp = ctx.tmp()
     cfg = _v1_config(tmp)
     r = harness.run_child(RESET, tmp, input="Reset#First-2026\n")
@@ -796,26 +804,29 @@ def t27c_v1_password_never_returns_after_reset_admin(ctx):
     eq(harness.login(srv.client(), "admin", "Reset#First-2026").status, 200, "the reset password")
     eq(harness.login(srv.client(), "admin", "hunter22", headers=remote).status, 401, "after the reset: v1 password, remote")
     # 1. the runtime re-seed
-    (tmp / "auth.json").unlink()
+    with harness.store_lock(tmp):
+        harness.retry_sharing((tmp / "auth.json").unlink)
     _wait_auth(tmp)
     _default_reseed(srv, tmp, remote, "deleted while running")
     check("NOT imported" in srv.log_text(), "the console says why the old password was not imported")
     # 2. the move-aside unlock
     auth_p = tmp / "auth.json"
-    auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")         # damaged
+    with harness.store_lock(tmp):
+        auth_p.write_text(auth_p.read_text(encoding="utf-8")[:-5], encoding="utf-8")     # damaged
     c = srv.client()
     end = time.monotonic() + 8
     while c.get("/api/auth_status").status != 503:
         check(time.monotonic() < end, "the server did not lock on the damaged auth.json")
         time.sleep(0.2)
-    auth_p.rename(tmp / "auth.json.bad")
+    with harness.store_lock(tmp):
+        harness.retry_sharing(lambda: auth_p.rename(tmp / "auth.json.bad"))
     end = time.monotonic() + 8
     while c.get("/login").status != 200:
         check(time.monotonic() < end, "the server did not re-seed and unlock")
         time.sleep(0.2)
     _default_reseed(srv, tmp, remote, "moved aside while locked")
     # 3. the startup seed
-    srv.stop()
+    srv.stop()                                  # returns once the server process is gone
     auth_p.unlink()
     srv2 = ctx.server(tmp)
     _default_reseed(srv2, tmp, remote, "deleted while stopped")

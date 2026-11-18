@@ -697,6 +697,24 @@ class RawWS:
 
 
 # -- the server under test ------------------------------------------------------------------
+def interpreter() -> tuple:
+    """(executable, extra env) that run THIS interpreter as ONE process.
+
+    On Windows a venv's Scripts\\python.exe is a launcher stub: it starts the base interpreter as
+    its CHILD (every server shows up as two python.exe processes) and Popen gets the stub. Then
+    terminate() + wait() return as soon as the stub is gone, while the real server dies a few ms
+    later, possibly in the middle of a store write: t27c unlinked auth.json right after stop() and
+    got WinError 32 from that still-running child. So the server is started the way multiprocessing
+    starts its workers in a venv (bpo-35797): the base interpreter itself, with __PYVENV_LAUNCHER__
+    pointing at the venv's python.exe, which gives the same sys.executable, sys.prefix and
+    site-packages (the interpreter consumes the variable; its own children never see it).
+    Anywhere else (POSIX, no venv) sys.executable already is the interpreter."""
+    base = getattr(sys, "_base_executable", None) or sys.executable
+    if sys.platform == "win32" and os.path.normcase(base) != os.path.normcase(sys.executable):
+        return base, {"__PYVENV_LAUNCHER__": sys.executable}
+    return sys.executable, {}
+
+
 class Server:
     """run.py on 127.0.0.1:<free port> with --sim-only --no-autoconnect --no-browser and a
     scratch config/home under `tmp`. `env_flags=False` leaves TELERIG_SIM_ONLY/NO_AUTOCONNECT out
@@ -748,7 +766,9 @@ class Server:
         self.port = check_port(port)
         env = scratch_env(self.tmp, sim_only=self.env_flags, no_autoconnect=self.env_flags)
         env.update({k: str(v) for k, v in self.extra_env.items()})
-        self.cmd = [sys.executable, str(REPO / "run.py"), "--host", "127.0.0.1", "--port", str(port),
+        exe, venv_env = interpreter()                 # proc must be the server itself (see stop())
+        env.update(venv_env)
+        self.cmd = [exe, str(REPO / "run.py"), "--host", "127.0.0.1", "--port", str(port),
                     "--sim-only", "--no-autoconnect", "--no-browser"]
         self.log_path = self.tmp / f"server-{port}.log"
         self._log_fh = open(self.log_path, "w", encoding="utf-8", errors="replace")
@@ -780,6 +800,10 @@ class Server:
         self.proc = None
 
     def stop(self) -> None:
+        """Terminate the server and wait until it is gone. proc IS the server process (interpreter()),
+        and Windows signals a process only after its handle table is closed, so when this returns
+        nothing of the server runs any more and its files (auth.json, its lock, the log) are
+        released: a test may delete or rewrite them at once."""
         p = self.proc
         if p is not None and p.poll() is None:
             p.terminate()
@@ -820,19 +844,81 @@ class Server:
 ADMIN_PW = "Harness#Admin-2026"                    # what ready_admin() sets for ADMIN (scratch only)
 
 
+def retry_sharing(fn: Callable, tries: int = 40, wait: float = 0.05) -> Any:
+    """fn() with a bounded retry on PermissionError, then re-raised. On Windows a file that another
+    process has open cannot be deleted or renamed (and cannot be opened while it is being replaced):
+    WinError 32 for a moment, e.g. while a running server re-reads a store (it does so without the
+    lock) or os.replace()s it. The server side retries the same way (store.REPLACE_TRIES)."""
+    for attempt in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if attempt == tries - 1:
+                raise
+            time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
 def read_auth(tmp: Any) -> dict:
     """The scratch auth.json (never the real one: tmp passed check_config_path via Server/Ctx)."""
     p = check_config_path(Path(tmp) / "config.json").parent / "auth.json"
-    # On Windows, opening the file while the server's store os.replace()s it raises PermissionError
-    # (a sharing violation for a few ms; the server side retries the same way, store.REPLACE_TRIES).
-    for attempt in range(40):
+    return json.loads(retry_sharing(lambda: p.read_text(encoding="utf-8")))
+
+
+class store_lock:
+    """`with harness.store_lock(tmp):` holds a scratch store's OS lock, the one backend/store.py's
+    writers hold for their whole re-read + write (byte 0 of <name>.lock: msvcrt.locking on Windows,
+    flock elsewhere; keep it in step with store._lock_fd). Edit, delete or rename a store file of a
+    RUNNING server only under it: a write the server has in flight otherwise wins. Example: a
+    login's record_login runs AFTER the 200 reached the test; it re-reads auth.json under the lock,
+    the test damages the file, and the server's os.replace puts a valid file back (t27b/t27c "did
+    not lock on the damaged auth.json"), or brings a deleted one back. Under the lock a server write
+    either ended before (the edit lands on the latest file) or starts after and re-reads the test's
+    result (a damaged or deleted file then fails that write; nothing is written).
+
+    The server re-reads its stores WITHOUT the lock, so a delete or rename still needs
+    retry_sharing(). Waits up to `timeout` s for the lock, then HarnessError."""
+
+    def __init__(self, tmp: Any, name: str = "auth.json", timeout: float = 5.0):
+        p = check_config_path(Path(tmp) / "config.json").parent / name
+        self.lock_path = p.with_name(p.name + ".lock")
+        self.timeout = timeout
+        self.fd: Optional[int] = None
+
+    def __enter__(self) -> "store_lock":
+        fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o600)
+        end = time.monotonic() + self.timeout
+        while True:
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self.fd = fd
+                return self
+            except OSError:
+                if time.monotonic() >= end:
+                    os.close(fd)
+                    raise HarnessError(f"{self.lock_path.name} stayed locked for {self.timeout:g} s") from None
+                time.sleep(0.005)
+
+    def __exit__(self, *exc) -> None:
+        fd, self.fd = self.fd, None
+        if fd is None:
+            return
         try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except PermissionError:
-            if attempt == 39:
-                raise
-            time.sleep(0.05)
-    raise AssertionError("unreachable")
+            if sys.platform == "win32":
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def setup_code(tmp: Any) -> Optional[str]:

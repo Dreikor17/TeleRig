@@ -286,6 +286,42 @@ def read_auth_rides_out_a_sharing_violation(ctx):
         Path.read_text = real
 
 
+_TRY_WRITE = """
+from backend.store import StoreBusy
+try:
+    accounts.record_login("ADMIN", timeout=0.3)
+    result = "wrote"
+except StoreBusy:
+    result = "busy"
+"""
+
+
+@test("unit")
+def store_lock_is_the_stores_own_lock(ctx):
+    """harness.store_lock holds the SAME OS lock as backend/store.py's writers: while a test holds it,
+    a store write in another process cannot start (record_login gives up with StoreBusy, writing
+    nothing), and once it is released the same write goes through. Without that, t27b/t27c's edits
+    of a running server's auth.json could again be overwritten by the server's own write."""
+    tmp = ctx.tmp()
+    harness.accounts_child(tmp, "result = None")                      # seeds auth.json (+ auth.json.lock)
+    before = harness.read_auth(tmp)
+    with harness.store_lock(tmp):
+        eq(harness.accounts_child(tmp, _TRY_WRITE), "busy", "a store write while harness.store_lock is held")
+        eq(harness.read_auth(tmp), before, "nothing written while the lock was held")
+    eq(harness.accounts_child(tmp, _TRY_WRITE), "wrote", "the same write after the release")
+    check(harness.read_auth(tmp)["users"]["ADMIN"].get("last_login"), "last_login written after the release")
+    with harness.store_lock(tmp):                     # a second holder waits, for `timeout` s at most
+        t0 = time.monotonic()
+        try:
+            with harness.store_lock(tmp, timeout=0.3):
+                pass
+        except harness.HarnessError as e:
+            check("stayed locked" in str(e), str(e))
+        else:
+            raise harness.TestFailure("a second store_lock got the lock while the first held it")
+        check(0.25 <= time.monotonic() - t0 < 3.0, f"the bounded wait took {time.monotonic() - t0:.2f}s")
+
+
 # -- the close-code accessor (pinned against a stub websockets server, not TeleRig) ------------
 @test("unit")
 def ws_close_code_accessor(ctx):

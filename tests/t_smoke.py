@@ -9,6 +9,8 @@ No TX command is sent.
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import harness
@@ -42,6 +44,35 @@ def harness_refuses_real_home_config(ctx):
         else:
             raise harness.TestFailure(f"Server accepted a config folder inside {d}")
     eq({d: (home / d).exists() for d in harness.REAL_CONFIG_DIRS}, before, "real config folders touched")
+
+
+def _port_pids(port: int) -> set:
+    """PIDs owning a TCP socket on 127.0.0.1:<port> (Windows netstat -ano, read by column so a
+    localized state name does not matter; TIME_WAIT leftovers belong to PID 0 and are left out)."""
+    out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                         errors="replace", timeout=60).stdout
+    pids = set()
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[0].upper() == "TCP" and parts[1] == f"127.0.0.1:{port}" \
+                and parts[-1].isdigit() and parts[-1] != "0":
+            pids.add(int(parts[-1]))
+    return pids
+
+
+@test("smoke")
+def server_proc_is_the_server_process(ctx):
+    """Server.proc is the process that serves the port, not the venv's python.exe launcher stub in
+    front of it, so stop() waits for the server itself (t27c: WinError 32 deleting auth.json right
+    after stop(), while the stub's child, the real server, still ran). Windows only: elsewhere
+    there is no stub."""
+    if sys.platform != "win32":
+        return
+    srv = ctx.server()
+    eq(_port_pids(srv.port), {srv.proc.pid}, "the PID serving the port")
+    port = srv.port
+    srv.stop()
+    eq(_port_pids(port), set(), "a process still serves the port after stop()")
 
 
 @test("smoke")
