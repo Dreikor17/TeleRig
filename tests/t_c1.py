@@ -111,7 +111,7 @@ def c1_scope_edges_drawn_once(ctx):
     check(m, "drawOverlay")
     body = m.group(1)
     check("flo / 1e6" not in body and "fhi / 1e6" not in body, "the canvas no longer draws the edge frequencies")
-    check("(tuned / 1e6).toFixed(4)" in body, "the centre (tuned) label stays on the canvas")
+    check("(tuned / 1e6).toFixed(dec)" in body, "the centre (tuned) label stays on the canvas")
     html, app = _read("index.html"), _read("app.js")
     check('id="lblLeft"' in html and 'id="lblRight"' in html, "the HTML edge labels stay")
     check('$("lblLeft").textContent = formatFreq(lo);' in app, "app.js fills them")

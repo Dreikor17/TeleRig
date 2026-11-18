@@ -607,6 +607,8 @@ class YaesuSimTransport(Transport):
             return "0"
         try:
             val = it.min if it.kind == "int" else 0    # enum -> index 0, signed -> 0
+            if it.name == "CW FREQ DISPLAY":
+                val = 1                                # the radio's factory default: PITCH (offset)
             w = getattr(it, "ex_width", 3)
             return menu_engine.yaesu_encode(it, val)[2 + w:-1]   # strip EX<num> and ';'
         except Exception:

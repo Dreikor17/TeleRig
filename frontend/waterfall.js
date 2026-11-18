@@ -302,8 +302,9 @@
         ctx.textBaseline = "top";
         if (tuned) {                                            // centre indicator = the tuned freq
           const cx = Math.max(40, Math.min(w - 40, this.freqToX(tuned)));
+          const dec = fhi - flo <= 10000 ? 5 : 4;                // 10 Hz digits on a narrow view (AF / CW)
           ctx.textAlign = "center"; ctx.fillStyle = "#ffb15a";
-          ctx.fillText((tuned / 1e6).toFixed(4) + " MHz", cx, 9);
+          ctx.fillText((tuned / 1e6).toFixed(dec) + " MHz", cx, 9);
         }
         ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       }
@@ -358,6 +359,46 @@
   }
 
   global.Scope = Scope;
+
+  // ---- the audio (AF) scope's frequency map, for radios with no scope over CAT (app.js) ----
+  // The AF scope is an FFT of the RX audio: a tone of a Hz (0..span) comes from RF carrier + a on a
+  // USB-side mode and carrier - a on an LSB-side mode (drawn mirrored, so RF still rises left to
+  // right). The carrier point is the dial, EXCEPT in CW: there the radio shows the frequency it hears
+  // AT ITS CW PITCH (the zero beat: Yaesu's factory CW FREQ DISPLAY = PITCH; the IC-728 always), so
+  // the carrier sits `pitch` Hz away from the dial, and the dial is the tuned marker, drawn at the
+  // pitch. A signal on the marker is heard at the pitch, inside the radio's CW filter and the CW
+  // decoder's window, and a reply there is zero-beat. Pure functions (tests/af_scope_test.js).
+  const AF_LSB_MODES = ["LSB", "CW-LSB", "RTTY-LSB", "DATA-LSB", "CW-R", "RTTY", "DATA-L"];
+  global.AfMap = {
+    // {side, pitch, shown} for a CW mode on this radio, else null. radio = the profile JSON
+    // (cw_sides, cw_pitch_hz); s = the live state (freq, key_pitch, cw_bfo, cw_disp).
+    cw(radio, s, mode) {
+      let side = ((radio && radio.cw_sides) || {})[mode];
+      if (!side) return null;
+      s = s || {};
+      if (s.cw_bfo === 0) side = 1;                            // FT-891 menu 07-07 CW BFO: USB
+      else if (s.cw_bfo === 1) side = -1;                      //   LSB
+      else if (s.cw_bfo === 2) side = (s.freq || 0) < 10e6 ? -1 : 1;   // AUTO: LSB on 7 MHz and below
+      const code = s.key_pitch == null ? 40 : s.key_pitch;     // Yaesu KP 00-75 = 300-1050 Hz (40 = 700)
+      const pitch = (radio && radio.cw_pitch_hz) || 300 + 10 * code;
+      return { side: side < 0 ? -1 : 1, pitch, shown: s.cw_disp !== 0 };   // unread -> factory PITCH
+    },
+    // The sweep meta for Scope.pushSweep (fixed edges, mode 1), plus lsb (mirror the FFT bins) and
+    // retune (dial - marker): a tap at RF f tunes to f + retune, so the tapped signal lands ON the
+    // marker — at the pitch in CW, as the radio itself would put it.
+    view(dial, span, mode, cw) {
+      const lsb = cw ? cw.side < 0 : AF_LSB_MODES.includes(mode);
+      let carrier = dial, marker = 0;
+      if (cw) {
+        if (cw.shown) carrier = dial - cw.side * cw.pitch;
+        marker = carrier + cw.side * cw.pitch;                  // = dial when the dial shows the zero beat
+      }
+      const lower = lsb ? carrier - span : carrier;
+      return { mode: 1, center: lower + span / 2, span, lower, upper: lower + span,
+               tuned: marker, filterBw: 0, retune: marker ? dial - marker : 0, lsb };
+    },
+  };
+
   global.fmtHz = function (hz) {
     if (!hz) return "—";
     const mhz = hz / 1e6;

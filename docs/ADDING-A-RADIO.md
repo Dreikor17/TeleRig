@@ -151,6 +151,18 @@ FT‑991A has no CAT active‑VFO selector → `vfo_select=False`).
    `connect_help`, the **safety/feature fields** — `tot_civ`/`tot_cat`, SWR meter source,
    `cw_send`/`cw_line`). Add `transports`/`capabilities` only where they differ from the
    synthesized defaults.
+   - **No scope over the control link** (`has_scope=False`) → the app draws the **audio (AF)
+     scope** from the RX audio. If the radio has CW, tell it where CW sits in that audio: in CW
+     a radio shows the *zero‑beat* frequency (the one it plays AT its CW pitch), so without this
+     every frequency on the audio scope is off by the pitch and a tap on a CW signal tunes it to a
+     0 Hz tone. Set `cw_sides` (CW mode name → `+1` when a higher signal sounds a higher tone,
+     `-1` for the LSB side) and, for a radio that cannot report its pitch, `cw_pitch_hz` (the
+     fixed CW offset; Yaesu pitch comes from `KP`). A Yaesu whose CW side is a menu (FT‑891 07‑07
+     CW BFO) sets `cw_bfo_read`, and one with a CW FREQ DISPLAY menu sets `cw_disp_read` — each
+     the radio's own CAT read (`"EX0707;"`); the values ride the state as `cw_bfo` / `cw_disp`.
+     Take the side and pitch from the manual (the CW pitch / display menus, or the BFO table:
+     the IC‑728's 9.01060 MHz CW TX vs 9.00980 MHz CW RX = an LSB‑side 800 Hz). The frequency
+     map itself is `AfMap` in `frontend/waterfall.js` (tests: `tests/af_scope_test.js`).
 2. **SET‑menu table (recommended)** — to expose the radio's full menu in the Setup tab, add
    `backend/menus/<id>_menu.py`: one `MenuItem` per entry (num, name, group,
    `kind`=enum|int|signed‑int, **`digits` = the manual's exact wire width** — for signed it

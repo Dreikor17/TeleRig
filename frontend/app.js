@@ -523,9 +523,9 @@
 
     // Keep the marker + filter passband tracking the tuned freq between real CI-V
     // scope sweeps. The AF audio scope (no-scope radios with RX audio on) owns the
-    // overlay and intentionally draws no marker (the dial sits at an edge), so skip
-    // this while it runs — otherwise every state update stamps a marker the next AF
-    // frame wipes, i.e. it flickers.
+    // overlay and draws its own marker (CW: the dial, at the pitch; no marker in the
+    // other modes, where the dial sits at an edge), so skip this while it runs —
+    // otherwise every state update stamps a marker the next AF frame moves, i.e. it flickers.
     if (!afTimer) {
       scope.setOpMode(s.mode_name);
       scope.meta.tuned = s.freq;
@@ -1157,7 +1157,10 @@
     if (scMoved > 6) { flushTune(); return; }         // the trailing drag delta
     // A touch tap must be short (a long press is not a tap); mouse and pen keep any duration (AR-59).
     if (scType === "touch" && performance.now() - scDownAt >= 600) return;
-    const hz = Math.round(scope.freqAtX(scStartPx) / 100) * 100;   // fine snap: lands where you tapped
+    // Fine snap (10 Hz on a narrow view): lands where you tapped. On the AF scope in CW, `retune`
+    // puts the tapped signal ON the marker (heard at the pitch), not at the carrier point (AfMap).
+    const [vlo, vhi] = scope.visibleRange(), q = vhi - vlo <= 10000 ? 10 : 100;
+    const hz = Math.round((scope.freqAtX(scStartPx) + (scope.meta.retune || 0)) / q) * q;
     if (hz > 0) send({ action: "set_freq", hz });
   }
   wrap.addEventListener("pointerup", scEnd);
@@ -1360,9 +1363,9 @@
       const px = (e.clientX - r.left) * (scope.W / r.width);
       // cursor frequency readout — always, over the whole spectrum + waterfall
       if (hf) {
-        const f = scope.freqAtX(px);
+        const f = scope.freqAtX(px), [vlo, vhi] = scope.visibleRange();
         if (f > 0) {
-          hf.textContent = (f / 1e6).toFixed(4) + " MHz";
+          hf.textContent = (f / 1e6).toFixed(vhi - vlo <= 10000 ? 5 : 4) + " MHz";   // 10 Hz on a narrow view
           hf.hidden = false;
           let x = e.clientX + 12, y = e.clientY - 28;
           if (x + hf.offsetWidth > window.innerWidth - 8) x = e.clientX - hf.offsetWidth - 12;
@@ -2212,8 +2215,9 @@
   }
   // ---- audio (AF) spectrum from RX, for radios with no CAT band scope (FT-991A) ----
   // FFT the RX audio and feed the existing spectrum + waterfall. Audio Hz is mapped
-  // to RF by the mode's sideband (USB: dial+af, LSB: dial-af) so the labels, tuned
-  // marker and band plan all read real frequencies — a mini panadapter of the passband.
+  // to RF by the mode's sideband (USB: dial+af, LSB: dial-af) and, in CW, the radio's
+  // pitch (AfMap, waterfall.js), so the labels, cursor readout, taps, tuned marker and
+  // band plan all read real frequencies — a mini panadapter of the passband.
   let afTimer = 0, afAnalyser = null;
   const AF_MAX = 3600;                          // Hz of the RX audio passband to show (SSB/CW/data occupied width)
   const AF_RANGE_DB = 30;                       // dB above the LOCAL noise floor mapped to full brightness
@@ -2243,7 +2247,8 @@
       if (!scope.wrap.clientWidth || !scope.wrap.clientHeight) return;   // scope parked / collapsed: no work
       afAnalyser.getFloatFrequencyData(buf);     // raw dB (full dynamic range), not the lossy 0-255 byte path
       const mode = state.mode_name || "USB";
-      const lsb = ["LSB", "CW-LSB", "RTTY-LSB", "DATA-LSB", "CW-R", "RTTY", "DATA-L"].includes(mode);
+      const view = AfMap.view(state.freq || 0, AF_MAX, mode, AfMap.cw(currentRadio, state, mode));
+      const lsb = view.lsb;                      // LSB side: mirror, so RF rises left to right
       for (let i = 0; i < n; i++) { const d = buf[lsb ? (n - 1 - i) : i]; b[i] = d > -200 ? d : -160; }
       // Per-frequency noise baseline via a wide boxcar mean (O(n) sliding window). Subtracting it
       // flattens the radio's shaped passband so the floor goes dark and only energy ABOVE the local
@@ -2260,11 +2265,10 @@
         const r = (b[i] - bl[i] - AF_MARGIN_DB) * gain;        // dB above the local noise floor -> 0..160
         data[i] = r <= 0 ? 0 : r >= 160 ? 160 : r | 0;
       }
-      const dial = state.freq || 0;
-      const lower = lsb ? dial - AF_MAX : dial;
-      const upper = lsb ? dial : dial + AF_MAX;
-      // tuned:0 -> no RF marker (the dial sits at an edge here); labels read lower/center/upper
-      scope.pushSweep({ mode: 0, center: (lower + upper) / 2, span: AF_MAX, lower, upper, tuned: 0, filterBw: 0 }, data);
+      // Fixed edges. In CW the dial is the tuned marker, at the pitch; in the other modes the dial
+      // sits at an edge, so tuned:0 (no marker). The labels read the edges.
+      scope.opMode = mode;
+      scope.pushSweep(view, data);
       updateScopeLabels(scope.meta);
     }, 40);                                       // ~25 fps
   }

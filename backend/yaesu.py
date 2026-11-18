@@ -130,10 +130,11 @@ class YaesuRadio:
         self.state["transport"] = transport.name
         self.state["audio"] = getattr(transport, "supports_audio", False)
         # prime the readout + the whole settings panel so the UI shows the
-        # radio's REAL state on connect, not defaults. Append the ATAS TUNER SELECT
-        # read (if the radio supports it) so the UI knows when to show ATAS tuning.
-        ar = getattr(self.profile, "atas_read", "")
-        self._panel_cmds = self._SETTINGS + ((ar,) if ar else ())
+        # radio's REAL state on connect, not defaults. Append the menu reads that ride the
+        # state channel (ATAS TUNER SELECT, CW BFO, CW FREQ DISPLAY — whichever this radio
+        # has), so the UI knows when to show ATAS tuning and how to draw CW on the AF scope.
+        ex = tuple(c for c in (getattr(self.profile, a, "") for a, _ in self._EX_STATE) if c)
+        self._panel_cmds = self._SETTINGS + ex
         for cmd in ("ID;", "IF;", "FA;", "MD0;", "SM0;") + self._panel_cmds:
             self._send(cmd)
         if getattr(self.profile, "tot_cat", ""):            # safety: hardware TX time-out backstop
@@ -249,16 +250,17 @@ class YaesuRadio:
     def _parse(self, msg: str) -> None:  # noqa: C901 - flat prefix dispatch, kept readable
         m = msg
         if m.startswith("EX") and len(m) >= 6 and m[2:5].isdigit():
-            # TUNER SELECT (ATAS) rides the state channel too, so the UI can show the ATAS
-            # up/down controls only when ATAS is the selected tuner. `m` has no trailing ';'
-            # here (stripped in _on_bytes), so reply = <atas_read prefix><value>, value = index.
-            ar = getattr(self.profile, "atas_read", "")
-            if ar:
-                prefix = ar.rstrip(";")                      # "EX143"
-                if m.startswith(prefix):
+            # A few menu items ride the state channel too (_EX_STATE): TUNER SELECT, so the UI
+            # shows the ATAS up/down controls only when ATAS is the selected tuner; CW BFO and CW
+            # FREQ DISPLAY, which place CW on the AF scope. `m` has no trailing ';' here
+            # (stripped in _on_bytes), so reply = <read prefix><value>, value = index.
+            for attr, key in self._EX_STATE:
+                rd = getattr(self.profile, attr, "")
+                prefix = rd.rstrip(";")                      # e.g. "EX143"
+                if prefix and m.startswith(prefix):
                     vs = m[len(prefix):].rstrip(";")
-                    if vs.isdigit() and int(vs) != self.state.get("tuner_select"):
-                        self.state["tuner_select"] = int(vs)
+                    if vs.isdigit() and int(vs) != self.state.get(key):
+                        self.state[key] = int(vs)
                         self._emit_state()
             self._handle_ex_reply(m)     # SET-menu reply -> separate menu channel
             return
@@ -402,6 +404,11 @@ class YaesuRadio:
                  "ML0;", "ML1;", "PR0;", "PR1;", "TS;",        # monitor + processor/param-EQ + TXW
                  "BI;", "KR;", "KS;", "KP;", "CS;",            # CW break-in/keyer/speed/pitch/spot
                  "SC;", "FS;")                                  # scan + fast step
+    # SET-menu items the UI needs outside the Settings tab: (profile read attribute, state key).
+    # Read on connect and with the panel round-robin; a value change emits a full state frame.
+    _EX_STATE = (("atas_read", "tuner_select"),   # TUNER SELECT: 3 = ATAS (antenna up/down)
+                 ("cw_bfo_read", "cw_bfo"),        # FT-891 07-07 CW BFO: 0 USB / 1 LSB / 2 AUTO
+                 ("cw_disp_read", "cw_disp"))      # CW FREQ DISPLAY: 1 = dial shows the zero beat
 
     _CMD_DT = 0.02                               # inter-command pacing; 0.02 is the FT-991A CAT floor
 

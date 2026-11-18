@@ -164,6 +164,20 @@ class RadioProfile:
     # When the radio reports ATAS selected, the UI shows manual antenna up/down controls
     # (mic UP/DN emulation) next to PTT. See docs/ADDING-A-RADIO.md.
     atas_read: str = ""
+    # CW on the AUDIO scope (radios with no scope): in CW the radio shows the frequency it hears at
+    # its CW pitch (the "zero beat"), so the audio spectrum is offset by that pitch to read real
+    # frequencies, and the dial is drawn as the tuned marker. See docs/ADDING-A-RADIO.md.
+    #   cw_sides     CW mode name -> +1 when a HIGHER signal sounds a higher tone (carrier on the USB
+    #                side), -1 for the LSB side. A mode not listed here is not treated as CW.
+    #   cw_pitch_hz  the radio's FIXED CW receive offset; 0 = the radio reports its pitch (Yaesu KP).
+    #   cw_bfo_read  Yaesu CAT read of a CW BFO menu that decides the side (FT-891 07-07:
+    #                0 USB / 1 LSB / 2 AUTO = LSB on 7 MHz and below, USB on 10 MHz and up).
+    #   cw_disp_read Yaesu CAT read of the CW FREQ DISPLAY menu (1 = the dial shows the zero beat,
+    #                the factory default; 0 = the dial reads as on SSB, no pitch offset).
+    cw_sides: dict = field(default_factory=dict)
+    cw_pitch_hz: int = 0
+    cw_bfo_read: str = ""
+    cw_disp_read: str = ""
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
     # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
@@ -235,6 +249,7 @@ class RadioProfile:
             "has_tuner": self.has_tuner,
             "preamp_labels": self.preamp_labels,
             "has_cw_tx": bool(self.cw_send),
+            "cw_sides": self.cw_sides, "cw_pitch_hz": self.cw_pitch_hz,
             "transports": asdict(self.transports) if self.transports else None,
             "capabilities": asdict(self.capabilities) if self.capabilities else None,
             "menu": [asdict(m) for m in self.menu],
@@ -393,6 +408,8 @@ FT991A = RadioProfile(
     # RTS keying on the CAT port is forbidden (collides with CAT RTS -> breaks PTT).
     cw_send="line", cw_line="dtr",
     atas_read="EX143;",             # TUNER SELECT (0 OFF/1 INT/2 EXT/3 ATAS/4 LAMP) -> ATAS = 3
+    cw_sides={"CW-USB": 1, "CW-LSB": -1},   # CW-U (MD3) / CW-L (MD7): the mode is the side
+    cw_disp_read="EX059;",          # 059 CW FREQ DISPLAY: 0 DIRECT FREQ / 1 PITCH OFFSET (default)
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -448,6 +465,11 @@ FT891 = RadioProfile(
     tot_cat="EX051402;",            # menu 05-14 TX TOT = 02 min = 120 s (exact backstop)
     pc_keying_off_cat="EX07120;",   # menu 07-12 PC KEYING = OFF on connect (safety default)
     cw_send="",                     # no CAT text-CW yet: FT-891 KY only plays stored KM memories
+    # CW: MD3 and MD7 are both plain "CW (CW BFO)" on the FT-891 (CAT manual, MD) — the side is
+    # menu 07-07, read below; the mode name is only the fallback until that read answers.
+    cw_sides={"CW-USB": 1, "CW-LSB": -1},
+    cw_bfo_read="EX0707;",          # 07-07 CW BFO: 0 USB (default) / 1 LSB / 2 AUTO
+    cw_disp_read="EX0711;",         # 07-11 CW FREQ DISPLAY: 0 FREQ / 1 PITCH (default)
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -510,6 +532,11 @@ IC728 = RadioProfile(
         "AM": {1: 6000}, "FM": {1: 12000},
     },
     mod_dataoff=(0x00, 0x00), lan_mod_level=(0x00, 0x00),   # unused: no LAN MOD routing
+    # CW receives 800 Hz from the TX carrier (manual p.39 BFO table: CW transmit 9.01060 MHz, CW
+    # receive 9.00980 MHz) through an inverted 9 MHz IF (USB BFO 9.0130 sits ABOVE LSB 9.0100 around
+    # the one 9.0115 MHz filter), so a HIGHER signal sounds a LOWER tone: an LSB-side 800 Hz pitch.
+    # The display is the TX (zero-beat) frequency.
+    cw_sides={"CW": -1, "CW-NAR": -1}, cw_pitch_hz=800,
     default_freq=14_100_000,                                # power-on default 14.100 MHz USB
     steps=[(10, "10 Hz"), (20, "20 Hz"), (50, "50 Hz"), (100, "100 Hz"),
            (1_000, "1 kHz"), (10_000, "10 kHz"), (100_000, "100 kHz"), (1_000_000, "1 MHz")],
