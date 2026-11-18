@@ -289,6 +289,66 @@ s.on_change = lambda old, new: 1 / 0
 C("a failing hook never breaks a write", raises(lambda: s.mutate(lambda d: d.update(gen=3)), Exception), False)
 
 
+# ---- a write is never built on a cached copy it could not re-read ----------------------------------
+# mutate() re-reads the file under the lock. When another program holds it open without read sharing
+# at that moment, the write must fail (StoreBusy, nothing written) instead of replacing content this
+# process never saw: here a newer write made under the lock by another writer (a --reset-admin); just
+# as well a damaged file, which must lock the server, not be overwritten with the cached copy.
+def deny_reads(st):
+    def fail():
+        raise PermissionError(13, "sharing violation (test)")
+    st._read_bytes = fail
+
+
+clk = FakeClock()
+p = fresh("stale-write")
+s = JsonStore(p, clock=clk)
+s.mutate(lambda d: d.update(gen=1), create=True)
+JsonStore(p).mutate(lambda d: d.update(gen=2, cli=True))            # another writer, under the lock
+deny_reads(s)
+clk.t += 0.6
+C("unreadable for a moment: a READ still keeps the last good state", (s.load(), s.status()), ({"gen": 1}, "ok"))
+C("unreadable under the lock: mutate -> StoreBusy",
+  raises(lambda: s.mutate(lambda d: d.update(server=True)), StoreBusy), True)
+C("... the other writer's content is untouched", json.loads(p.read_text()), {"gen": 2, "cli": True})
+C("... no temp file left", sorted(x.name for x in p.parent.iterdir() if ".tmp-" in x.name), [])
+p.write_text('{"gen": 2, "cli": tru')                               # damaged meanwhile
+C("a damaged file is not overwritten either", raises(lambda: s.mutate(lambda d: d.update(server=True)), StoreBusy), True)
+C("... its bytes are unchanged", p.read_text(), '{"gen": 2, "cli": tru')
+del s._read_bytes                                                     # readable again
+C("readable again: the damage is seen (corrupt), not written over",
+  raises(lambda: s.mutate(lambda d: d.update(server=True)), StoreCorrupt), True)
+p.write_text('{"gen": 2, "cli": true}')
+s.mutate(lambda d: d.update(server=True))
+C("fixed: the write builds on the newer content", json.loads(p.read_text()), {"gen": 2, "cli": True, "server": True})
+
+if sys.platform == "win32":
+    # The same with a real handle that denies reads (an editor or scanner holding the file for a
+    # moment) and ends while the write would still be retrying its os.replace: before the fix the
+    # cached {"gen": 1} replaced the other writer's content as soon as the handle closed.
+    import ctypes
+    import threading
+    from ctypes import wintypes
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.restype = wintypes.HANDLE
+    k32.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    p = fresh("stale-write-win")
+    s = JsonStore(p)
+    s.mutate(lambda d: d.update(gen=1), create=True)
+    JsonStore(p).mutate(lambda d: d.update(gen=2, cli=True))
+    h = k32.CreateFileW(str(p), 0x80000000, 0x4, None, 3, 0, None)    # GENERIC_READ, share DELETE only
+    C("win: a handle that denies reads is open", h not in (None, wintypes.HANDLE(-1).value), True)
+    t = threading.Timer(0.3, k32.CloseHandle, args=(h,))
+    t.start()
+    res = raises(lambda: s.mutate(lambda d: d.update(server=True)), StoreBusy)
+    t.join()
+    C("win: the write failed (StoreBusy) or saw the newer content, never the cached copy",
+      (res, json.loads(p.read_text())) in ((True, {"gen": 2, "cli": True}),
+                                          (False, {"gen": 2, "cli": True, "server": True})), True)
+
+
 # ---- settings: lenient config.json (AR-51) -------------------------------------------------------------
 def use_config(path: Path) -> None:
     os.environ["TELERIG_CONFIG"] = str(path)

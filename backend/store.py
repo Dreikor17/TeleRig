@@ -10,7 +10,9 @@ server, a `--reload` child and the CLI.
 - Writes go through mutate(): an OS lock on a persistent `<name>.lock` file (never deleted; the OS
   drops it when the holder dies, so there is no stale-lock breaking), a reload under the lock,
   then a temp file + flush + fsync + os.replace. Any failure leaves the file and the cache as
-  they were and the exception propagates.
+  they were and the exception propagates. The reload must really read the file: when it cannot
+  (another program holds it open without read sharing), the write fails with StoreBusy instead
+  of being built on the cached copy, which could undo a newer write or paper over a damaged file.
 
 Standard library only (the `--reset-admin` CLI path imports this before uvicorn). No file I/O at
 import time.
@@ -170,17 +172,24 @@ class JsonStore:
                 raise StoreCorrupt(self.path, f"invalid content ({e})") from None
         return data
 
-    def _unreadable(self, e: OSError) -> None:
+    def _unreadable(self, e: OSError, strict: bool = False) -> None:
         """The file exists but cannot be read (not a FileNotFoundError). Before any good load this
         is fail-closed (corrupt: never treat an unreadable store as empty); after one, a moment of
-        unreadability (a writer replacing the file on Windows) keeps the last good state."""
+        unreadability (a writer replacing the file on Windows) keeps the last good state for a read.
+        strict (mutate's reload under the lock) raises StoreBusy instead when that state is ok or
+        missing: a write based on it would replace content this process never saw, a newer write
+        made under the lock (a --reset-admin) or a damaged file that should lock the server. (A
+        corrupt state already makes mutate raise StoreCorrupt.)"""
+        if strict and self._loaded and self._status != "corrupt":
+            raise StoreBusy(f"{self.path.name} cannot be read right now ({e.strerror or e}); "
+                            "nothing was written") from None
         if not self._loaded:
             self._loaded = True
             self._sig = self._digest = None
             self._status, self._detail = "corrupt", f"cannot be read ({e.strerror or e})"
             self.version += 1
 
-    def _refresh(self, force: bool = False) -> None:
+    def _refresh(self, force: bool = False, strict: bool = False) -> None:
         fire = None
         with self._mu:
             now = self._clock()
@@ -192,7 +201,7 @@ class JsonStore:
             except FileNotFoundError:
                 sig = None
             except OSError as e:
-                self._unreadable(e)
+                self._unreadable(e, strict)
                 return
             hash_due = force or not self._loaded or now - self._last_hash >= self.hash_interval
             if self._loaded and sig == self._sig and not hash_due:
@@ -203,7 +212,7 @@ class JsonStore:
                 try:
                     raw = self._read_bytes()
                 except OSError as e:
-                    self._unreadable(e)
+                    self._unreadable(e, strict)
                     return
             self._last_hash = now
             if raw is None:
@@ -267,7 +276,7 @@ class JsonStore:
             fd = self._acquire(create or move_corrupt, timeout)
             fire = None
             try:
-                self._refresh(force=True)                    # reload under the lock
+                self._refresh(force=True, strict=True)       # reload under the lock (must read it)
                 if move_corrupt and self._status == "corrupt":
                     self._move_aside()
                     create = True
