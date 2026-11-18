@@ -32,6 +32,9 @@ TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56)
 B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev"
+# The page Phase 1 started from: v0.2.25. The audit used to read `dev`, which was that page until the
+# v0.3.0 release moved dev to v0.3.0 itself; pinned so the Phase 1 audit keeps its meaning.
+PHASE1_BASE_REF = "1d6ea32"
 
 
 def _sha(p: Path) -> str:
@@ -221,8 +224,8 @@ def layout_js_registry_matches_the_server(ctx):
 
 @test("unit")
 def check_ids_passes_for_b3(ctx):
-    r = subprocess.run([sys.executable, str(REPO / "tests" / "check_ids.py"), "--allow-missing", B3_ALLOW_MISSING],
-                       capture_output=True, text=True, cwd=str(REPO), timeout=60)
+    r = subprocess.run([sys.executable, str(REPO / "tests" / "check_ids.py"), "--allow-missing", B3_ALLOW_MISSING,
+                        "--base-ref", PHASE1_BASE_REF], capture_output=True, text=True, cwd=str(REPO), timeout=60)
     eq(r.returncode, 0, f"check_ids: {r.stdout}{r.stderr}")
     if str(REPO / "tests") not in sys.path:
         sys.path.insert(0, str(REPO / "tests"))

@@ -77,9 +77,10 @@ def b4_remote_dialog_is_gone(ctx):
     eq(len(roots), 1, "one #modalRoot")
     check("gridWrap" not in roots[0][2] and "tileParking" not in roots[0][2], f"#modalRoot outside the grid: {roots[0][2]}")
     check(html.index('id="modalRoot"') < html.index("<script src="), "#modalRoot comes before the scripts")
-    # the B4 id audit (§3.3 step 10, AR-56): every other id of dev's index.html is still there once
-    r = subprocess.run([sys.executable, str(REPO / "tests" / "check_ids.py"), "--allow-missing", B4_ALLOW_MISSING],
-                       capture_output=True, text=True, cwd=str(REPO), timeout=60)
+    # the B4 id audit (§3.3 step 10, AR-56): every other id of the v0.2.25 index.html (the page Phase 1
+    # started from; `dev` until the v0.3.0 release moved it) is still there once
+    r = subprocess.run([sys.executable, str(REPO / "tests" / "check_ids.py"), "--allow-missing", B4_ALLOW_MISSING,
+                        "--base-ref", "1d6ea32"], capture_output=True, text=True, cwd=str(REPO), timeout=60)
     eq(r.returncode, 0, f"check_ids: {r.stdout}{r.stderr}")
 
 
