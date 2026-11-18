@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import threading
 import time
@@ -47,7 +48,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
-from . import accounts, audit, auth, hostaudio, layout_store, policy, profiles, settings, tailscale
+from . import __version__, accounts, audit, auth, hostaudio, layout_store, policy, profiles, settings, tailscale
 from .account_api import (NO_STORE, _layout_write, _record_failure, _sem, err, hash_async, rate_limited,
                           read_json, source, verify_async)
 from .audio_router import CODEC_RE, codec_default, find_device
@@ -64,13 +65,23 @@ class _Ctx:
     audio: Any = None
     radio: Callable[[], Any] = staticmethod(lambda: None)
     transport_kind: Callable[[], str] = staticmethod(lambda: "none")
+    updater: Any = None                     # backend/updater.py (Administration > Update)
+    restart: Callable[[], Any] = staticmethod(lambda: "skipped")
+    boot: str = ""
 
 
 _ctx = _Ctx()
 
 
 def bind(*, hub=None, arb=None, audio=None, radio: Optional[Callable] = None,
-         transport_kind: Optional[Callable] = None) -> None:
+         transport_kind: Optional[Callable] = None, updater=None, restart: Optional[Callable] = None,
+         boot: Optional[str] = None) -> None:
+    if updater is not None:
+        _ctx.updater = updater
+    if restart is not None:
+        _ctx.restart = restart
+    if boot is not None:
+        _ctx.boot = boot
     if hub is not None:
         _ctx.hub = hub
     if arb is not None:
@@ -920,6 +931,63 @@ async def api_audit(request):
                                             "Cache-Control": "no-store"})
 
 
+# -- Administration > Update (backend/updater.py) ------------------------------------------------
+def _update_payload() -> dict:
+    u = _ctx.updater
+    st = u.status() if u is not None else {"job": {"state": "idle"}, "check": None}
+    info = u.info() if u is not None else {"updatable": False, "reason": "Updating is not available on this server."}
+    return {"info": info, "job": st["job"], "check": st["check"], "boot": _ctx.boot, "pid": os.getpid(),
+            "version": __version__}
+
+
+def _tx_busy() -> bool:
+    a = _ctx.arb
+    return bool(a is not None and a.owner is not None)      # anyone, the FRONT PANEL included
+
+
+@requires("admin")
+async def api_update_get(request):
+    """This install (branch, commit, can it update itself), the last check and the running update."""
+    return JSONResponse(await run_in_threadpool(_update_payload), headers=NO_STORE)
+
+
+@requires("admin")
+async def api_update_check(request):
+    """Fetch this install's branch from GitHub and list what is new. Changes nothing."""
+    body = await read_json(request)
+    if not isinstance(body, dict):
+        return body
+    u = _ctx.updater
+    if u is None:
+        return err(404, "not_available", "Updating is not available on this server.")
+    res = await run_in_threadpool(u.check)
+    if not res.get("ok"):
+        return err(409, "check_failed", res.get("error") or "The check failed.")
+    return _ok(check=res)
+
+
+@requires("admin", sudo=True)
+async def api_update_start(request):
+    """Update now (sudo): refused while anyone transmits; then fetch, move forward, packages, self-test
+    and restart run on a thread (backend/updater.py). Poll GET for the progress."""
+    p = request.state.principal
+    body = await read_json(request)
+    if not isinstance(body, dict):
+        return body
+    u = _ctx.updater
+    if u is None:
+        return err(404, "not_available", "Updating is not available on this server.")
+    audit.log("update_requested", by=p.user, ip=auth.client_ip(request.scope))
+    why = await run_in_threadpool(lambda: u.start(p.user, tx_busy=_tx_busy, restart=_ctx.restart))
+    if why == "busy":
+        return err(409, "busy", "Someone is transmitting. Update when the radio is idle.")
+    if why == "running":
+        return err(409, "running", "An update is already running.")
+    if why:
+        return err(409, "not_updatable", why)
+    return _ok(**(await run_in_threadpool(_update_payload)))
+
+
 # -- the route table (server.py adds these) ---------------------------------------------------
 def routes() -> list:
     u = "/api/admin/users/{uid}"
@@ -946,4 +1014,7 @@ def routes() -> list:
         Route("/api/admin/tailscale_serve_off", api_tailscale_serve_off, methods=["POST"]),
         Route("/api/admin/clear_behind_proxy", api_clear_behind_proxy, methods=["POST"]),
         Route("/api/admin/audit", api_audit, methods=["GET"]),
+        Route("/api/admin/update", api_update_get, methods=["GET"]),
+        Route("/api/admin/update/check", api_update_check, methods=["POST"]),
+        Route("/api/admin/update", api_update_start, methods=["POST"]),
     ]

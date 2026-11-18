@@ -355,7 +355,10 @@ ADMIN_ROUTES = {   # §2.17: (sudo, local)
     "GET /api/admin/audio": (False, False), "PUT /api/admin/audio": (True, False),
     "PUT /api/admin/radio_transport": (True, False), "GET /api/admin/remote_status": (False, False),
     "POST /api/admin/tailscale_serve": (True, True), "POST /api/admin/tailscale_serve_off": (False, False),
-    "POST /api/admin/clear_behind_proxy": (True, False), "GET /api/admin/audit": (False, False)}
+    "POST /api/admin/clear_behind_proxy": (True, False), "GET /api/admin/audit": (False, False),
+    # Administration > Update: reading and checking need admin; Update now also a fresh sudo
+    "GET /api/admin/update": (False, False), "POST /api/admin/update/check": (False, False),
+    "POST /api/admin/update": (True, False)}
 C("admin routes (§2.17)", sorted(p for p, pol in pols.items() if pol.min_role == "admin"), sorted(ADMIN_ROUTES))
 C("admin routes: sudo / direct-local flags (F9: Serve ON = admin + sudo + local; OFF = admin only)",
   {k: (pols[k].sudo, pols[k].local) for k in ADMIN_ROUTES if k in pols}, ADMIN_ROUTES)

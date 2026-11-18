@@ -591,6 +591,14 @@ a.ctl-btn{text-decoration:none;color:var(--txt)}
 .tm-tag.danger{color:var(--danger-hi);border-color:rgba(239,68,68,.45);background:var(--danger-tint)}
 .tm-tag.info{color:var(--info-hi);border-color:rgba(59,130,246,.40);background:var(--info-tint)}
 .tm-tag.me{color:var(--txt);border-color:var(--border-strong)}
+/* Administration > Update */
+.tm-kv th{text-align:left;color:var(--txt-dim);font-weight:600;width:7em}
+.up-steps{list-style:none;margin:8px 0;padding:0;display:grid;gap:4px}
+.up-steps li{display:flex;align-items:baseline;gap:6px;font-size:13px;flex-wrap:wrap}
+.up-steps li svg{width:14px;height:14px;flex:0 0 auto;align-self:center}
+.up-steps li.ok svg{color:var(--accent-hi)}
+.up-steps li.bad,.up-steps li.bad svg{color:var(--danger-hi)}
+.up-steps .up-t{color:var(--txt-dim);font-size:12px}
 .tm-hostchips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}
 .tm-hostchip{display:inline-flex;align-items:center;gap:2px;padding:2px 2px 2px 4px;border:1px solid var(--border-strong);border-radius:999px;background:var(--surface-2)}
 .tm-hostchip code{border:0;background:none}

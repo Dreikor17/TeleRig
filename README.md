@@ -83,6 +83,13 @@ and only one operator transmits at a time.
 No Python or command line needed. `install.bat` is safe to run again; on a git checkout it
 also pulls the latest code before updating dependencies.
 
+**Updating from the web page:** on a copy installed with git, an admin can update TeleRig without
+going to its PC: **Administration > Update** checks GitHub and lists what is new, and **Update now**
+updates and restarts it (about half a minute; refused while anyone is transmitting). The install
+follows its own branch: a `master` install updates from `master` (the releases), a `dev` install
+from `dev`. It never switches branches or overwrites local changes; when the new version fails its
+self-test, the install goes back to the version it had and does not restart.
+
 <details><summary>Prefer the command line?</summary>
 
 ```

@@ -63,6 +63,7 @@ def main() -> None:
         ap.error("--password-stdin, --real-config and --demote-other-admins only go with --reset-admin")
     if args.reset_admin:
         sys.exit(reset_admin_cli(args))          # before uvicorn is ever imported (AR-35)
+    _wait_for_old_server(args.host, args.port)   # a restart after Administration > Update
 
     # Dev guards travel in the environment and are set BEFORE uvicorn.run, so the server (and any
     # --reload child process) inherits them. backend/server.py reads them per request.
@@ -145,10 +146,62 @@ def main() -> None:
     import uvicorn                               # only now: --reset-admin never needs it
     # proxy_headers=False: scope["client"] is always the real TCP peer. Forwarding headers are
     # interpreted by the app itself, and only when that peer is loopback (never by uvicorn).
-    uvicorn.run("backend.server:app", host=args.host, port=args.port,
-                reload=args.reload, log_level="info",
-                ws_ping_interval=10, ws_ping_timeout=10, ws_max_size=1048576,
-                proxy_headers=False, **ssl_kw)
+    try:
+        uvicorn.run("backend.server:app", host=args.host, port=args.port,
+                    reload=args.reload, log_level="info",
+                    ws_ping_interval=10, ws_ping_timeout=10, ws_max_size=1048576,
+                    proxy_headers=False, **ssl_kw)
+    except KeyboardInterrupt:
+        # uvicorn re-raises the signal that shut it down. After Administration > Update that is no
+        # error: the new copy is already starting in this window (and run.bat must not pause).
+        if not getattr(sys.modules.get("backend.server"), "_restart_requested", False):
+            raise
+
+
+def _wait_for_old_server(host: str, port: int) -> None:
+    """A copy started by Administration > Update (TELERIG_RESTART_WAIT = the old server's process
+    id): wait until that server has exited and its port is free, then start as usual."""
+    raw = os.environ.pop("TELERIG_RESTART_WAIT", "")
+    if not raw:
+        return
+    import socket
+    import time
+    try:
+        pid = int(raw)
+    except ValueError:
+        return
+    _say("TeleRig: updated - waiting for the previous server to stop ...")
+    if os.name == "nt":
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x00100000, False, pid)          # SYNCHRONIZE
+        if h:
+            try:
+                k32.WaitForSingleObject(h, 120000)
+            finally:
+                k32.CloseHandle(h)
+    else:
+        end = time.monotonic() + 120.0
+        while time.monotonic() < end:
+            try:
+                os.kill(pid, 0)                              # POSIX: signal 0 only checks
+            except ProcessLookupError:
+                break
+            except PermissionError:
+                pass
+            time.sleep(0.2)
+    bind_host = "0.0.0.0" if host in ("", "localhost") else host
+    end = time.monotonic() + 60.0
+    while time.monotonic() < end:
+        s = socket.socket(socket.AF_INET6 if ":" in bind_host else socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((bind_host, port))
+            return
+        except OSError:
+            time.sleep(0.25)
+        finally:
+            s.close()
+    _say(f"TeleRig: port {port} is still in use; starting anyway.")
 
 
 # -- --reset-admin (stdlib only) -------------------------------------------------------------------

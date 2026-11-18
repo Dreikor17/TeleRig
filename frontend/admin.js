@@ -87,7 +87,7 @@
 
   // ---- state ---------------------------------------------------------------------------------------
   const TABS = [["users", "Users"], ["access", "Access"], ["remote", "Remote"], ["audio", "Radio & audio"],
-                ["activity", "Activity"], ["lockouts", "Lockouts"]];
+                ["activity", "Activity"], ["lockouts", "Lockouts"], ["update", "Update"]];
   const TAB_KEY = "telerig.admin.tab";
   let M = null;                          // the modal shell (built on first open)
   const tabBtns = {};
@@ -1189,8 +1189,143 @@
     }
   }
 
+  // ---- Update (backend/updater.py) ------------------------------------------------------------------------
+  // GET /api/admin/update; POST /api/admin/update/check (fetch + compare, changes nothing); POST
+  // /api/admin/update (sudo). The server updates itself from GitHub (this install's own branch: master
+  // or dev) and restarts; this tab follows the steps, then waits for the new server (a new boot id) and
+  // reloads the page onto it.
+  const UP_STEP = { fetch: "Fetch from GitHub", check: "Check", update: "Update the files", packages: "Packages",
+                    "self-test": "Self-test of the new version", rollback: "Back to the previous version",
+                    restart: "Restart", error: "Error" };
+  function upWhen(iso) {
+    const t = Date.parse(iso || "");
+    return isNaN(t) ? String(iso || "") : new Date(t).toLocaleString();
+  }
+  function upSteps(job) {
+    const ul = h("ul", { class: "up-steps", id: "admUpSteps" });
+    for (const s of (job && job.steps) || []) {
+      ul.append(h("li", { class: s.ok ? "ok" : "bad" }, TR.icon(s.ok ? "check" : "triangle-alert"),
+                  h("b", { text: UP_STEP[s.step] || s.step }), s.text ? h("span", { class: "up-t", text: s.text }) : null));
+    }
+    return ul;
+  }
+  async function renderUpdate(p, seq) {
+    p.append(loading("Reading this install…"));
+    const j = await TR.api("/api/admin/update");
+    if (!alive(seq)) return;
+    p.textContent = "";
+    const info = j.info || {}, job = j.job || {}, boot0 = j.boot;
+    p.append(note("Update TeleRig from GitHub without going to its PC. The install follows its own branch: " +
+                  "a master install updates from master (the releases), a dev install from dev."));
+    const tb = h("tbody");
+    function showInfo(inf, version) {
+      tb.textContent = "";
+      const row = (k, v) => tb.append(h("tr", null, h("th", { text: k }), h("td", null, v)));
+      row("Version", "v" + (version || "?"));
+      row("Branch", inf.branch ? inf.branch + (inf.branch === "dev" ? " (development)" : " (releases)") : "—");
+      row("Commit", inf.short ? h("span", { id: "admUpCommit" }, h("code", { text: inf.short }), " · " + (inf.subject || "") +
+                                      (inf.date ? " · " + upWhen(inf.date) : "")) : "—");
+    }
+    showInfo(info, j.version);
+    p.append(h("section", { class: "tm-sec", id: "admUpInfo" }, head3("THIS INSTALL"),
+               h("table", { class: "tm-table tm-kv" }, tb)));
+    if (!info.updatable) {
+      p.append(h("div", { class: "tm-box warn", role: "status", id: "admUpWhy", text: info.reason || "This install cannot update itself." }));
+      return;
+    }
+    const listBox = h("div", { id: "admUpList" });
+    const progress = h("div", { id: "admUpProgress" });
+    const goBtn = btn("Update now", { icon: "arrow-up", cls: "primary", id: "admUpGo", mut: true, disabled: true, on: () => go() });
+    const checkBtn = btn("Check for updates", { icon: "rotate-ccw", id: "admUpCheck", on: () => check() });
+    p.append(h("section", { class: "tm-sec", id: "admUpSec" }, head3("UPDATES", "from GitHub's " + info.branch),
+      listBox, h("div", { class: "tm-actions tm-left" }, checkBtn, goBtn),
+      note("Update now refuses while anyone is transmitting. TeleRig then restarts: everyone is disconnected for " +
+           "about half a minute, and the radio reconnects when the page loads again."),
+      progress));
+    let last = j.check || null;
+    function showCheck(c) {
+      listBox.textContent = "";
+      goBtn.disabled = true;
+      if (!c) { listBox.append(note("Not checked yet.")); return; }
+      if (!c.behind) {
+        listBox.append(h("p", { class: "tm-note", id: "admUpCurrent" }, chip("up to date", "ok"),
+                         " Nothing new on GitHub's " + c.branch + " (checked " + rel(new Date(c.at * 1000).toISOString()) + ")."));
+        return;
+      }
+      if (c.ahead) {
+        listBox.append(h("div", { class: "tm-box warn", role: "status", text: "This install has commits that GitHub's " + c.branch +
+                                  " does not have, so it cannot update itself. Update it by hand." }));
+        return;
+      }
+      const body = h("tbody");
+      for (const x of c.commits || [])
+        body.append(h("tr", null, h("td", null, h("code", { text: x.short })), h("td", { text: x.subject }), h("td", { text: upWhen(x.date) })));
+      listBox.append(h("p", { class: "tm-note" }, chip(c.behind + (c.behind === 1 ? " new commit" : " new commits"), "info"),
+                       " on GitHub's " + c.branch + " (" + c.target_short + ")."),
+                     h("table", { class: "tm-table", id: "admUpCommits" },
+                       h("thead", null, h("tr", null, h("th", { text: "Commit" }), h("th", { text: "What changed" }), h("th", { text: "When" }))), body));
+      goBtn.disabled = false;
+    }
+    async function check() {
+      const res = await act(() => api("/api/admin/update/check", { method: "POST", json: {} }));
+      if (!alive(seq)) return;
+      if (res.ok) { last = res.data.check; showCheck(last); }
+    }
+    async function go() {
+      if (!last || !last.behind) return;
+      const yes = await TR.confirm("Update TeleRig to " + last.target_short + " from GitHub's " + last.branch + " and restart it? " +
+                                   "Everyone is disconnected for about half a minute.", { ok: "Update now", danger: true });
+      if (!yes) { say("Cancelled — nothing changed.", false); return; }
+      const res = await act(() => api("/api/admin/update", { method: "POST", json: {} }));
+      if (!alive(seq) || !res.ok) return;
+      follow();
+    }
+    // Follow a running update until it ends here, or until the restarted server answers.
+    let following = false;
+    function follow() {
+      if (following) return;
+      following = true;
+      checkBtn.disabled = goBtn.disabled = true;
+      let down = false;
+      const tick = async () => {
+        let s = null;
+        try { s = await TR.api("/api/admin/update", { quiet: true }); } catch (_) { s = null; }
+        if (!alive(seq) || cur !== "update") return;
+        if (!s) { down = true; progress.textContent = ""; progress.append(note("TeleRig is restarting…")); return; }
+        if (s.boot && s.boot !== boot0) {
+          clearInterval(t);
+          progress.textContent = "";
+          progress.append(h("div", { class: "tm-box ok", role: "status", id: "admUpDone",
+            text: "Updated and restarted: TeleRig now runs " + (((s.info || {}).short) || "the new version") + ". Reloading…" }));
+          setTimeout(() => { try { window.location.reload(); } catch (_) {} }, 1500);
+          return;
+        }
+        const st = (s.job || {}).state;
+        progress.textContent = "";
+        put(progress, upSteps(s.job), st === "restarting" || down ? note("Restarting TeleRig…") : null);
+        if (st === "failed" || st === "current" || st === "updated") {
+          clearInterval(t);
+          following = false;
+          checkBtn.disabled = false;
+          const msg = st === "failed" ? (s.job.error || "The update failed.") :
+                      st === "current" ? "Already up to date." : "Updated. Restart TeleRig on its PC to run the new version.";
+          progress.append(h("div", { class: "tm-box " + (st === "failed" ? "err" : "ok"), role: "status", id: "admUpEnd", text: msg }));
+          last = s.check || last;
+          showCheck(last);
+          if (st !== "failed" && s.info) showInfo(s.info, s.version);   // the files are at the new commit
+        }
+      };
+      const t = setInterval(tick, 1000);
+      timers.push(t);
+      tick();
+    }
+    showCheck(last);
+    if (job.state === "running" || job.state === "restarting") follow();      // already under way (another admin)
+    else if (job.steps && job.steps.length) progress.append(upSteps(job));
+  }
+
   const RENDER = { users: renderUsers, access: renderAccess, remote: renderRemote, audio: renderAudio,
-                   activity: renderActivity, lockouts: renderLockouts };
+                   activity: renderActivity, lockouts: renderLockouts, update: renderUpdate };
 
   // ---- entry points --------------------------------------------------------------------------------------
   window.TRAdmin = { open, close, isOpen: () => !!(M && M.isOpen()) };

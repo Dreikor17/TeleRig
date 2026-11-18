@@ -31,7 +31,10 @@ import html as _html
 import json
 import mimetypes
 import os
+import secrets
+import signal
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -58,6 +61,7 @@ from starlette.websockets import WebSocket
 
 from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio,
                layout_store, policy, profiles, settings, txarb)
+from . import updater as updater_mod
 from .account_api import read_json
 from .audio_router import AudioRouter
 from .hub import AUDIO_RATE, Coalescer, Hub, MenuQueue  # noqa: F401  (AUDIO_RATE: hostaudio.RATE must match)
@@ -1181,7 +1185,59 @@ def _on_accounts_change(old: dict, new: dict) -> None:
 accounts.add_listener(_on_accounts_change)
 account_api.kick_fp = lambda fp, code, reason: hub.kick_fp(fp, code, reason)
 account_api.kick_user = lambda user, code, reason: hub.kick_user(user, code, reason)
-admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind())
+# -- Administration > Update (backend/updater.py) --------------------------------------------
+_BOOT_ID = secrets.token_hex(8)    # new at every start: the Update tab sees the restart happen
+_REPO_DIR = Path(__file__).resolve().parent.parent
+_restart_requested = False         # run.py: the KeyboardInterrupt of this shutdown is a restart
+
+
+def _update_repo() -> Path:
+    """TeleRig's own folder. Only a --sim-only test server may point the updater at a scratch
+    repository (TELERIG_TEST_UPDATE_REPO), never at anything else."""
+    t = os.environ.get("TELERIG_TEST_UPDATE_REPO")
+    return Path(t) if (t and sim_only()) else _REPO_DIR
+
+
+def _restart_self():
+    """After a successful update: start a new copy of TeleRig with this command line (run.py waits
+    until this process has exited and its port is free), then shut this one down the normal way:
+    TX released, the bridge stopped, audio off, the radio disconnected. A --sim-only test server
+    with TELERIG_TEST_UPDATE_NORESTART skips it; so does uvicorn --reload (it restarts by itself)."""
+    global _restart_requested
+    if sim_only() and _env_flag("TELERIG_TEST_UPDATE_NORESTART"):
+        return "skipped"
+    argv = list(sys.argv)
+    if "--reload" in argv:
+        return "skipped"
+    if "--no-browser" not in argv:
+        argv.append("--no-browser")
+    env = dict(os.environ, TELERIG_RESTART_WAIT=str(os.getpid()))
+    env.pop("TELERIG_PORT", None)
+    out = subprocess.DEVNULL
+    try:
+        if sys.stdout is not None:
+            sys.stdout.flush()
+            sys.stdout.fileno()
+            out = sys.stdout                     # the new copy writes to the same window / log
+    except Exception:
+        out = subprocess.DEVNULL
+    subprocess.Popen([sys.executable] + argv, cwd=str(_REPO_DIR), env=env, stdin=subprocess.DEVNULL,
+                     stdout=out, stderr=out)
+    _restart_requested = True
+    loop = hub.loop
+    if loop is not None:
+        loop.call_soon_threadsafe(_shutdown_for_restart)
+    return "started"
+
+
+def _shutdown_for_restart() -> None:
+    console("  TeleRig: restarting to run the update ...")
+    signal.raise_signal(signal.SIGINT)           # uvicorn's own graceful shutdown (the lifespan's finally)
+
+
+updater = updater_mod.Updater(_update_repo(), log=console, audit=audit.log)
+admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind(),
+               updater=updater, restart=_restart_self, boot=_BOOT_ID)
 
 
 def _revalidate_conns() -> int:
