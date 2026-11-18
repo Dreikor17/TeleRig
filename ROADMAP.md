@@ -7,7 +7,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### WSJT-X bridge, PTT hotkey, full screen (unreleased)
+### WSJT-X bridge, PTT hotkey, full screen, Update now (unreleased)
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
   TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
   and the browser share one radio, including an Icom on its LAN port. Off by default, this PC only
@@ -26,6 +26,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   can't be the hotkey.
 - **Full screen with the screen kept awake** (top bar; "Keep screen awake" on phones without a
   full-screen mode). The wake lock needs HTTPS or localhost.
+- **Update now** (Administration > Update). A copy installed with git updates itself from GitHub,
+  without a trip to its PC. It follows its own branch: a master install updates from master (the
+  releases), a dev install from dev. Fast-forward only; packages only when `requirements.txt`
+  changed; the new code must import, or it goes back to the previous commit; then TeleRig restarts
+  and the page reloads onto the new version. Refused while anyone transmits, and on a folder with
+  local changes or commits GitHub does not have. Every step is in the security log.
+- **Band plan in its own strip** just above the scope, so it no longer covers the bottom of the
+  spectrum; it lines up with the scope's frequency axis, and hovering (or tapping) names the segment.
 
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
@@ -191,7 +199,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ### Band-plan overlay
 - **ARRL band plan / FCC license-class overlay** on the scope — a toggleable strip
-  along the spectrum showing the segments for the band in view, aligned to the
+  (now just above the scope) showing the segments for the band in view, aligned to the
   frequency axis, with a hover tooltip giving the range, type, modes and notes.
   VHF/UHF (2 m / 70 cm / 23 cm) is colored by **use** (CW / weak-signal / SSB / FM /
   repeater / simplex / satellite / beacon / digital, ARRL voluntary band plan); HF +
@@ -261,5 +269,5 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - Audio: selectable **codec / sample-rate**, lower-latency options.
 
 ## Non-goals (for now)
-- Non-Icom rigs / Hamlib backends — possible later via the transport+profile split,
-  but not a near-term focus.
+- Hamlib backends (other makes driven through Hamlib instead of a TeleRig profile) — possible
+  later via the transport+profile split, but not a near-term focus.
