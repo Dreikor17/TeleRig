@@ -514,8 +514,7 @@
     $("btnFixed").classList.toggle("active", !s.scope_center);
 
     // active buttons
-    setActive(".band", b => b.dataset.band === String(bandOf(s.freq)));
-    setActive(".mode", b => b.dataset.mode === s.mode_name);
+    markBandMode(s);
     setActive(".filt", b => b.dataset.filter === String(s.filter));
     { const db = $("dataBtn"); if (db) {             // Icom DATA mode: only SSB / AM / FM have a -D variant
         db.classList.toggle("on", (s.data || 0) > 0);
@@ -619,6 +618,13 @@
   }
   function setActive(sel, pred) {
     document.querySelectorAll(sel).forEach(b => b.classList.toggle("active", pred(b)));
+  }
+  // the lit BAND and MODE keys. Called on every state frame AND by renderRadio, which rebuilds those
+  // keys unlit: after a reload the first state frame can arrive before /api/radios has answered (no
+  // keys yet), and a quiet radio sends no other until the freq or mode changes.
+  function markBandMode(s) {
+    setActive(".band", b => b.dataset.band === String(bandOf(s.freq)));
+    setActive(".mode", b => b.dataset.mode === s.mode_name);
   }
 
   // hover tooltips: just what each abbreviation stands for (no descriptions)
@@ -1876,6 +1882,9 @@
     renderMenu(p);
     syncExtPanel(state);         // show/hide the WIDTH/CONTOUR/APF/CW/ops groups for this radio+mode
     syncIcomCw(state);           // Icom CW/filter group visibility for this radio+mode
+    // light the new keys from the state we already have, but only the connected radio's own state:
+    // a radio picked while disconnected must not show another rig's (or a stale) band and mode
+    if (state.connected && state.radio === p.id) markBandMode(state);
     applyTitles();
     applyStatusUi();
     try { Layout().setRadio(p); } catch (_) {}

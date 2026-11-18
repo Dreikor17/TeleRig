@@ -269,3 +269,15 @@ def c1_no_stale_auth_terms(ctx):
             if STALE.search(line) and not any(ok in line for ok in STALE_OK.get(rel, ())):
                 bad.append(f"{rel}:{n}: {line.strip()[:100]}")
     eq(bad, [], "unexpected stale auth terms")
+
+
+@test("unit")
+def band_and_mode_keys_lit_after_reload_in_node_vm(ctx):
+    """app.js: the BAND and MODE keys are lit after a reload while a radio is connected, even when its
+    state frame beats /api/radios (renderRadio used to rebuild them unlit, dark until the freq or mode
+    changed); never from a state that isn't the rendered radio's own. The real tr.js + app.js in a Node
+    vm (tests/radio_keys_test.js; no browser, no server, no radio)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "radio_keys_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"radio_keys_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"radio_keys_test.js output: {r.stdout}")
