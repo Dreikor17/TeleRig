@@ -511,7 +511,8 @@ def t26c_locked_page_names_the_folder_only_on_the_host_pc(ctx):
         missing = [h for h in HDRS if not r.headers.get(h)]
         eq(missing, [], f"{label}: security headers on the 503")
     check(str(auth_p).lower() in srv.log_text().lower(), "the console names the full path")
-    auth_p.unlink()                                                   # recover: seeded again, unlocked
+    with harness.store_lock(tmp):                                     # recover: seeded again, unlocked
+        harness.retry_sharing(auth_p.unlink)                          # (the server may be re-reading it)
     end = time.monotonic() + 8
     while c.get("/login").status != 200:
         check(time.monotonic() < end, "did not unlock")
@@ -659,7 +660,8 @@ def auth_json_deleted_at_runtime_is_seeded_again(ctx):
     tmp = ctx.tmp()
     srv = ctx.server(tmp)
     c = harness.ready_admin(srv)
-    (tmp / "auth.json").unlink()
+    with harness.store_lock(tmp):                     # never under a server write; it may be re-reading
+        harness.retry_sharing((tmp / "auth.json").unlink)
     end = time.monotonic() + 6
     while not (tmp / "auth.json").exists():
         check(time.monotonic() < end, "auth.json was not created again")

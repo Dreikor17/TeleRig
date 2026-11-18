@@ -18,9 +18,13 @@ SIM = {"transport": "sim", "radio": "ic9700"}
 
 
 def atomic_write(path: Path, data: bytes) -> None:
+    """Replace a running server's store file the way the store itself does (a temp file, then
+    os.replace), under the store's lock, and riding out the moment the server has the file open for
+    its lock-free re-read: Windows refuses to replace an open file (PermissionError)."""
     tmp = path.with_name(path.name + ".testtmp")
     tmp.write_bytes(data)
-    os.replace(tmp, path)
+    with harness.store_lock(path.parent, path.name):
+        harness.retry_sharing(lambda: os.replace(tmp, path))
 
 
 def wait_status(client, path: str, want: int, timeout: float = 6.0) -> int:

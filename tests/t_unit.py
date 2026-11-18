@@ -286,6 +286,56 @@ def read_auth_rides_out_a_sharing_violation(ctx):
         Path.read_text = real
 
 
+@test("unit")
+def retry_sharing_rides_out_an_open_handle(ctx):
+    """harness.retry_sharing on a REAL sharing violation. On Windows a file that another handle has
+    open the way the server's lock-free store re-read opens it (open(..., "rb"): no delete sharing)
+    can be neither deleted nor replaced (PermissionError). retry_sharing waits until the handle is
+    closed, and re-raises after `tries` when it never is. Elsewhere an open file can be deleted, so
+    there is no violation to ride out."""
+    d = Path(ctx.tmp("share"))
+    p, q, new = d / "auth.json", d / "config.json", d / "config.json.testtmp"
+    p.write_text("{}", encoding="utf-8")
+    if sys.platform != "win32":
+        harness.retry_sharing(p.unlink)
+        check(not p.exists(), "deleted")
+        return
+    for what, target, op in (("delete", p, p.unlink), ("os.replace", q, lambda: os.replace(new, q))):
+        target.write_text("{}", encoding="utf-8")
+        new.write_text('{"a": 1}', encoding="utf-8")
+        f = open(target, "rb")
+        try:
+            try:
+                op()
+            except PermissionError:
+                pass
+            else:
+                raise harness.TestFailure(f"{what}: worked although another handle had the file open")
+            timer = threading.Timer(0.3, f.close)
+            timer.start()
+            t0 = time.monotonic()
+            harness.retry_sharing(op)
+            dt = time.monotonic() - t0
+            timer.join()
+            check(dt >= 0.25, f"{what}: done after {dt:.2f}s, before the handle was closed")
+        finally:
+            f.close()
+        if what == "delete":
+            check(not p.exists(), "delete: the file is still there")
+        else:
+            eq(q.read_text(encoding="utf-8"), '{"a": 1}', "os.replace: the new content")
+    p.write_text("{}", encoding="utf-8")
+    with open(p, "rb"):                                          # never closed in time: bounded
+        t0 = time.monotonic()
+        try:
+            harness.retry_sharing(p.unlink, tries=3, wait=0.05)
+        except PermissionError:
+            pass
+        else:
+            raise harness.TestFailure("a sharing violation that never cleared was swallowed")
+        check(time.monotonic() - t0 < 1.0, f"3 tries took {time.monotonic() - t0:.2f}s")
+
+
 _TRY_WRITE = """
 from backend.store import StoreBusy
 try:
