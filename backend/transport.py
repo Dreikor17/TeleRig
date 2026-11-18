@@ -448,37 +448,119 @@ class SimTransport(Transport):
             body = bytes([0x00, 0x02 + i, 0x0B]) + ch
             self._emit(0x27, 0x00, body)
 
-    def _make_waveform(self, span: int) -> bytes:
+    def _make_waveform(self, span: int, t: Optional[float] = None) -> bytes:
+        """One sweep: the noise floor plus a band's worth of stations (_SIM_SIGNALS): CW keyed in real
+        Morse timing, SSB voices talking in syllables and overs, one steady beacon. Widths are in Hz,
+        so a station looks right at every span. `t` (seconds since the start) is for tests."""
         n = civ.SCOPE_POINTS
-        t = time.time() - self._t0
-        out = bytearray(n)
-        # noise floor
+        if t is None:
+            t = time.time() - self._t0
+        hz_pt = max(1.0, span / n)                      # Hz per scope point
+        level = [0.0] * n
         floor = 22.0
         for x in range(n):
             # cheap deterministic "noise"
             nse = (math.sin(x * 12.9898 + t * 7.0) * 43758.5453)
-            nse = (nse - math.floor(nse))  # 0..1
-            out[x] = int(floor + nse * 10)
-        # signals: (relative position 0..1, base amplitude, drift, width)
-        sigs = [
-            (0.50, 132, 14, 5),    # tuned station near center, breathing
-            (0.30, 95, 8, 4),
-            (0.72, 110, 22, 3),
-            (0.18, 70, 30, 2),
-        ]
-        for pos, amp, drift, width in sigs:
-            cx = int(pos * n)
-            a = amp + drift * math.sin(t * (0.5 + pos))
-            for x in range(max(0, cx - width * 6), min(n, cx + width * 6)):
-                g = math.exp(-((x - cx) ** 2) / (2 * width * width))
-                v = out[x] + a * g
-                out[x] = int(min(civ.SCOPE_MAX, v))
-        # occasional transient
-        if int(t * 3) % 7 == 0:
-            cx = int((0.4 + 0.2 * math.sin(t)) * n)
-            for x in range(max(0, cx - 3), min(n, cx + 3)):
-                out[x] = min(civ.SCOPE_MAX, out[x] + 40)
-        return bytes(out)
+            level[x] = floor + (nse - math.floor(nse)) * 10
+
+        def bump(cx: float, sigma: float, a: float) -> None:
+            for x in range(max(0, int(cx - 4 * sigma)), min(n, int(cx + 4 * sigma) + 2)):
+                level[x] += a * math.exp(-((x - cx) ** 2) / (2 * sigma * sigma))
+
+        for s in _SIM_SIGNALS:
+            cx = s["pos"] * n
+            fade = 1.0 + 0.12 * math.sin(t * s["qsb"] + s["pos"] * 9.0)   # slow QSB
+            if s["kind"] == "cw":
+                if _cw_key_down(s, t):
+                    bump(cx, max(0.7, 70.0 / hz_pt), s["amp"] * fade)
+            elif s["kind"] == "ssb":
+                strength, f1, f2 = _ssb_voice(s, t)
+                if strength <= 0:
+                    continue
+                lo, hi = cx + 300.0 / hz_pt, cx + 2700.0 / hz_pt   # USB voice: 300-2700 Hz above the dial
+                a = s["amp"] * strength * fade
+                if hi - lo < 4:                         # a wide span: the voice is a point or two wide
+                    bump((lo + hi) / 2, max(0.8, (hi - lo) / 2.5), a * 0.85)
+                    continue
+                for x in range(max(0, int(lo)), min(n, int(hi) + 1)):
+                    f = (x - lo) / (hi - lo)            # 0..1 across the voice band
+                    shape = 0.25 + math.exp(-((f - f1) / 0.12) ** 2) + 0.55 * math.exp(-((f - f2) / 0.16) ** 2)
+                    level[x] += a * shape / 1.3
+            else:                                       # steady carrier (a beacon)
+                bump(cx, max(0.7, 90.0 / hz_pt), s["amp"] * fade)
+        return bytes(int(min(civ.SCOPE_MAX, max(0.0, v))) for v in level)
+
+
+# -- the simulator's band: stations on the scope ---------------------------------------------------------
+_MORSE = {"A": ".-", "B": "-...", "C": "-.-.", "D": "-..", "E": ".", "F": "..-.", "G": "--.", "H": "....",
+          "I": "..", "J": ".---", "K": "-.-", "L": ".-..", "M": "--", "N": "-.", "O": "---", "P": ".--.",
+          "Q": "--.-", "R": ".-.", "S": "...", "T": "-", "U": "..-", "V": "...-", "W": ".--", "X": "-..-",
+          "Y": "-.--", "Z": "--..", "0": "-----", "1": ".----", "2": "..---", "3": "...--", "4": "....-",
+          "5": ".....", "6": "-....", "7": "--...", "8": "---..", "9": "----."}
+
+
+def _morse_keying(text: str, wpm: float, pause_s: float) -> tuple[list, float]:
+    """The key-down intervals [(start, end), ...] in seconds of `text` sent at `wpm` (PARIS timing:
+    dot 1.2/wpm s, dash 3 dots, 1 dot between elements, 3 between letters, 7 between words) and
+    the length of one cycle: the message plus `pause_s` of silence before it repeats."""
+    dot = 1.2 / wpm
+    t, down = 0.0, []
+    for w, word in enumerate(text.upper().split()):
+        if w:
+            t += 6 * dot                    # 1 (after the last element) + 6 = 7 between words
+        for li, ch in enumerate(word):
+            if li:
+                t += 2 * dot                # 1 (after the last element) + 2 = 3 between letters
+            for el in _MORSE.get(ch, ""):
+                length = dot if el == "." else 3 * dot
+                down.append((t, t + length))
+                t += length + dot
+    return down, t + pause_s
+
+
+def _hash01(*k: float) -> float:
+    """A repeatable 0..1 value for the inputs (the simulator stays deterministic)."""
+    s = math.sin(sum(v * c for v, c in zip(k, (12.9898, 78.233, 37.719, 4.581)))) * 43758.5453
+    return s - math.floor(s)
+
+
+def _cw_key_down(s: dict, t: float) -> bool:
+    """Whether the CW station `s` has its key down at `t` seconds."""
+    ph = (t + s["phase"]) % s["cycle"]
+    return any(a <= ph < b for a, b in s["down"])
+
+
+def _ssb_voice(s: dict, t: float) -> tuple[float, float, float]:
+    """The SSB station `s` at `t`: (strength 0..1, first and second formant 0..1 across the voice
+    band). It talks for some 7 s overs and listens for others; within an over, 160 ms syllables
+    with gaps between words."""
+    ph = t + s["phase"]
+    if _hash01(math.floor(ph / 7.0), s["seed"]) < 0.38:
+        return 0.0, 0.0, 0.0                # its over is done: listening
+    k = math.floor(ph / 0.16)
+    if _hash01(k, s["seed"], 1) < 0.28:
+        return 0.0, 0.0, 0.0                # a gap between words
+    return (0.55 + 0.45 * _hash01(k, s["seed"], 2), 0.10 + 0.25 * _hash01(k, s["seed"], 3),
+            0.45 + 0.35 * _hash01(k, s["seed"], 4))
+
+
+def _cw(pos: float, amp: float, wpm: float, text: str, pause_s: float, phase: float, qsb: float) -> dict:
+    down, cycle = _morse_keying(text, wpm, pause_s)
+    return {"kind": "cw", "pos": pos, "amp": amp, "down": down, "cycle": cycle, "phase": phase, "qsb": qsb}
+
+
+# Positions are 0..1 across the span, so the stations sit the same way at every span. Calls are
+# placeholders (N0CALL, N1CALL), never real ones.
+_SIM_SIGNALS = [
+    {"kind": "ssb", "pos": 0.500, "amp": 128, "seed": 1, "phase": 0.0, "qsb": 0.40},   # the tuned station
+    {"kind": "ssb", "pos": 0.655, "amp": 104, "seed": 2, "phase": 3.1, "qsb": 0.23},
+    {"kind": "ssb", "pos": 0.835, "amp": 90, "seed": 3, "phase": 5.7, "qsb": 0.31},
+    _cw(0.120, 118, 22, "CQ CQ DE N0CALL N0CALL K", 3.0, 0.0, 0.27),
+    _cw(0.255, 96, 18, "N1CALL DE N0CALL 599 599 TU", 4.5, 2.2, 0.35),
+    _cw(0.300, 82, 26, "TEST N0CALL TEST", 2.0, 1.1, 0.52),
+    _cw(0.405, 106, 14, "CQ DX DE N1CALL K", 6.0, 4.0, 0.19),
+    {"kind": "carrier", "pos": 0.720, "amp": 104, "phase": 0.0, "qsb": 0.61},          # a steady beacon
+]
 
 
 def _split_even(data: bytes, parts: int) -> list[bytes]:
