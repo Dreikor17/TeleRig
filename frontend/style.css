@@ -337,10 +337,26 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 
 /* ---- S-meter ---- */
 .meter{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;gap:2px 8px;margin:0}
-.meter-scale{grid-column:1;display:flex;justify-content:space-between;font-size:9px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
-.meter-bar{grid-column:1;grid-row:2;height:12px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden}
+/* each scale label sits at the value it names on the bar's 0..240 S scale (renderMeter): an S unit
+   is 120/9, S9 is 120 (the middle) and +60 dB is 241, so S1 5.6 %, S9 50 %, +20 66.8 %, +40 83.6 % */
+.meter-scale{grid-column:1;position:relative;height:11px;font-size:9px;line-height:11px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+.meter-scale span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+.meter-scale span:nth-child(1){left:5.6%}
+.meter-scale span:nth-child(2){left:16.7%}
+.meter-scale span:nth-child(3){left:27.8%}
+.meter-scale span:nth-child(4){left:38.9%}
+.meter-scale span:nth-child(5){left:50%}
+.meter-scale span:nth-child(6){left:66.8%}
+.meter-scale span:nth-child(7){left:83.6%}
+.meter-scale span:nth-child(8){left:100%;transform:translateX(-100%)}
+/* level colours belong to the SCALE, not to the fill's length: the bar is its own size container and
+   the fill's gradient is one bar wide (100cqw), so a low reading is all green and the amber and red
+   only show once the reading climbs past S9 (the mic bar below works the same way) */
+.meter-bar{grid-column:1;grid-row:2;height:12px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden;
+  container-type:inline-size}
 .meter-fill{height:100%;width:0%;
-  background:linear-gradient(90deg,var(--tft-pill-fg) 0%,var(--tft-pill-fg) 55%,var(--tft-amber) 70%,#f87171 100%);transition:width .05s linear}
+  background:linear-gradient(90deg,var(--tft-pill-fg) 0 50%,var(--tft-amber) 66.8%,#f87171 83.6% 100%);background-size:100cqw 100%;
+  transition:width .05s linear}
 .meter-val{grid-row:1/3;grid-column:2;align-self:center;font:700 16px/1 var(--font-ui);color:var(--num);
   min-width:54px;text-align:right;font-variant-numeric:tabular-nums}
 .meter-sel{grid-column:1/3;display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
@@ -488,8 +504,9 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .audio-grp .row{margin-bottom:7px}
 .audio-grp .lan-only{font-size:9px;color:var(--accent-hi);letter-spacing:0}
 .mic-meter{display:grid;grid-template-columns:34px 1fr;align-items:center;gap:8px;font-size:11px;color:var(--txt-dim);margin-bottom:7px}
-.mic-bar{height:10px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden}
-.mic-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--tft-pill-fg) 0%,var(--tft-pill-fg) 60%,var(--tft-amber) 80%,#f87171 100%);transition:width .07s linear}
+.mic-bar{height:10px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden;container-type:inline-size}
+.mic-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--tft-pill-fg) 0 60%,var(--tft-amber) 80%,#f87171 100%);
+  background-size:100cqw 100%;transition:width .07s linear}
 .host-audio-info{font-size:11px;color:var(--txt-dim);margin:2px 0 7px}
 .usb-audio{display:flex;flex-direction:column;gap:4px;margin:4px 0 6px}
 .audio-grp .sl-dev{grid-template-columns:58px 1fr;gap:6px}
@@ -1264,20 +1281,10 @@ body.tr-nogrid .ui-resizable-handle{display:none!important}
 .screen .ind.amber{background:transparent;border-color:transparent;color:var(--warn)}
 .screen .tx{border-radius:0;background:#167a37;color:#fff;font-style:italic}
 .screen .tx.on{background:var(--tx-solid);box-shadow:none}
-/* the meter: ticks, white up to S9 (the bar's middle: S9 is 120 of 240) and red past it */
-.screen .meter-scale{position:relative;display:block;height:14px;font:italic 700 11px/1.2 var(--font-ui);color:var(--txt)}
-/* ...each label at the value it names (TeleRig's 0..241 scale: S1 13, S9 120, +60 241), so the red
-   ticks start under the 9 */
-.screen .meter-scale span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
-.screen .meter-scale span:nth-child(1){left:5.6%}
-.screen .meter-scale span:nth-child(2){left:16.7%}
-.screen .meter-scale span:nth-child(3){left:27.8%}
-.screen .meter-scale span:nth-child(4){left:38.9%}
-.screen .meter-scale span:nth-child(5){left:50%}
-.screen .meter-scale span:nth-child(6){left:66.8%}
-.screen .meter-scale span:nth-child(7){left:83.6%}
-.screen .meter-scale span:nth-child(8){left:100%;transform:translateX(-100%)}
-.screen .meter-bar{height:14px;border:0;border-radius:0;container-type:inline-size;
+/* the meter: ticks, white up to S9 (the bar's middle: S9 is 120 of 240) and red past it; the labels
+   sit at their values in every theme (the S-meter rules above), so the red ticks start under the 9 */
+.screen .meter-scale{height:14px;font:italic 700 11px/1.2 var(--font-ui);color:var(--txt)}
+.screen .meter-bar{height:14px;border:0;border-radius:0;
   background:repeating-linear-gradient(90deg,rgba(0,0,0,0) 0 2px,#000 2px 5px),linear-gradient(90deg,#343a4c 0 50%,#4e2229 50% 100%)}
 .screen .meter-fill{background:linear-gradient(90deg,#fff 0 50cqw,#ff4d3d 50cqw 100cqw);background-size:100cqw 100%;
   -webkit-mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px);

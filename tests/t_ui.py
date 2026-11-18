@@ -312,6 +312,72 @@ def onair_chip_layout_rules(ctx):
           "the chip must follow the brand in the markup (the desktop bar keeps that order)")
 
 
+def _s_scale_pct(label: str) -> float:
+    """Where an S-meter label's value sits on renderMeter's bar (0..240): S units are 120/9 each (S9 =
+    120, the middle; backend radio.smeter_label), dB over S9 run 120..241 for +0..+60 (capped at the end)."""
+    if label.startswith("+"):
+        return min(100.0, (120 + int(label[1:]) * (241 - 120) / 60) / 240 * 100)
+    return int(label.lstrip("S")) * 120 / 9 / 240 * 100
+
+
+@test("unit")
+def level_meters_colour_by_the_scale(ctx):
+    """The S-meter's and the mic bar's colours belong to the SCALE, not to the fill's length: each bar is
+    its own inline-size container and its fill's gradient is one bar wide (background-size 100cqw), so a
+    low reading is all green and amber / red show only as the reading climbs. (The gradient used to be
+    stretched over the fill, so every reading, however weak, ended in red.) The S-meter's green runs to
+    S9, amber at +20, red from +40, and its scale labels sit at the values they name in every theme."""
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    rules = _css_rules(css)
+
+    def decl(selector, media=""):
+        out = {}
+        for m, s, d in rules:
+            if m == media and selector in [x.strip() for x in s.split(",")]:
+                out.update(d)                                  # later rules win
+        return out
+
+    idx = (FRONT / "index.html").read_text(encoding="utf-8")
+    check('<div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>' in idx,
+          "#meterFill is the meter bar's only child (the container its gradient is sized to)")
+    check('<div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div>' in idx,
+          "#micLevel is the mic bar's only child")
+    for bar, fill in ((".meter-bar", ".meter-fill"), (".mic-bar", ".mic-bar-fill")):
+        eq(decl(bar).get("container-type"), "inline-size", f"{bar} is its own size container")
+        f = decl(fill)
+        check("linear-gradient(" in f.get("background", ""), f"{fill} keeps its level gradient: {f}")
+        eq(f.get("background-size"), "100cqw 100%", f"{fill}: the gradient is one bar wide, not one fill wide")
+    # any rule that re-sets a fill's background to a gradient sizes it again (the background shorthand
+    # resets background-size to auto, which would stretch it over the fill once more)
+    for media, sel, d in rules:
+        if any(x.strip().endswith((".meter-fill", ".mic-bar-fill")) for x in sel.split(",")):
+            if "gradient(" in d.get("background", "") + d.get("background-image", ""):
+                eq(d.get("background-size"), "100cqw 100%", f"{media} {sel}: a gradient fill sized to the bar")
+    labels = re.findall(r"<span>([^<]+)</span>",
+                        re.search(r'<div class="meter-scale">(.*?)</div>', idx, re.S).group(1))
+    eq(labels, ["S1", "3", "5", "7", "9", "+20", "+40", "+60"], "the S-meter scale labels")
+    labels[0] = labels[0].lstrip("S")
+    names = ["S" + x if not x.startswith("+") else x for x in labels]
+    pos = {n: _s_scale_pct(n) for n in names}
+    g = decl(".meter-fill")["background"]
+    turns = {"green ends at S9": (r"var\(--tft-pill-fg\) 0 ([\d.]+)%", "S9"),
+             "amber at +20": (r"var\(--tft-amber\) ([\d.]+)%", "+20"),
+             "red from +40": (r"#f87171 ([\d.]+)%", "+40")}
+    for what, (rx, at) in turns.items():
+        m = re.search(rx, g)
+        check(m and abs(float(m.group(1)) - pos[at]) < 0.06, f"S-meter {what} ({pos[at]:.1f} %): {g}")
+    # the labels: at their values (not spread evenly), in the base rules, so every theme shows them there
+    eq(decl(".meter-scale").get("position"), "relative", ".meter-scale positions its labels")
+    eq(decl(".meter-scale span").get("position"), "absolute", ".meter-scale labels")
+    for i, n in enumerate(names, 1):
+        left = decl(f".meter-scale span:nth-child({i})").get("left", "")
+        check(left.endswith("%") and abs(float(left[:-1]) - pos[n]) < 0.06,
+              f"label {n} at {pos[n]:.1f} % of the bar (css left: {left!r})")
+    for m, s, d in rules:
+        if ".meter-scale" in s and "display" in d:
+            check(d["display"] not in ("flex", "grid"), f"{s}: the labels are positioned, not spread ({d})")
+
+
 @test("smoke")
 def pages_carry_their_icons_inline(ctx):
     srv = ctx.server()
