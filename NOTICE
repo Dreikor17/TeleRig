@@ -36,5 +36,11 @@ Bundled / third-party components
     and dist/gridstack.min.css).
     Copyright (c) 2019-2025 Alain Dumesny.  Licensed MIT (frontend/vendor/gridstack/LICENSE).
 
+- Exo 2  -  frontend/vendor/exo2/  (Google Fonts exo2 v26, latin subset)
+    The typeface of the "Radio screen" theme: the upright and italic variable fonts
+    (weights 500-800) as Google Fonts serves them, kept byte-for-byte.
+    Copyright 2013 The Exo 2 Project Authors (https://github.com/googlefonts/Exo-2.0).
+    Licensed under the SIL Open Font License 1.1 (frontend/vendor/exo2/OFL.txt).
+
 The Icom CI-V / RS-BA1 LAN and Yaesu CAT implementations are clean-room work informed
 by public open-source projects (wfview, kappanhang, Hamlib); no code was copied.

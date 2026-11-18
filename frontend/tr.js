@@ -10,7 +10,8 @@
  *   ownerKey(o) / stopArm(onChange)                       the two-tap STOP of another user's TX (I23)
  *   _inject(frame)                                        sim-only: feed a synthetic server frame
  *   fallbackLayout()                                      the stacked-tile fallback (§3.20)
- *   applyTheme(day) / icon(name)                          day/night theme (html.day); an inline-sprite <svg>
+ *   applyTheme(theme) / theme() / nextTheme() / icon(name) night / day / radio-screen theme (html.day,
+ *                                                         html.screen); an inline-sprite <svg>
  *   menu / renderNotices(list) / noticeActions            the top-bar user menu; the notices under it
  * window.RadioLayout: a no-op stub that layout.js (B3) replaces.
  *
@@ -114,29 +115,53 @@
     if (u && u.getAttribute("href") !== "#i-" + name) u.setAttribute("href", "#i-" + name);
   }
 
-  // -- day / night theme (§4.1, §4.5): html.day (+ body.day for legacy rules), set before the first
-  // paint by the head script; this owns the toggle, the sun/moon icon and the stored choice.
+  // -- page theme (§4.1, §4.5): night (no class), html.day, or html.screen (the radio's own screen:
+  // black, a blue VFO band, italic digits, softkeys); body gets the same class for legacy rules. The
+  // head script sets it before the first paint; this owns the button (it steps night -> day -> screen),
+  // its icon and the stored choice. applyTheme(true / false) still means day / night.
   const THEME_KEY = "telerig.theme";
-  TR.isDay = () => document.documentElement.classList.contains("day");
-  TR.applyTheme = function (day, persist) {
-    day = !!day;
-    document.documentElement.classList.toggle("day", day);
-    if (document.body) document.body.classList.toggle("day", day);
-    for (const id of ["themeBtn", "umTheme"]) setIcon($(id), day ? "sun" : "moon");
-    const tb = $("themeBtn");
-    if (tb) {
-      const next = day ? "Switch to the night theme" : "Switch to the day theme";
-      tb.title = next; tb.setAttribute("aria-label", next);
-    }
-    if (persist !== false) { try { localStorage.setItem(THEME_KEY, day ? "day" : "night"); } catch (_) {} }
-    document.dispatchEvent(new CustomEvent("tr:theme", { detail: { day } }));
+  const THEMES = ["night", "day", "screen"];
+  const THEME_NAME = { night: "Night", day: "Day", screen: "Radio screen" };
+  const THEME_ICON = { night: "moon", day: "sun", screen: "radio" };
+  function themeOf(v) {
+    if (v === true) return "day";
+    return THEMES.indexOf(v) >= 0 ? v : "night";
+  }
+  TR.theme = () => {
+    const c = document.documentElement.classList;
+    return c.contains("screen") ? "screen" : (c.contains("day") ? "day" : "night");
   };
-  function storedDay() {
-    try { return localStorage.getItem(THEME_KEY) === "day"; } catch (_) { return TR.isDay(); }
+  TR.isDay = () => TR.theme() === "day";
+  TR.nextTheme = (t) => THEMES[(THEMES.indexOf(themeOf(t === undefined ? TR.theme() : t)) + 1) % THEMES.length];
+  TR.applyTheme = function (theme, persist) {
+    theme = themeOf(theme);
+    for (const el of [document.documentElement, document.body]) {
+      if (!el) continue;
+      el.classList.toggle("day", theme === "day");
+      el.classList.toggle("screen", theme === "screen");
+    }
+    for (const id of ["themeBtn", "umTheme"]) setIcon($(id), THEME_ICON[theme]);
+    const say = "Theme: " + THEME_NAME[theme] + ". Switch to " + THEME_NAME[TR.nextTheme(theme)];
+    const tb = $("themeBtn");
+    if (tb) { tb.title = say; tb.setAttribute("aria-label", say); }
+    const um = $("umTheme"), ul = um && um.querySelector("span");
+    if (ul) ul.textContent = "Theme: " + THEME_NAME[theme];
+    if (persist !== false) { try { localStorage.setItem(THEME_KEY, theme); } catch (_) {} }
+    document.dispatchEvent(new CustomEvent("tr:theme", { detail: { day: theme === "day", theme } }));
+  };
+  function storedTheme() {
+    try { return themeOf(localStorage.getItem(THEME_KEY)); } catch (_) { return TR.theme(); }
   }
   window.addEventListener("storage", (e) => {            // another tab switched the theme
-    if (e.key === THEME_KEY) TR.applyTheme(e.newValue === "day", false);
+    if (e.key === THEME_KEY) TR.applyTheme(themeOf(e.newValue), false);
   });
+  // the UTC clock in the top bar (#utcClock, shown by the radio-screen theme only), "21:06Z"
+  TR.utcClock = function (now) {
+    const d = now === undefined ? new Date() : new Date(now), el = $("utcClock");
+    const s = String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0") + "Z";
+    if (el && el.textContent !== s) { el.textContent = s; el.setAttribute("datetime", d.toISOString()); }
+    return s;
+  };
 
   // -- top bar: user, role badge, version (§4.5) ---------------------------------------------------
   function fillTopbar() {
@@ -597,11 +622,13 @@
   };
   document.addEventListener("DOMContentLoaded", () => {
     TR.setRole(TR.role);
-    TR.applyTheme(storedDay(), false);
+    TR.applyTheme(storedTheme(), false);
+    TR.utcClock();
+    setInterval(() => TR.utcClock(), 10000);
     initUserMenu();
     for (const id of ["themeBtn", "umTheme"]) {
       const el = $(id);
-      if (el) el.addEventListener("click", () => TR.applyTheme(!TR.isDay()));
+      if (el) el.addEventListener("click", () => TR.applyTheme(TR.nextTheme()));
     }
     // overlays (link banner, notices, inline confirm, phone toasts) sit just under the top bar,
     // whose height changes when it wraps or the phone connection form opens

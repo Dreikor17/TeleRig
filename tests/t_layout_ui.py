@@ -28,6 +28,12 @@ GS_SHA256 = {                                     # spec §7 B3 verify 0 (gridst
     "gridstack.min.css": "74efc82159c5e8d28cb2cebd9f912be9d728bb07fa83896a6b62f4a843207126",
     "LICENSE": "28d28a6e0b5c6ebca8759b162a644c31cea28aab591060c0d95c7737d8456764",
 }
+EXO2 = FRONT / "vendor" / "exo2"
+EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin subset (+ its OFL), byte for byte
+    "exo2-latin.woff2": "4a259dde317e08aa5d37e6eb684e222ae833516b2a0fccba36ee5e36224f16be",
+    "exo2-latin-italic.woff2": "26a4dc84a13ae17366fcd188e354530db070234c038370df9ee47f1b0d611a7a",
+    "OFL.txt": "7f95a8eeecc6904ffc81cd10cc8ebc7fcee72a67922924bf45f02dff03b88127",
+}
 TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56)
@@ -88,6 +94,28 @@ def _ancestors(t: _Tree, k: int) -> list:
 
 def _classes(node) -> set:
     return set((node[1].get("class") or "").split())
+
+
+@test("unit")
+def exo2_vendored_byte_for_byte(ctx):
+    """The radio-screen theme's font: the two latin WOFF2 files and the OFL, unchanged, kept as bytes by
+    .gitattributes, credited in NOTICE, and the only font files style.css's @font-face rules load."""
+    for name, want in EXO2_SHA256.items():
+        eq(_sha(EXO2 / name), want, f"vendor/exo2/{name} sha256")
+    for name in ("exo2-latin.woff2", "exo2-latin-italic.woff2"):
+        eq((EXO2 / name).read_bytes()[:4], b"wOF2", f"{name} is a WOFF2 file")
+    check("SIL Open Font License" in (EXO2 / "OFL.txt").read_text(encoding="utf-8"), "the OFL text")
+    attrs = (REPO / ".gitattributes").read_text(encoding="utf-8")
+    check(re.search(r"^frontend/vendor/exo2/\*\* -text$", attrs, re.M), ".gitattributes keeps the font bytes as-is")
+    notice = (REPO / "NOTICE").read_text(encoding="utf-8")
+    check("Exo 2" in notice and "frontend/vendor/exo2/" in notice and "Open Font License" in notice, "NOTICE Exo 2 entry")
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    urls = re.findall(r'@font-face\{[^}]*url\("([^"]+)"\)', css)
+    eq(sorted(urls), ["/static/vendor/exo2/exo2-latin-italic.woff2", "/static/vendor/exo2/exo2-latin.woff2"],
+       "the @font-face rules load the vendored files")
+    for u in urls:
+        check((FRONT / u[len("/static/"):]).is_file(), f"{u} exists")
+    check("fonts.googleapis" not in css and "fonts.gstatic" not in css, "no font is loaded from the internet")
 
 
 @test("unit")
@@ -477,5 +505,9 @@ def index_serves_the_grid_assets(ctx):
         r = c.get("/static/vendor/gridstack/" + name)
         eq(r.status, 200, name)
         eq(hashlib.sha256(r.body).hexdigest(), GS_SHA256[name], f"{name} served byte for byte")
+    for name, want in EXO2_SHA256.items():                     # the radio-screen theme's font
+        r = c.get("/static/vendor/exo2/" + name)
+        eq(r.status, 200, name)
+        eq(hashlib.sha256(r.body).hexdigest(), want, f"{name} served byte for byte")
     r = c.get("/static/layout.js")
     eq(r.status, 200, "/static/layout.js")

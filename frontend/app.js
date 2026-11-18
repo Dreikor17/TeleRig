@@ -6,6 +6,9 @@
   const Layout = () => window.RadioLayout;        // the tr.js stub until layout.js (B3) replaces it
 
   const scope = new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"), $("bandStrip"));
+  // the scope's colours follow the page theme (the head script set html.day / html.screen already)
+  if (TR && typeof TR.theme === "function") scope.setTheme(TR.theme());
+  document.addEventListener("tr:theme", (e) => scope.setTheme((e.detail && e.detail.theme) || "night"));
 
   let ws = null, state = {}, step = 25000;
   let blanked = false;                            // after a radio change: VFO zeroed + waterfall cleared until reconnect

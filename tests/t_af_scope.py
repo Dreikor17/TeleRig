@@ -44,6 +44,22 @@ def af_scope_wiring_in_app_js(ctx):
 
 
 @test("unit")
+def page_themes_night_day_radio_screen(ctx):
+    """The theme button steps night -> day -> radio screen (tr.js), and the scope's own colours follow
+    (waterfall.js Scope.setTheme; night and day unchanged), in a Node vm (tests/theme_test.js); app.js
+    hands the theme to the scope at load and on every change."""
+    r = subprocess.run(["node", str(REPO / "tests" / "theme_test.js")], capture_output=True, text=True,
+                       timeout=120, cwd=str(REPO))
+    eq(r.returncode, 0, f"theme_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"theme_test.js output: {r.stdout}")
+    app = (FRONT / "app.js").read_text(encoding="utf-8")
+    check("scope.setTheme(TR.theme())" in app, "app.js sets the scope's theme at load")
+    check('document.addEventListener("tr:theme", (e) => scope.setTheme(' in app, "app.js follows theme changes")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    check('<time id="utcClock" class="utc-clock"' in html, "the UTC clock element is in the top bar")
+
+
+@test("unit")
 def band_plan_strip_above_the_scope(ctx):
     """The band plan has its own strip just above the scope (#bandStrip): drawn there, never over the
     spectrum trace, aligned with the scope, looked up there (tests/scope_strip_test.js), and wired up

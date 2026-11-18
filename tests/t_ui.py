@@ -106,7 +106,7 @@ def icons_every_reference_resolves(ctx):
         missing = sorted(names - full)
         check(not missing, f"{f}: icons not in the sprite: {missing}")
     # names tr.js builds from data (toast kinds, theme): listed here so a rename cannot slip by
-    for n in ("info", "triangle-alert", "octagon-x", "check", "x", "sun", "moon"):
+    for n in ("info", "triangle-alert", "octagon-x", "check", "x", "sun", "moon", "radio"):
         check(n in full, f"tr.js dynamic icon {n}")
     for f in ("login.html", "change-password.html"):
         text = (FRONT / f).read_text(encoding="utf-8")
@@ -133,14 +133,20 @@ def ui_has_no_emoji_icons(ctx):
 
 @test("unit")
 def theme_head_script_and_tokens(ctx):
-    """The theme class lives on <html>, set before the first paint; both palettes define every token."""
+    """The theme class lives on <html>, set before the first paint; every palette (night, day and the
+    radio screen) defines every token. Day keeps the dark instrument screens; the radio-screen theme
+    IS the radio's screen, so it may restyle them (and must define them)."""
     idx = (FRONT / "index.html").read_text(encoding="utf-8")
     head = idx.split("</head>", 1)[0]
     check('classList.add("day")' in head and head.index('classList.add("day")') < head.index("style.css"),
           "the head theme script runs before the stylesheet")
+    check('t==="screen"' in head and 'classList.add("screen")' in head
+          and head.index('classList.add("screen")') < head.index("style.css"),
+          "the head script sets the radio-screen theme before the stylesheet")
     css = (FRONT / "style.css").read_text(encoding="utf-8")
     dark = re.search(r":root\{(.*?)\n\}", css, re.S).group(1)
     light = re.search(r":root\.day\{(.*?)\n\}", css, re.S).group(1)
+    screen = re.search(r":root\.screen\{(.*?)\n\}", css, re.S).group(1)
     themed = ["--bg", "--surface", "--surface-head", "--surface-2", "--field", "--border", "--border-strong",
               "--txt", "--txt-dim", "--txt-faint", "--txt-disabled", "--accent", "--accent-hi", "--accent-solid",
               "--accent-tint", "--accent-line", "--danger", "--danger-hi", "--danger-tint", "--warn", "--warn-hi",
@@ -149,9 +155,18 @@ def theme_head_script_and_tokens(ctx):
     for t in themed:
         check(re.search(re.escape(t) + r"\s*:", dark), f"dark palette lacks {t}")
         check(re.search(re.escape(t) + r"\s*:", light), f"light palette lacks {t}")
-    for t in ("--tft-bg", "--tft-digit", "--scope-bg", "--meter-track"):    # instrument: never overridden
+        check(re.search(re.escape(t) + r"\s*:", screen), f"radio-screen palette lacks {t}")
+    for t in ("--tft-bg", "--tft-digit", "--scope-bg", "--meter-track"):    # instrument: never overridden by day
         check(re.search(re.escape(t) + r"\s*:", dark), f"instrument token {t}")
         check(not re.search(re.escape(t) + r"\s*:", light), f"{t} must not change in day mode")
+        check(re.search(re.escape(t) + r"\s*:", screen), f"the radio-screen theme defines {t}")
+    # the radio-screen look: its own font, softkey tokens, and component rules that hang off html.screen
+    for t in ("--font-ui", "--sk", "--sk-sel", "--sk-tx", "--sk-tx-on", "--vfo-band", "--screen-label"):
+        check(re.search(re.escape(t) + r"\s*:", screen), f"radio-screen palette lacks {t}")
+    check('"Exo 2"' in screen, "the radio-screen theme uses Exo 2")
+    for rule in (".screen .key.active", ".screen #pttBtn.tx-mine", ".screen .bandrow.active",
+                 '.screen .band-freq .fd[data-place="10"]', ".screen .led{display:none}", ".screen .utc-clock{"):
+        check(rule in css, f"radio-screen rule {rule}")
     check("body.day{" not in css, "the old body.day palette is gone")
     check("[hidden]{display:none!important}" in css, "global [hidden] rule")
 
@@ -187,7 +202,7 @@ def contrast_white_on_accent_and_auth_text(ctx):
     for f in ("login.html", "change-password.html"):
         sheets[f] = (FRONT / f).read_text(encoding="utf-8")
     for name, text in sheets.items():
-        for sel in (":root", ":root.day"):
+        for sel in ((":root", ":root.day", ":root.screen") if name == "style.css" else (":root", ":root.day")):
             p = _palette(text, sel)
             r = _ratio("#ffffff", p["--accent-solid"])
             check(r >= 4.5, f"{name} {sel}: white on --accent-solid {p['--accent-solid']} is {r:.2f}:1")

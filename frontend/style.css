@@ -2,7 +2,14 @@
    Dark (RCW) palette on :root, light palette on :root.day (html.day is set before the first paint
    by the head script; tr.js toggles it). Instrument screens (TFT readout, scope, meter track) use
    the --tft-* / --scope-bg / --meter-track tokens, identical in both themes: a light chassis with
-   dark instrument screens. Chrome and readouts are monospace; prose uses --font-prose. */
+   dark instrument screens. Chrome and readouts are monospace; prose uses --font-prose.
+   The third theme, :root.screen ("Radio screen"), is the radio's own screen: black, a blue VFO
+   band, italic Exo 2 digits, glossy softkeys (blue = selected, red = transmit); its component rules
+   are the "radio-screen theme" section at the end of this file. */
+@font-face{font-family:"Exo 2";font-style:normal;font-weight:500 800;font-display:swap;
+  src:url("/static/vendor/exo2/exo2-latin.woff2") format("woff2")}
+@font-face{font-family:"Exo 2";font-style:italic;font-weight:500 800;font-display:swap;
+  src:url("/static/vendor/exo2/exo2-latin-italic.woff2") format("woff2")}
 :root{
   color-scheme:dark;
   --bg:#0a0a0a;                 /* page */
@@ -69,6 +76,52 @@
   --warn-tint:rgba(217,119,6,.08); --info-tint:rgba(37,99,235,.07);
   --thumb:#ffffff;
   --shadow-pop:0 10px 28px rgba(16,24,40,.16);
+}
+:root.screen{
+  color-scheme:dark;
+  --bg:#05070d;
+  --surface:#080b14;
+  --surface-head:#080b14;
+  --surface-2:#05070d;
+  --field:#000000;
+  --border:#26304a; --border-strong:#46506a;
+  --txt:#ffffff; --txt-dim:#aeb6c8; --txt-faint:#7f889c; --txt-disabled:#5a6275;
+  --accent:#7fd8ff; --accent-hi:#9ccbff; --accent-solid:#2e4bd0; --accent-solid-hover:#1f3698;
+  --accent-tint:rgba(46,75,208,.22); --accent-line:rgba(127,216,255,.55);
+  --danger:#e5302a; --danger-hi:#ff6a60; --danger-tint:rgba(229,48,42,.16);
+  --warn:#f2d33b; --warn-hi:#f2d33b;
+  --info:#5b8ff0; --info-hi:#9ccbff;
+  --hover:rgba(255,255,255,.07);
+  --key:#2c2f37; --key-hi:#3b3f48; --key-edge:#70757f;
+  --num:#ffffff;
+  --shadow-card:none;
+  --backdrop:rgba(0,0,0,.8); --scrollthumb:#46506a;
+  --sel-bg:#2e4bd0; --sel-fg:#ffffff;
+  --warn-tint:rgba(242,211,59,.12); --info-tint:rgba(91,143,240,.14);
+  --thumb:#ffffff;
+  --shadow-pop:0 12px 32px rgba(0,0,0,.65);
+  --tx-solid:#d7332b;
+  /* instrument screens: this theme IS the radio's screen, so they change too */
+  --tft-bg:#000000; --tft-row:#05070d; --tft-border:#26304a;
+  --tft-digit:#ffffff; --tft-digit-dim:#aeb6c8; --tft-glow:rgba(0,0,0,0);
+  --tft-pill-bg:rgba(46,75,208,.35); --tft-pill-fg:#9ccbff;
+  --tft-sub:#9ccbff; --tft-amber:#f2d33b;
+  --meter-track:#000000; --scope-bg:#000000;
+  --r-card:3px; --r-ctl:3px; --r-sm:2px; --r-modal:4px;
+  --font-ui:"Exo 2","Segoe UI",system-ui,sans-serif;
+  --font-prose:"Exo 2","Segoe UI",system-ui,sans-serif;
+  --tune:#3bd16f;
+  /* softkeys: grey, blue when selected, red when they transmit */
+  --sk:linear-gradient(180deg,#5c616c 0%,#3b3f48 47%,#2c2f37 53%,#24272e 100%);
+  --sk-hi:linear-gradient(180deg,#6a707c 0%,#474c56 47%,#363a43 53%,#2d3038 100%);
+  --sk-edge:#70757f;
+  --sk-sel:linear-gradient(180deg,#4f6ff0 0%,#2e4bd0 47%,#2240b8 53%,#1a3196 100%);
+  --sk-sel-edge:#8fa8ff;
+  --sk-tx:linear-gradient(180deg,#a43a34 0%,#7a221d 47%,#661a16 53%,#521310 100%);
+  --sk-tx-edge:#c86a63;
+  --sk-tx-on:linear-gradient(180deg,#f0594f 0%,#d7332b 47%,#c02620 53%,#a11c17 100%);
+  --vfo-band:linear-gradient(180deg,#2c49d8 0%,#1b30a8 62%,#10207a 100%);
+  --screen-label:#7fd8ff;
 }
 
 /* ---- base ---- */
@@ -1124,3 +1177,123 @@ body.tr-nogrid .tile-cw{height:340px}
 body.tr-nogrid .tile-audio{container-type:normal}
 body.tr-nogrid .tile-remove,body.tr-nogrid .tile-collapse,body.tr-nogrid .tile-up,body.tr-nogrid .tile-down{display:none}
 body.tr-nogrid .ui-resizable-handle{display:none!important}
+
+/* ===== radio-screen theme (html.screen, tr.js applyTheme) ==========================================
+   The radio's own screen, on the same layout: black screen regions with thin rules, cyan italic
+   panel names, glossy softkeys (blue = selected, red = anything that transmits), the operating VFO
+   on a blue band with italic digits (the 10 Hz and 1 Hz digits smaller, as on the radio), a meter
+   made of ticks (red past S9), no status dot (the link is a boxed label). Colours come from the
+   :root.screen tokens; the scope's own colours from waterfall.js (Scope.setTheme). */
+.utc-clock{display:none}
+.screen .utc-clock{display:inline-block;padding:0 2px 0 6px;font:italic 800 16px/1 var(--font-ui);letter-spacing:.03em;
+  color:var(--txt);white-space:nowrap;font-variant-numeric:tabular-nums}
+@media (max-width:600px){.screen .utc-clock{display:none}}
+/* top bar: the radio's model leads; no logo mark, no status dot */
+.screen .topbar{background:var(--bg);box-shadow:none}
+.screen .brand-i{display:none}
+.screen .tb-brand{gap:10px}
+.screen .tb-brand .model{order:-1;font:italic 800 21px/1 var(--font-ui);letter-spacing:.02em;color:var(--txt);border-left:0;padding-left:0}
+.screen .brand-name{font:italic 700 12px/1 var(--font-ui);letter-spacing:.04em;color:var(--txt-dim)}
+.screen .ver{font-style:italic}
+.screen .led{display:none}
+.screen .connlabel{min-width:0;padding:5px 8px;font:italic 700 12.5px/1 var(--font-ui);color:var(--txt-faint);box-shadow:inset 0 0 0 1.5px #3a4258}
+.screen .led.on+.connlabel{color:#5be38a;box-shadow:inset 0 0 0 1.5px #5be38a}
+.screen .badge{border-radius:var(--r-sm);font-style:italic;letter-spacing:.06em}
+.screen .bridge-dot{border-radius:0}
+.screen .onair{border-radius:var(--r-sm);background:#c02620;border-color:#ff8a82;color:#fff;font-style:italic}
+.screen .onair-dot{display:none}
+.screen .onair-stop{border-radius:var(--r-sm);background:#000;border-color:#fff;color:#fff}
+.screen .onair-stop:hover,.screen .onair-stop.armed{background:#fff;border-color:#fff;color:#a11c17}
+.screen .tx-fab,.screen .toast,.screen .link-banner,.screen .notice{border-radius:var(--r-ctl)}
+/* softkeys */
+.screen .key,.screen .ctl-btn,.screen .tb-btn,.screen .m-btn,.screen .sc-btn,.screen .help-btn,.screen .tm-tab{
+  background:var(--sk);border:1px solid var(--sk-edge);color:#fff;font-weight:700}
+.screen .key:hover,.screen .ctl-btn:hover,.screen .tb-btn:hover,.screen .m-btn:hover,.screen .sc-btn:hover,
+.screen .help-btn:hover,.screen .tm-tab:hover{background:var(--sk-hi);border-color:var(--sk-edge);color:#fff}
+.screen .key.active,.screen .key.tog.on,.screen .m-btn.active,.screen .sc-btn.active,.screen .tm-tab.on,
+.screen .help-btn.on,.screen .tb-btn[aria-pressed="true"],.screen .ctl-btn.primary,.screen .ctl-btn.primary:hover{
+  background:var(--sk-sel);border-color:var(--sk-sel-edge);color:#fff}
+.screen .ctl-btn.pill{border-radius:var(--r-ctl)}
+.screen .pill-go{color:#5be38a}
+.screen .pill-stop{color:#ff8a82}
+.screen .pill-go:hover:not(:disabled){background:var(--sk-sel);border-color:var(--sk-sel-edge);color:#fff}
+.screen .pill-stop:hover:not(:disabled),.screen .ctl-btn.danger{background:#c02620;border-color:#ff8a82;color:#fff}
+/* anything that transmits is a red softkey */
+.screen .key.ptt,.screen #pttBtn,.screen #pttBtn.on,.screen .key.sm.cw-tx{background:var(--sk-tx);border:1px solid var(--sk-tx-edge);color:#fff;box-shadow:none}
+.screen .key.ptt:hover,.screen #pttBtn:hover,.screen .key.sm.cw-tx:hover{background:var(--sk-tx);border-color:#ff8a82;color:#fff}
+.screen .key.ptt.on,.screen #pttBtn.tx-mine,.screen .key.sm.cw-tx.on{background:var(--sk-tx-on);border-color:#ff8a82;color:#fff;
+  box-shadow:0 0 22px rgba(240,89,79,.45)}
+.screen .key.sm.cw-tx[disabled]{background:var(--sk);border-color:var(--sk-edge);color:var(--txt-dim);opacity:.6}
+.screen #pttBtn.tx-busy,.screen #pttBtn.tx-external{background:var(--sk);border-color:var(--warn);color:var(--warn)}
+/* panels: screen regions, cyan italic names, no card chrome */
+.screen .tile-head{background:transparent;border-bottom-color:transparent;color:var(--screen-label)}
+.screen .tile-icon{display:none}
+.screen .tile-title{font:italic 700 13px/1 var(--font-ui);letter-spacing:.02em;color:var(--screen-label)}
+.screen .tile-btn{color:var(--screen-label)}
+.screen .tile-btn.tile-txt{font:italic 700 11px/1 var(--font-ui);letter-spacing:.02em}
+.screen .tile-summary{font-style:italic}
+.screen .grp{background:transparent;border-color:transparent;padding:4px 0 0}
+.screen .grp-title,.screen .tile .controls .grp-title{font:italic 700 12.5px/1.2 var(--font-ui);letter-spacing:.02em;text-transform:none;
+  color:var(--screen-label)}
+.screen .controls .tabs{gap:4px;border-bottom:0;padding-bottom:6px}
+.screen .controls .tab{background:var(--sk);border:1px solid var(--sk-edge);border-radius:var(--r-ctl);margin:0;color:#fff;
+  font:700 11px/1 var(--font-ui);letter-spacing:.04em}
+.screen .controls .tab:hover{background:var(--sk-hi);color:#fff}
+.screen .controls .tab.on{background:var(--sk-sel);border-color:var(--sk-sel-edge);color:#fff}
+.screen select,.screen input:not([type=range]):not([type=checkbox]):not([type=radio]),.screen textarea{border-color:#8a93a8}
+.screen input[type=range]{accent-color:#9ccbff}
+.screen .cw-out{background:#000;border-color:#8a93a8}
+/* the VFO: the operating one on the blue band, italic digits, the last two smaller */
+.screen .bandrow{background:var(--tft-row);border-color:var(--border)}
+.screen .bandrow:hover{border-color:#46506a}
+.screen .bandrow.active{background:var(--vfo-band);border-color:#4c68e8;box-shadow:none}
+.screen .band-freq{font-style:italic;font-weight:800;letter-spacing:.01em}
+.screen .bandrow.active .band-freq{color:#fff;text-shadow:none}
+.screen .bandrow.active .b-center .band-freq{align-self:flex-start;padding-bottom:2px;border-bottom:2px solid #fff}
+.screen .band-freq .fd[data-place="10"],.screen .band-freq .fd[data-place="1"]{font-size:.62em}
+.screen .band-freq .fdsep{opacity:1}
+.screen .band-freq.tunable .fd:hover{background:rgba(255,255,255,.16);box-shadow:0 0 0 1px rgba(255,255,255,.5) inset}
+.screen .band-freq.tunable .fd:hover::before,.screen .band-freq.tunable .fd:hover::after{color:#fff}
+.screen .band-mode{background:transparent;color:#fff;border-radius:0;box-shadow:inset 0 0 0 1.5px #fff}
+.screen .bandrow:not(.active) .band-mode,.screen .bandrow:not(.active) .b-vfo{background:transparent;color:var(--tft-digit-dim);
+  box-shadow:inset 0 0 0 1.5px #46506a}
+.screen .band-tag{color:#fff;font-style:italic;letter-spacing:.02em}
+.screen .band-fil,.screen .b-band i{font-style:italic}
+.screen .b-vfo{background:transparent;color:#fff;font-style:italic}
+.screen .ind{background:transparent;border-color:transparent;padding:2px 2px;color:#9ccbff;font-style:italic;font-size:10.5px}
+.screen .ind.amber{background:transparent;border-color:transparent;color:var(--warn)}
+.screen .tx{border-radius:0;background:#167a37;color:#fff;font-style:italic}
+.screen .tx.on{background:var(--tx-solid);box-shadow:none}
+/* the meter: ticks, white up to S9 (the bar's middle: S9 is 120 of 240) and red past it */
+.screen .meter-scale{position:relative;display:block;height:14px;font:italic 700 11px/1.2 var(--font-ui);color:var(--txt)}
+/* ...each label at the value it names (TeleRig's 0..241 scale: S1 13, S9 120, +60 241), so the red
+   ticks start under the 9 */
+.screen .meter-scale span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
+.screen .meter-scale span:nth-child(1){left:5.6%}
+.screen .meter-scale span:nth-child(2){left:16.7%}
+.screen .meter-scale span:nth-child(3){left:27.8%}
+.screen .meter-scale span:nth-child(4){left:38.9%}
+.screen .meter-scale span:nth-child(5){left:50%}
+.screen .meter-scale span:nth-child(6){left:66.8%}
+.screen .meter-scale span:nth-child(7){left:83.6%}
+.screen .meter-scale span:nth-child(8){left:100%;transform:translateX(-100%)}
+.screen .meter-bar{height:14px;border:0;border-radius:0;container-type:inline-size;
+  background:repeating-linear-gradient(90deg,rgba(0,0,0,0) 0 2px,#000 2px 5px),linear-gradient(90deg,#343a4c 0 50%,#4e2229 50% 100%)}
+.screen .meter-fill{background:linear-gradient(90deg,#fff 0 50cqw,#ff4d3d 50cqw 100cqw);background-size:100cqw 100%;
+  -webkit-mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px);
+  mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px)}
+.screen .meter-val{font:italic 800 18px/1 var(--font-ui)}
+.screen .mic-bar{border:0;border-radius:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,0) 0 2px,#000 2px 5px),#343a4c}
+.screen .mic-bar-fill{background:#fff;-webkit-mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px);
+  mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px)}
+/* the scope frame and its labels (the canvases draw in Scope.setTheme's colours) */
+.screen .scope{border-color:#8a93a8;border-radius:0}
+.screen .band-strip{background:#000}
+.screen .scope-labels{font:italic 700 11px var(--font-ui);color:#fff}
+.screen .scope-split{background:rgba(255,255,255,.08)}
+.screen .scope-split:hover,.screen .scope-split.drag{background:rgba(127,216,255,.3)}
+.screen .af-badge{border-radius:0;background:rgba(0,0,0,.75);color:#9ccbff;font-style:italic}
+.screen .no-scope,.screen .scope-tunehint{font-style:italic}
+.screen .span-val{font-style:italic;font-weight:700}
+.screen .bandlegend{font-style:italic}
+.screen .bandlegend .lg-sw{border-radius:0}

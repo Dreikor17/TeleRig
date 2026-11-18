@@ -1,3 +1,4 @@
 # Vendored third-party files are kept byte-for-byte as published (their sha256 is checked by
 # tests/t_layout_ui.py); never convert their line endings on checkout.
 frontend/vendor/gridstack/** -text
+frontend/vendor/exo2/** -text

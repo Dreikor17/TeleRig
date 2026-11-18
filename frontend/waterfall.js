@@ -8,18 +8,31 @@
   const STRIP_H = 16;             // band-plan segment height (px)
   const STRIP_PX = STRIP_H + 2;   // the band plan's own canvas above the scope (#bandStrip), 1 px clear above / below
 
-  function buildLUT() {
-    // Icom-style waterfall colormap: dark navy -> blue -> cyan -> green -> yellow -> red -> white
-    const stops = [
-      [0.00, [2, 6, 18]],
-      [0.18, [12, 28, 110]],
-      [0.36, [10, 110, 200]],
-      [0.52, [10, 200, 200]],
-      [0.66, [40, 210, 90]],
-      [0.80, [240, 220, 40]],
-      [0.92, [240, 90, 30]],
-      [1.00, [255, 245, 230]],
-    ];
+  // Scope colours per page theme (TR.theme()): night and day share the instrument look; "screen" is
+  // the radio's own screen (black spectrum, white trace, green tuned marker, a deep-blue waterfall
+  // floor). setTheme() switches; the waterfall rows already drawn keep their colours until they scroll.
+  const PALETTES = {
+    night: {
+      bg: "#020c14", wfBg: "#020c14", grid: "rgba(20,90,130,.45)",
+      fillTop: "rgba(60,210,170,.55)", fillBot: "rgba(20,90,120,.10)", trace: "#5ff0c8", hold: "rgba(255,200,120,.55)",
+      pass: "rgba(90,200,255,.16)", passEdge: "rgba(120,220,255,.5)", tune: "#ff9a2e", tuneText: "#ffb15a",
+      // Icom-style waterfall colormap: dark navy -> blue -> cyan -> green -> yellow -> red -> white
+      lut: [[0.00, [2, 6, 18]], [0.18, [12, 28, 110]], [0.36, [10, 110, 200]], [0.52, [10, 200, 200]],
+            [0.66, [40, 210, 90]], [0.80, [240, 220, 40]], [0.92, [240, 90, 30]], [1.00, [255, 245, 230]]],
+    },
+    screen: {
+      bg: "#000000", wfBg: "#0c1a66", grid: "rgba(70,80,106,.55)",
+      fillTop: "rgba(220,228,245,.55)", fillBot: "rgba(140,150,175,.10)", trace: "#ffffff", hold: "rgba(156,203,255,.5)",
+      pass: "rgba(255,255,255,.12)", passEdge: "rgba(255,255,255,.45)", tune: "#3bd16f", tuneText: "#5be38a",
+      // the noise floor sits in blue, as on the radio: deep blue -> blue -> cyan -> green -> yellow -> red
+      lut: [[0.00, [12, 26, 102]], [0.20, [29, 53, 181]], [0.38, [40, 110, 230]], [0.52, [22, 180, 232]],
+            [0.66, [63, 210, 107]], [0.80, [242, 211, 59]], [0.92, [240, 82, 46]], [1.00, [255, 240, 230]]],
+    },
+  };
+  PALETTES.day = PALETTES.night;
+
+  function buildLUT(stops) {
+    stops = stops || PALETTES.night.lut;
     const lut = new Uint8Array(256 * 3);
     for (let i = 0; i < 256; i++) {
       const t = i / 255;
@@ -48,7 +61,9 @@
       this.sctx = spectrum.getContext("2d");
       this.wctx = waterfall.getContext("2d", { willReadFrequently: false });
       this.octx = overlay.getContext("2d");
-      this.lut = buildLUT();
+      this.theme = "night";
+      this.pal = PALETTES.night;
+      this.lut = buildLUT(this.pal.lut);
       this.opMode = "USB";
       this.meta = { mode: 0, center: 0, span: 50000, lower: 0, upper: 0, tuned: 0, filterBw: 2400 };
       this.lastData = null;
@@ -94,7 +109,7 @@
       }
       // waterfall stays 1:1 so putImageData rows line up crisply
       this.wf.width = w; this.wf.height = this.wfH;
-      this.wctx.fillStyle = "#020c14"; this.wctx.fillRect(0, 0, w, this.wfH);
+      this.wctx.fillStyle = this.pal.wfBg; this.wctx.fillRect(0, 0, w, this.wfH);
       if (old) this.wctx.drawImage(old, 0, 0, old.width, old.height, 0, 0, w, old.height);
       this.rowBuf = this.wctx.createImageData(w, 1);
       this.maxHold = null;
@@ -115,11 +130,27 @@
 
     setOpMode(m) { if (m) { this.opMode = m; this.drawOverlay(); } }
 
+    // The page theme's scope colours (TR.theme(): "night" | "day" | "screen"). Repaints the spectrum
+    // and the markers at once; the waterfall restarts on the new floor colour (old rows had the old one).
+    setTheme(name) {
+      const pal = PALETTES[name] || PALETTES.night;
+      this.theme = PALETTES[name] ? name : "night";
+      if (pal === this.pal) return;
+      this.pal = pal;
+      this.lut = buildLUT(pal.lut);
+      if (this.W) {
+        this.wctx.fillStyle = pal.wfBg; this.wctx.fillRect(0, 0, this.W, this.wfH);
+        if (this.lastData) this.drawSpectrum(this.lastData);
+        else { this.sctx.fillStyle = pal.bg; this.sctx.fillRect(0, 0, this.W, this.specH); }
+      }
+      this.drawOverlay();
+    }
+
     clear() {
       this.lastData = null;
       this.maxHold = null;
       this.meta = { mode: 0, center: 0, span: this.meta.span || 50000, lower: 0, upper: 0, tuned: 0, filterBw: 0 };
-      this.wctx.fillStyle = "#020c14"; this.wctx.fillRect(0, 0, this.W, this.wfH);
+      this.wctx.fillStyle = this.pal.wfBg; this.wctx.fillRect(0, 0, this.W, this.wfH);
       this.sctx.clearRect(0, 0, this.W, this.specH);
       this.octx.clearRect(0, 0, this.W, this.scopeH || (this.specH + this.wfH));
     }
@@ -129,8 +160,8 @@
     showStatic(center, span) {
       this.lastData = null; this.maxHold = null;
       this.meta = { mode: 0, center: center || 0, span: span || 200000, lower: 0, upper: 0, tuned: center || 0, filterBw: 0 };
-      this.sctx.fillStyle = "#020c14"; this.sctx.fillRect(0, 0, this.W, this.specH);
-      this.wctx.fillStyle = "#020c14"; this.wctx.fillRect(0, 0, this.W, this.wfH);
+      this.sctx.fillStyle = this.pal.bg; this.sctx.fillRect(0, 0, this.W, this.specH);
+      this.wctx.fillStyle = this.pal.wfBg; this.wctx.fillRect(0, 0, this.W, this.wfH);
       this.drawOverlay();
     }
 
@@ -236,9 +267,9 @@
       if (this._hidden()) return;
       const ctx = this.sctx, w = this.W, h = this.specH, n = data.length || 1;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#020c14"; ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = this.pal.bg; ctx.fillRect(0, 0, w, h);
       // grid
-      ctx.strokeStyle = "rgba(20,90,130,.45)"; ctx.lineWidth = 1;
+      ctx.strokeStyle = this.pal.grid; ctx.lineWidth = 1;
       ctx.beginPath();
       for (let i = 1; i < 10; i++) { const x = (i / 10) * w; ctx.moveTo(x, 0); ctx.lineTo(x, h); }
       for (let i = 1; i < 4; i++) { const y = (i / 4) * h; ctx.moveTo(0, y); ctx.lineTo(w, y); }
@@ -256,17 +287,17 @@
       }
       ctx.lineTo(w, h); ctx.closePath();
       const grad = ctx.createLinearGradient(0, 0, 0, h);
-      grad.addColorStop(0, "rgba(60,210,170,.55)");
-      grad.addColorStop(1, "rgba(20,90,120,.10)");
+      grad.addColorStop(0, this.pal.fillTop);
+      grad.addColorStop(1, this.pal.fillBot);
       ctx.fillStyle = grad; ctx.fill();
       // line
       ctx.beginPath();
       for (let x = 0; x < w; x++) { const dv = this._dataAtX(data, x), v = dv < 0 ? 0 : dv; x ? ctx.lineTo(x, yOf(v)) : ctx.moveTo(x, yOf(v)); }
-      ctx.strokeStyle = "#5ff0c8"; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.strokeStyle = this.pal.trace; ctx.lineWidth = 1.2; ctx.stroke();
       // max hold
       ctx.beginPath();
       for (let x = 0; x < w; x++) { const y = yOf(this.maxHold[x]); x ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
-      ctx.strokeStyle = "rgba(255,200,120,.55)"; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = this.pal.hold; ctx.lineWidth = 1; ctx.stroke();
     }
 
     drawOverlay() {
@@ -282,19 +313,19 @@
         else if (this.opMode === "LSB" || this.opMode === "RTTY") { loF = tuned - bw; hiF = tuned; }
         else { loF = tuned - bw / 2; hiF = tuned + bw / 2; }
         const x0 = this.freqToX(loF), x1 = this.freqToX(hiF);
-        ctx.fillStyle = "rgba(90,200,255,.16)";
+        ctx.fillStyle = this.pal.pass;
         ctx.fillRect(Math.min(x0, x1), 0, Math.abs(x1 - x0), h);
-        ctx.strokeStyle = "rgba(120,220,255,.5)"; ctx.lineWidth = 1;
+        ctx.strokeStyle = this.pal.passEdge; ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x0, 0); ctx.lineTo(x0, h); ctx.moveTo(x1, 0); ctx.lineTo(x1, h); ctx.stroke();
       }
       // tuned channel marker
       if (tuned) {
         const xc = this.freqToX(tuned);
-        ctx.strokeStyle = "#ff9a2e"; ctx.lineWidth = 1.4;
+        ctx.strokeStyle = this.pal.tune; ctx.lineWidth = 1.4;
         ctx.beginPath(); ctx.moveTo(xc, 0); ctx.lineTo(xc, h); ctx.stroke();
         // little triangle at top
-        ctx.fillStyle = "#ff9a2e";
+        ctx.fillStyle = this.pal.tune;
         ctx.beginPath(); ctx.moveTo(xc - 5, 0); ctx.lineTo(xc + 5, 0); ctx.lineTo(xc, 8); ctx.closePath(); ctx.fill();
       }
       if (m.out) {
@@ -312,7 +343,7 @@
         if (tuned) {                                            // centre indicator = the tuned freq
           const cx = Math.max(40, Math.min(w - 40, this.freqToX(tuned)));
           const dec = fhi - flo <= 10000 ? 5 : 4;                // 10 Hz digits on a narrow view (AF / CW)
-          ctx.textAlign = "center"; ctx.fillStyle = "#ffb15a";
+          ctx.textAlign = "center"; ctx.fillStyle = this.pal.tuneText;
           ctx.fillText((tuned / 1e6).toFixed(dec) + " MHz", cx, 9);
         }
         ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
@@ -369,6 +400,9 @@
     }
   }
 
+  Scope.PALETTES = PALETTES;
+  Scope.prototype.pal = PALETTES.night;          // a scope that never had setTheme() draws the night look
+  Scope.prototype.theme = "night";
   global.Scope = Scope;
 
   // ---- the audio (AF) scope's frequency map, for radios with no scope over CAT (app.js) ----

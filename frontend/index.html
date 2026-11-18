@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>TeleRig</title>
-<script>try{var t=localStorage.getItem("telerig.theme");if(t===null)t=localStorage.getItem("radiowebop.theme");if(t==="day")document.documentElement.classList.add("day")}catch(e){}</script>
+<script>try{var t=localStorage.getItem("telerig.theme");if(t===null)t=localStorage.getItem("radiowebop.theme");if(t==="day")document.documentElement.classList.add("day");else if(t==="screen")document.documentElement.classList.add("screen")}catch(e){}</script>
 <link rel="stylesheet" href="/static/vendor/gridstack/gridstack.min.css?v=14.0.0" />
 <link rel="stylesheet" href="/static/style.css" />
 <!--TR_BOOT-->
@@ -56,7 +56,7 @@
     </div>
     <button id="fullBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Full screen (keeps the screen awake)" aria-label="Full screen" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-fullscreen"/></svg></button>
     <button id="arrangeBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Arrange panels" aria-label="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg></button>
-    <button id="themeBtn" class="tb-btn desk-only" type="button" title="Day / night theme" aria-label="Day / night theme"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
+    <button id="themeBtn" class="tb-btn desk-only" type="button" title="Theme" aria-label="Theme"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
     <a id="sourceLink" class="tb-btn desk-only" href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener" title="Source code (AGPL-3.0)" aria-label="Source code (AGPL-3.0)"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></a>
     <button id="adminBtn" class="tb-btn desk-only" type="button" data-perm="admin" title="Administration" aria-label="Administration" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg></button>
     <div class="user-menu">
@@ -65,7 +65,7 @@
       <div id="userMenu" class="menu" role="menu" aria-labelledby="userBtn" hidden>
         <div class="um-head"><b id="umUser"></b> <span id="umRole" class="badge"></span></div>
         <button role="menuitem" type="button" id="umArrange" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
-        <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Day / night theme</span></button>
+        <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Theme</span></button>
         <button role="menuitem" type="button" id="umFull" class="phone-only" aria-pressed="false" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-fullscreen"/></svg><span id="umFullLbl">Full screen</span></button>
         <button role="menuitem" type="button" id="umHotkey" data-tx hidden><svg class="i" aria-hidden="true"><use href="#i-keyboard"/></svg><span>PTT hotkey…</span></button>
         <button role="menuitem" type="button" id="umAdmin" class="phone-only" data-perm="admin" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Administration</button>
@@ -75,6 +75,8 @@
         <button role="menuitem" type="button" id="umSignout" class="danger" hidden><svg class="i" aria-hidden="true"><use href="#i-log-out"/></svg>Sign out</button>
       </div>
     </div>
+    <!-- #utcClock (tr.js) shows only in the radio-screen theme, like the radio's own UTC clock -->
+    <time id="utcClock" class="utc-clock" title="UTC time"></time>
   </nav>
 </header>
 <div class="tr-overlays" id="overlays">

@@ -7,7 +7,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### WSJT-X bridge, PTT hotkey, full screen, Update now (unreleased)
+### WSJT-X bridge, PTT hotkey, full screen, Update now, Radio screen theme (unreleased)
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
   TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
   and the browser share one radio, including an Icom on its LAN port. Off by default, this PC only
@@ -34,6 +34,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   local changes or commits GitHub does not have. Every step is in the security log.
 - **Band plan in its own strip** just above the scope, so it no longer covers the bottom of the
   spectrum; it lines up with the scope's frequency axis, and hovering (or tapping) names the segment.
+- **Radio screen theme**, the third step of the theme button (night, day, radio screen): the same
+  layout dressed as a transceiver's own screen. Black screen regions with cyan italic panel names,
+  glossy softkeys (blue when selected, red for anything that transmits), the operating VFO on a blue
+  band with italic digits and the 10 Hz and 1 Hz digits smaller, a tick meter that turns red past S9,
+  a black spectrum with a white trace and a green tuned marker over a deep-blue rainbow waterfall, the
+  link as a boxed label instead of a status dot, and a UTC clock. Exo 2 (SIL OFL) is bundled, so
+  nothing loads from the internet. Each browser keeps its own choice.
 
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
