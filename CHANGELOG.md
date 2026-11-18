@@ -3,7 +3,32 @@
 All notable changes to **TeleRig** (formerly **Radio WebOp**) are documented here. This project
 adheres to [Semantic Versioning](https://semver.org).
 
-## [Unreleased]
+## [0.3.0] — 2026-11-17
+
+**Radio WebOp is now TeleRig**: everyone signs in, one operator transmits at a time, and the panel
+is a grid of cards you can arrange.
+
+### Added
+- **Sign-in for everyone**, on the radio PC too, with roles **viewer** (watch and listen),
+  **operator** (operate and transmit) and **admin**. A new install's `admin` / `admin` works only on
+  the radio PC itself, together with the one-time setup code the TeleRig window shows, and you
+  choose a new password right away. Forgot it? `run.bat --reset-admin` (or
+  `python3 run.py --reset-admin`) on the radio PC. Sign-ins last 30 days, with *Sign out* and
+  *Sign out everywhere*; repeated wrong passwords lock that address or account for a while. See
+  [docs/REMOTE-ACCESS.md](docs/REMOTE-ACCESS.md).
+- **One transmitter, many users.** One connection owns the transmitter at a time. Everyone else sees
+  **ON AIR · *callsign*** and gets "busy", and any operator can stop the transmission with a two-tap
+  **STOP**. The owner's dropped link unkeys at once and a silent one after 6 s; the server keeps its
+  own 120 s session limit on top of the radio's time-out, and every transmission is logged.
+- **Modular panels.** VFO, Transmit, Audio, Meter, Scope, Controls and CW are cards you can move,
+  resize, collapse, hide and add back in **Arrange** mode (mouse, keyboard, or ▲/▼ on a phone),
+  with Reset and Undo. Each user's layout is saved on the server, one for desktop and one for
+  phone. A new dark/day look with an offline icon set.
+- **Administration** (admins): **Users** (add by callsign, temporary password shown once, reset,
+  sign out everywhere, delete), **Access** (allowed host names and origins), **Remote** (turns
+  Tailscale Serve on for you), **Radio & audio** (each radio's pinned connection and the radio PC's
+  sound cards), **Activity** (who is connected, who transmitted, the security log, download) and
+  **Lockouts**.
 
 ### Changed
 - **Renamed to TeleRig** (formerly Radio WebOp): app name, page titles, the desktop shortcut and the
@@ -12,9 +37,29 @@ adheres to [Semantic Versioning](https://semver.org).
   copied to `~/.telerig` (the old folder is left in place). `TELERIG_CONFIG`, `TELERIG_SSL_CERT`
   and `TELERIG_SSL_KEY` replace the `RADIO_WEBOP_*` environment variables, which still work.
   Browser settings (theme, band plan, saved connections) move from the old `radiowebop.*` keys.
-- The sign-in cookie is renamed, so on a password-protected install you sign in once more after
-  updating. Re-running `install.bat` replaces the old "Radio WebOp" desktop shortcut for this
-  install with a "TeleRig" one.
+- **Everyone signs in once more after updating** (old sessions are not accepted). If Radio WebOp
+  had the optional shared remote password, it becomes the `admin` password — with admin rights
+  only on the radio PC (operator rights elsewhere) until you change it there. Re-running
+  `install.bat` replaces the old "Radio WebOp" desktop shortcut for this install with a "TeleRig"
+  one.
+- **PTT is harder to leave keyed by accident:** while you are on the air every click, tap or key
+  press on PTT unkeys; a double-click, a key's auto-repeat or a click just after unkeying never
+  re-keys; a hidden tab never keys.
+- **Connecting:** nothing connects by itself on a first visit (not even the Simulator). Operators
+  reconnect only the current radio, on the connection an admin set up; switching radios is for
+  admins. Critical SET-menu items are admin-only (viewers can read every value).
+
+### Removed
+- The no-password mode, the optional shared password and the old 🌐 Remote dialog — replaced by
+  accounts and **Administration → Remote**.
+
+### Notes
+- Keep TeleRig off the public internet: bind it to `127.0.0.1` and use Tailscale Serve
+  (Administration → Remote), a VPN or the firewall. Never Tailscale Funnel.
+- On the Icom radios TeleRig cannot see a transmission started at the radio itself (front-panel
+  PTT or hand mic) yet; on the Yaesu radios it shows as **ON AIR · FRONT PANEL**.
+- Going back to v0.2.25 restores the old behaviour: it reads its own `~/.radio-webop` folder, left
+  as it was.
 
 ## [0.2.25] — 2026-07-05
 
@@ -558,6 +603,7 @@ live spectrum scope + waterfall.
 - Mic capture (TX) needs a secure context (HTTPS or localhost), so it won't run
   over plain-HTTP remote access; RX audio playback works over HTTP.
 
+[0.3.0]: https://github.com/Dreikor17/TeleRig/releases/tag/v0.3.0
 [0.2.10]: https://github.com/Dreikor17/radio-webop/releases/tag/v0.2.10
 [0.2.02]: https://github.com/Dreikor17/radio-webop/releases/tag/v0.2.02
 [0.2.2]: https://github.com/Dreikor17/radio-webop/releases/tag/v0.2.2

@@ -7,7 +7,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### Phase 1 (unreleased) — modular panels, multi-user sign-in, one TX owner
+### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
   CW — that can be moved, resized, collapsed, hidden and added back in **Arrange** mode (mouse,
   keyboard, or ▲/▼ on a phone), with Reset + Undo. Layouts are stored on the server per user, one
