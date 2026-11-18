@@ -5,7 +5,7 @@
   const TR = window.TR;                           // tr.js loads first (index.html script order)
   const Layout = () => window.RadioLayout;        // the tr.js stub until layout.js (B3) replaces it
 
-  const scope = new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"));
+  const scope = new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"), $("bandStrip"));
 
   let ws = null, state = {}, step = 25000;
   let blanked = false;                            // after a radio change: VFO zeroed + waterfall cleared until reconnect
@@ -1322,9 +1322,11 @@
 
   // (the day / night theme lives in tr.js: TR.applyTheme, html.day, set pre-paint by the head script)
 
-  // ---- band-plan overlay (ARRL band plan on VHF/UHF, FCC license-class on HF) ----
+  // ---- band plan (ARRL band plan on VHF/UHF, FCC license-class on HF) ----
+  // Drawn in its own strip just above the scope (#bandStrip, shown while BAND PLAN is on), so it
+  // never covers the spectrum; hovering it (or tapping it on a phone) names the segment.
   (function () {
-    const btn = $("bandPlanBtn"), tip = $("bandTip"), ov = $("overlay"), wrap = $("scopeWrap");
+    const btn = $("bandPlanBtn"), tip = $("bandTip"), ov = $("overlay"), wrap = $("scopeWrap"), strip = $("bandStrip");
     if (!btn || !ov || !wrap) return;
     scope.bandplan = (window.BANDPLAN || []).map((s) => ({ ...s, lo: s.lo * 1e6, hi: s.hi * 1e6 }));
     const colors = window.BANDPLAN_COLORS || {}, klabel = window.BANDPLAN_KIND_LABEL || {};
@@ -1345,6 +1347,7 @@
 
     function apply(on) {
       scope.showBandplan = on;
+      if (strip) strip.hidden = !on;                // the scope re-fits to the space left (ResizeObserver)
       btn.classList.toggle("active", on);
       if (!on && tip) tip.hidden = true;
       scope.drawOverlay();
@@ -1373,9 +1376,15 @@
           hf.style.left = x + "px"; hf.style.top = y + "px";
         } else hf.hidden = true;
       }
-      // band-plan segment tooltip — only while the overlay is on
-      if (!scope.showBandplan || !tip) return;
+      // band-plan segment tooltip: on the strip above the scope (below); drawn over the spectrum
+      // only when the page has no strip
+      if (strip) return;
       const py = (e.clientY - r.top) * ((scope.scopeH || (scope.specH + scope.wfH)) / r.height);
+      bandTip(e, px, py);
+    });
+    let tipT = 0;
+    function bandTip(e, px, py) {
+      if (!scope.showBandplan || !tip) return;
       const seg = scope.bandplanSegAt(px, py);
       if (!seg) { tip.hidden = true; return; }
       const base = colors[seg.kind] || "rgba(150,160,180,";
@@ -1390,8 +1399,19 @@
       if (x + tw > window.innerWidth - 8) x = e.clientX - tw - 14;
       if (y + th > window.innerHeight - 8) y = e.clientY - th - 14;
       tip.style.left = x + "px"; tip.style.top = y + "px";
-    });
-    wrap.addEventListener("mouseleave", () => { if (tip) tip.hidden = true; if (hf) hf.hidden = true; });
+      clearTimeout(tipT);
+      if (e.type === "click") tipT = setTimeout(() => { tip.hidden = true; }, 4000);   // a tap: no mouseleave follows
+    }
+    if (strip) {
+      const onStrip = (e) => {
+        const r = strip.getBoundingClientRect();
+        bandTip(e, (e.clientX - r.left) * (scope.W / (r.width || 1)), 0);
+      };
+      strip.addEventListener("mousemove", onStrip);
+      strip.addEventListener("click", onStrip);
+      strip.addEventListener("mouseleave", () => { clearTimeout(tipT); if (tip) tip.hidden = true; });
+    }
+    wrap.addEventListener("mouseleave", () => { if (tip && !strip) tip.hidden = true; if (hf) hf.hidden = true; });
   })();
 
   // ---- radio profiles (bands/modes/steps render from the selected radio) ----

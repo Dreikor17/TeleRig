@@ -41,3 +41,25 @@ def af_scope_wiring_in_app_js(ctx):
     check("scope.pushSweep(view, data);" in body, "the frame is pushed with AfMap's meta (marker in CW)")
     check('"CW-LSB", "RTTY-LSB"' not in body, "no private sideband list is left in app.js")
     check("scope.freqAtX(scStartPx) + (scope.meta.retune || 0)" in app, "a scope tap adds the CW retune")
+
+
+@test("unit")
+def band_plan_strip_above_the_scope(ctx):
+    """The band plan has its own strip just above the scope (#bandStrip): drawn there, never over the
+    spectrum trace, aligned with the scope, looked up there (tests/scope_strip_test.js), and wired up
+    in index.html / style.css / app.js."""
+    r = subprocess.run(["node", str(REPO / "tests" / "scope_strip_test.js")], capture_output=True, text=True,
+                       timeout=120, cwd=str(REPO))
+    eq(r.returncode, 0, f"scope_strip_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"scope_strip_test.js output: {r.stdout}")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    i_strip, i_wrap = html.find('<canvas id="bandStrip"'), html.find('<div class="scope" id="scopeWrap">')
+    check(0 < i_strip < i_wrap and "<" not in html[i_strip + 30:i_wrap].replace("</canvas>", "").strip()[:1],
+          "index.html: the strip sits right above the scope")
+    check('class="band-strip" hidden' in html, "the strip starts hidden (shown while BAND PLAN is on)")
+    css = (FRONT / "style.css").read_text(encoding="utf-8")
+    check(".band-strip[hidden]{display:none}" in css, "style.css: a hidden strip takes no space")
+    app = (FRONT / "app.js").read_text(encoding="utf-8")
+    check('new Scope($("spectrum"), $("waterfall"), $("overlay"), $("scopeWrap"), $("bandStrip"))' in app,
+          "app.js hands the strip to the scope")
+    check("if (strip) strip.hidden = !on;" in app, "BAND PLAN shows / hides the strip")

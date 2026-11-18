@@ -5,7 +5,8 @@
 
   const AMP_MAX = 160;            // documented 27 00 data range
   const FLOOR_DB = 22;            // approximate noise floor amplitude
-  const STRIP_H = 16;             // band-plan strip height (px) along the spectrum bottom
+  const STRIP_H = 16;             // band-plan segment height (px)
+  const STRIP_PX = STRIP_H + 2;   // the band plan's own canvas above the scope (#bandStrip), 1 px clear above / below
 
   function buildLUT() {
     // Icom-style waterfall colormap: dark navy -> blue -> cyan -> green -> yellow -> red -> white
@@ -35,11 +36,15 @@
   }
 
   class Scope {
-    constructor(spectrum, waterfall, overlay, wrap) {
+    // `strip` (optional): the band plan's own canvas just above the scope. Without one the band plan
+    // is drawn along the bottom of the spectrum, over the trace, as before.
+    constructor(spectrum, waterfall, overlay, wrap, strip) {
       this.spec = spectrum;
       this.wf = waterfall;
       this.ov = overlay;
       this.wrap = wrap;
+      this.strip = strip || null;
+      this.stctx = this.strip ? this.strip.getContext("2d") : null;
       this.sctx = spectrum.getContext("2d");
       this.wctx = waterfall.getContext("2d", { willReadFrequently: false });
       this.octx = overlay.getContext("2d");
@@ -83,7 +88,7 @@
       const oldMax = this.maxHold;
       this._sized = true; this._dpr = dpr;
       this.W = w; this.specH = specH; this.wfH = wfH; this.scopeH = scopeH;
-      for (const [c, h] of [[this.spec, this.specH], [this.ov, this.scopeH]]) {
+      for (const [c, h] of [[this.spec, this.specH], [this.ov, this.scopeH]].concat(this.strip ? [[this.strip, STRIP_PX]] : [])) {
         c.width = w * dpr; c.height = h * dpr;
         c.getContext("2d").setTransform(dpr, 0, 0, dpr, 0, 0);
       }
@@ -186,11 +191,15 @@
       return seen;
     }
 
-    // band-plan segment under a canvas-space point (for hover tooltips), else null
+    // band-plan segment under a canvas-space point (for hover tooltips), else null. With its own
+    // strip only x matters (the point is on the strip); else the point must be on the strip drawn
+    // along the spectrum bottom.
     bandplanSegAt(px, py) {
       if (!this.showBandplan || !this.bandplan) return null;
-      const sy = this.specH - STRIP_H - 3;
-      if (py < sy - 2 || py > sy + STRIP_H + 2) return null;
+      if (!this.stctx) {
+        const sy = this.specH - STRIP_H - 3;
+        if (py < sy - 2 || py > sy + STRIP_H + 2) return null;
+      }
       const [lo, hi] = this.visibleRange();
       for (const seg of this.bandplan) {
         if (seg.hi <= lo || seg.lo >= hi) continue;
@@ -327,10 +336,12 @@
 
     drawBandplan() {
       this.bpLabels = [];                       // what was drawn (segment x0/x1, text, width)
+      if (this.stctx) this.stctx.clearRect(0, 0, this.W, STRIP_PX);
       if (!this.showBandplan || !this.bandplan || !this.bandplan.length) return;
-      const ctx = this.octx, w = this.W;
+      const ctx = this.stctx || this.octx, w = this.W;
       const [lo, hi] = this.visibleRange();
-      const sy = this.specH - STRIP_H - 3;     // 3px clear of the spectrum/waterfall split below
+      // its own strip above the scope; without one, 3 px clear of the spectrum/waterfall split
+      const sy = this.stctx ? 1 : this.specH - STRIP_H - 3;
       const colors = global.BANDPLAN_COLORS || {};
       ctx.font = "10px Consolas, monospace";
       ctx.textBaseline = "middle";

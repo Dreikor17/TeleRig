@@ -266,6 +266,9 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 #waterfall{display:block;width:100%;height:240px;image-rendering:crisp-edges;image-rendering:pixelated}
 #scopeWrap{touch-action:pan-y}   /* horizontal drag tunes; vertical scrolls the page */
 .overlay-canvas{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
+/* the band plan's own strip, just above the scope (waterfall.js drawBandplan): never over the trace */
+.band-strip{display:block;width:100%;height:18px;margin-bottom:2px;background:var(--scope-bg);cursor:help}
+.band-strip[hidden]{display:none}
 .scope-labels{position:absolute;left:0;right:0;top:2px;display:flex;justify-content:space-between;
   padding:0 6px;font:11px var(--font-ui);color:#bfe6ff;text-shadow:0 0 4px #000;pointer-events:none}
 /* the no-scope notice lives in the waterfall, clear of the band-plan strip along the spectrum's
@@ -964,6 +967,7 @@ body.arranging .tile-body{opacity:.6}
 .tile-scope{display:flex;flex-direction:column;padding:0;overflow:hidden}
 .tile-scope>.tile-fit{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
 .tile-scope .scope{flex:1 1 0;min-height:0;display:flex;flex-direction:column;border:0;border-radius:0}
+.tile-scope .band-strip{flex:0 0 18px;margin:0;border-bottom:1px solid var(--tft-border)}
 .tile-scope #spectrum{flex:0 0 auto;height:150px;width:100%}
 .tile-scope .scope-split{flex:0 0 8px}
 .tile-scope #waterfall{flex:1 1 0;min-height:0;height:auto;width:100%}
