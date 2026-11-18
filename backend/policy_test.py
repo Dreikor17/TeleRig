@@ -39,15 +39,15 @@ def raises(fn, exc):
 SRC = (Path(__file__).resolve().parent / "server.py").read_text(encoding="utf-8")
 lits = policy.action_literals(SRC)
 
-C("T30 server.py has >= 57 action literals (regex still matches the dispatcher)", len(lits) >= 57, True)
+C("T30 server.py has >= 58 action literals (regex still matches the dispatcher)", len(lits) >= 58, True)
 C("T30 no completeness errors", policy.completeness_errors(SRC), [])
 C("T30 every literal has a row or is REMOVED", sorted(lits - set(policy.WS_POLICY) - policy.REMOVED), [])
 C("T30 host_rx/host_tx branches deleted from server.py", sorted(lits & policy.REMOVED), [])
 C("T30 REMOVED = host_rx, host_tx", sorted(policy.REMOVED), ["host_rx", "host_tx"])
-C("T30 NEW_ACTIONS", sorted(policy.NEW_ACTIONS), ["mic", "rx_audio", "tx_hb", "tx_stop"])
-C("T30 rows == the dispatcher's 57 literals + the 4 new actions",
+C("T30 NEW_ACTIONS", sorted(policy.NEW_ACTIONS), ["bridge_tx", "mic", "rx_audio", "tx_hb", "tx_stop"])
+C("T30 rows == the dispatcher's 58 literals + the 5 new actions",
   sorted(set(policy.WS_POLICY) ^ (lits | policy.NEW_ACTIONS)), [])
-C("T30 61 rows; 63 actions covered with REMOVED", (len(policy.WS_POLICY), len(set(policy.WS_POLICY) | policy.REMOVED)), (61, 63))
+C("T30 63 rows; 65 actions covered with REMOVED", (len(policy.WS_POLICY), len(set(policy.WS_POLICY) | policy.REMOVED)), (63, 65))
 C("T30 every row is real: a validator, no placeholder",
   [a for a, r in policy.WS_POLICY.items() if r.placeholder or r.validate is None], [])
 C("T30 every role is known", [a for a, r in policy.WS_POLICY.items() if r.min_role not in policy.ROLES], [])
@@ -356,6 +356,7 @@ ADMIN_ROUTES = {   # §2.17: (sudo, local)
     "PUT /api/admin/radio_transport": (True, False), "GET /api/admin/remote_status": (False, False),
     "POST /api/admin/tailscale_serve": (True, True), "POST /api/admin/tailscale_serve_off": (False, False),
     "POST /api/admin/clear_behind_proxy": (True, False), "GET /api/admin/audit": (False, False),
+    "GET /api/admin/bridge": (False, False), "PUT /api/admin/bridge": (True, False),
     # Administration > Update: reading and checking need admin; Update now also a fresh sudo
     "GET /api/admin/update": (False, False), "POST /api/admin/update/check": (False, False),
     "POST /api/admin/update": (True, False)}
@@ -383,7 +384,7 @@ C("requires() refuses an unknown role", raises(lambda: policy.requires("superuse
 # ---- fast-path classifier (§2.12): the only frames a kicked/locked connection still acts on ----
 fast = [{"action": "ptt", "tx": False}, {"action": "cw_stop"}, {"action": "tx_hb"}, {"action": "tx_stop"},
         {"action": "rx_func", "name": "vox", "on": False}, {"action": "mic", "on": False},
-        {"action": "ptt", "tx": False, "auto": True, "extra": 1}]
+        {"action": "ptt", "tx": False, "auto": True, "extra": 1}, {"action": "bridge_tx", "on": False}]
 not_fast = [{"action": "ptt", "tx": True}, {"action": "ptt", "tx": 0}, {"action": "ptt", "tx": "false"},
             {"action": "ptt", "tx": None}, {"action": "ptt", "tx": []}, {"action": "ptt"},
             {"action": "cw_tx", "text": "CQ", "wpm": 20}, {"action": "tune_atu"},
@@ -391,6 +392,8 @@ not_fast = [{"action": "ptt", "tx": True}, {"action": "ptt", "tx": 0}, {"action"
             {"action": "rx_func", "name": "VOX", "on": False}, {"action": "rx_func", "name": ["vox"], "on": False},
             {"action": "rx_func", "name": "nb", "on": False}, {"action": "rx_func", "on": False},
             {"action": "mic", "on": True}, {"action": "mic", "on": 0}, {"action": "mic"},
+            {"action": "bridge_tx", "on": True}, {"action": "bridge_tx", "on": 0}, {"action": "bridge_tx"},
+            {"action": "bridge_tx", "on": "false"},
             {"action": "set_freq", "hz": 145000000}, {"action": "PTT", "tx": False}, {"action": 5},
             {"tx": False}, [], None, "ptt"]
 C("is_fast: the unkey/heartbeat frames", [c for c in fast if not policy.is_fast(c)], [])

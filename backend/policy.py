@@ -1,8 +1,10 @@
 """Access policy: WebSocket actions (spec §2.12, I2) and HTTP routes (§2.10).
 
-WebSocket. WS_POLICY has one row per action: the dispatcher's 57 radio actions (server._handle_cmd)
-plus the new tx_hb, tx_stop, rx_audio and mic. The removed host-audio actions are in REMOVED, and an
-unknown action is denied. evaluate() decides one message, in this order:
+WebSocket. WS_POLICY has one row per action: the dispatcher's 58 radio actions (server._handle_cmd)
+plus the new tx_hb, tx_stop, rx_audio, mic and bridge_tx. The removed host-audio actions are in
+REMOVED, and an unknown action is denied. A WSJT-X bridge client (backend/bridge.py) is decided by
+the same table: its commands arrive as the same canonical commands, from a connection whose role
+is always `operator`. evaluate() decides one message, in this order:
 
   role -> STRICT argument types (I20; the verdict carries a CANONICAL command rebuilt from the
   validated fields, never the client's dict) -> the connect transition -> the lock -> the TX rule
@@ -47,7 +49,8 @@ ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
 
 # Every action _handle_cmd (server.py) handles, in its order.
 RADIO_ACTIONS = (
-    "set_freq", "tune", "set_mode", "set_filter", "vfo", "mem_recall", "mem_to_vfo", "set_level",
+    "set_freq", "tune", "set_mode", "set_filter", "data_mode", "vfo", "mem_recall", "mem_to_vfo",
+    "set_level",
     "band", "set_span", "scope_mode", "select_band", "set_meter", "preamp", "att", "lock", "tuner",
     "tune_atu", "atas_step", "rx_func", "agc", "mnotch_w", "tbw", "rit", "rit_freq", "split",
     "duplex", "narrow", "tone_mode", "tone_freq", "dcs_code", "rpt_shift", "width", "contour",
@@ -57,7 +60,7 @@ RADIO_ACTIONS = (
 )
 
 REMOVED = frozenset({"host_rx", "host_tx"})     # host audio is server-pinned now (§2.14)
-NEW_ACTIONS = frozenset({"tx_hb", "tx_stop", "rx_audio", "mic"})
+NEW_ACTIONS = frozenset({"tx_hb", "tx_stop", "rx_audio", "mic", "bridge_tx"})
 
 DENY_REASONS = ("role", "unknown_action", "not_connected", "connecting", "unsupported",
                 "critical_admin", "tot_off_confirm", "tx_route_confirm", "rate_limited",
@@ -286,6 +289,7 @@ _ROWS = [
     _row("tune", _field_int("delta", -100_000_000, 100_000_000), continuous=True),
     _row("set_mode", _v_set_mode),
     _row("set_filter", _field_int("filter", 1, 3)),
+    _row("data_mode", _on),                          # Icom DATA mode (1A 06); needs caps.data_mode
     _row("vfo", lambda c, x: {"code": _in(c, "code", VFO_CODES)}),
     _row("mem_recall", _field_int("ch", 1, 99)),
     _row("mem_to_vfo", _none),
@@ -344,6 +348,8 @@ _ROWS = [
     _row("tx_stop", _none, lock="T", rate_exempt=True, radio=False),
     _row("rx_audio", _v_rx_audio, role="viewer", lock=None, radio=False),
     _row("mic", _v_rx_audio, role="viewer", lock=None, radio=False),     # on: operator (evaluate)
+    # pause (on:false) / resume (on:true) transmit over the WSJT-X bridge; pausing also stops it
+    _row("bridge_tx", _v_rx_audio, lock=None, radio=False),
 ]
 WS_POLICY: dict = {r.action: r for r in _ROWS}
 
@@ -355,8 +361,9 @@ S_CLAIM = {"cw_stop": "cw"}
 # -- the fast path classifier ----------------------------------------------------------------------
 def is_fast(cmd: Any) -> bool:
     """The §2.12 fast-path classifier: tx_hb, tx_stop, ptt{tx:false}, cw_stop,
-    rx_func{name:"vox", on:false}, mic{on:false}. Every one of them only stops TX or keeps a claim
-    alive; none can start TX. Strict types (I20): `tx`/`on` must be the bool False and `name` the
+    rx_func{name:"vox", on:false}, mic{on:false}, bridge_tx{on:false} (pause the WSJT-X bridge,
+    which also stops its TX). Every one of them only stops TX or keeps a claim alive; none can
+    start TX. Strict types (I20): `tx`/`on` must be the bool False and `name` the
     exact string "vox", so a value that only looks like "off" (0, "false", null, ...) is not a
     fast-path stop: it falls through to normal evaluation and is denied there."""
     if not isinstance(cmd, dict):
@@ -369,7 +376,7 @@ def is_fast(cmd: Any) -> bool:
     if a == "rx_func":
         n = cmd.get("name")
         return type(n) is str and n == "vox" and cmd.get("on") is False
-    if a == "mic":
+    if a in ("mic", "bridge_tx"):
         return cmd.get("on") is False
     return False
 
@@ -583,7 +590,7 @@ def _decide(rule: Rule, conn: Any, cmd: dict, ctx: Any) -> Verdict:
         return Verdict("new", a, cmd=cmd)
     if a == "tx_stop":
         return Verdict("stop", a, cmd=cmd)
-    if a == "rx_audio":
+    if a in ("rx_audio", "bridge_tx"):
         return Verdict("new", a, cmd=cmd)
     if a == "mic":
         if cmd["on"]:
@@ -596,6 +603,10 @@ def _decide(rule: Rule, conn: Any, cmd: dict, ctx: Any) -> Verdict:
             if not getattr(caps, "ptt", False):
                 return deny(a, "unsupported")
         return Verdict("new", a, cmd=cmd)
+    if a == "data_mode":
+        caps = getattr(getattr(_radio(ctx), "profile", None), "capabilities", None)
+        if not getattr(caps, "data_mode", False):
+            return deny(a, "unsupported")            # then the X lock below, like any setter
     if a == "menu_read":
         return Verdict("plain", a, cmd=cmd)
     if a == "menu_read_group":

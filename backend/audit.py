@@ -3,7 +3,8 @@
 Two JSON Lines files in config_dir(), UTF-8, ISO-8601 UTC timestamps with milliseconds:
   audit-tx.log  TX accountability ONLY (tx_start, tx_end, tx_reattach, tx_stop_forced,
                 tx_hb_timeout, tot_off, menu_critical, radio_connect, radio_disconnect,
-                radio_transport_pinned). 10 MiB per file, 10 files (current + .1 ... .9). Never
+                radio_transport_pinned, and the WSJT-X bridge's bridge_config, bridge_tx_paused,
+                bridge_tx_resumed). 10 MiB per file, 10 files (current + .1 ... .9). Never
                 coalesced or rate-limited, and nothing else writes here, so a user cannot flood
                 their own TX records out.
   audit.log     security events (login_ok, login_fail, pw_changed, store_init, reset_admin,
@@ -40,8 +41,12 @@ QUEUE_MAX = 10000
 COALESCE_WINDOW = 60.0
 TX_EVENTS = frozenset({"tx_start", "tx_end", "tx_reattach", "tx_stop_forced", "tx_hb_timeout",
                        "tot_off", "menu_critical", "radio_connect", "radio_disconnect",
-                       "radio_transport_pinned"})
-COALESCED = frozenset({"login_fail", "denied", "tx_denied", "panel_lock", "rate_limited"})
+                       "radio_transport_pinned",
+                       "bridge_config", "bridge_tx_paused", "bridge_tx_resumed"})
+# The bridge's per-connection events are coalesced per peer (key "bridge:<ip>"): a program that
+# reconnects for every poll must not push the sign-in history out of audit.log.
+COALESCED = frozenset({"login_fail", "denied", "tx_denied", "panel_lock", "rate_limited",
+                       "bridge_connect", "bridge_disconnect", "bridge_refused", "bridge_tx_refused"})
 KEY_MIN_INTERVAL = 1.0           # at most one security entry per second per key (connection/source)
 DEFER_MAX = 32                   # entries a key may have waiting for the cap; beyond: counted
 

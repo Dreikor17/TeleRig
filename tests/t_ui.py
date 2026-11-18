@@ -55,12 +55,15 @@ def icons_sprites_build_and_are_current(ctx):
         committed = (FRONT / "vendor" / "lucide" / name).read_text(encoding="utf-8").replace("\r\n", "\n")
         eq(built, committed, f"{name} differs from a fresh build")
     mod = _tool()
-    eq(_symbols((out / "sprite.svg").read_text(encoding="utf-8")), mod.ICONS, "sprite.svg symbols")
+    eq(_symbols((out / "sprite.svg").read_text(encoding="utf-8")), mod.ICONS + mod.OWN_ICONS, "sprite.svg symbols")
     eq(_symbols((out / "sprite-auth.svg").read_text(encoding="utf-8")), mod.AUTH_ICONS, "sprite-auth.svg symbols")
     check("lucide-static 1.52.0" in (out / "sprite.svg").read_text(encoding="utf-8"), "version header")
     check((FRONT / "vendor" / "lucide" / "LICENSE").is_file(), "vendored LICENSE")
     for n in mod.ICONS:
         check((FRONT / "vendor" / "lucide" / "icons" / f"{n}.svg").is_file(), f"icons/{n}.svg")
+    for n in mod.OWN_ICONS:                        # TeleRig's own drawings (never mixed into the vendored set)
+        check((FRONT / "icons" / f"{n}.svg").is_file(), f"frontend/icons/{n}.svg")
+        check(n.startswith("tr-") and not (FRONT / "vendor" / "lucide" / "icons" / f"{n}.svg").exists(), f"{n} is not a Lucide name")
 
 
 @test("unit")
@@ -89,11 +92,12 @@ def icons_bogus_name_fails_naming_it(ctx):
 def icons_every_reference_resolves(ctx):
     """Every #i-NAME the pages and scripts use exists in the sprite their page carries."""
     mod = _tool()
-    full, auth = set(mod.ICONS), set(mod.AUTH_ICONS)
+    full, auth = set(mod.ICONS) | set(mod.OWN_ICONS), set(mod.AUTH_ICONS)
     pat = re.compile(r'#i-([a-z0-9-]+)')
     call = re.compile(r'(?:TR\.icon|setIcon)\([^"\')]*["\']([a-z0-9-]+)["\']')
     named = re.compile(r'\bicon:\s*"([a-z0-9-]+)"')          # admin.js: btn(label, {icon: "copy"})
-    app_files = ["index.html", "tr.js", "layout.js", "app.js", "cwtool.js", "account.js", "admin.js"]
+    app_files = ["index.html", "tr.js", "layout.js", "app.js", "cwtool.js", "account.js", "bridge.js", "device.js",
+                 "admin.js"]
     seen = set()
     for f in app_files:
         text = (FRONT / f).read_text(encoding="utf-8")
@@ -315,7 +319,7 @@ def pages_carry_their_icons_inline(ctx):
     r = c.get("/")
     eq(r.status, 200, "/")
     html = r.text
-    eq(_symbols(html), mod.ICONS, "/ carries the full sprite")
+    eq(_symbols(html), mod.ICONS + mod.OWN_ICONS, "/ carries the full sprite (Lucide + TeleRig's own icons)")
     check("<!--TR_ICONS-->" not in html, "index placeholder replaced")
     check('<body data-role="admin">' in html, "body data-role intact")
     body = html.split('<body data-role="admin">', 1)[1]

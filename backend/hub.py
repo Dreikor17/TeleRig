@@ -144,6 +144,11 @@ class Hub:
         self.conns.pop(conn.id, None)
         conn._wake.set()
 
+    def new_id(self) -> int:
+        """A connection id from the same counter as the WebSockets, for a connection that is not
+        one (a WSJT-X bridge client): the TX arbiter tells owners apart by id, never reused."""
+        return next(self._ids)
+
     @property
     def clients(self) -> list:
         return list(self.conns.values())

@@ -15,6 +15,9 @@ locked mode, Host, Origin, JSON bodies and the session before any route runs (§
   POST /api/disconnect
   POST /api/tx_stop   -> STOP whoever transmits (operator; the HTTP twin of WS tx_stop)
   WS   /ws            -> hello + JSON state in/out + binary scope sweeps out
+  TCP  <bridge port>  -> the WSJT-X bridge (backend/bridge.py): a rigctld-compatible server, off
+                         unless an admin enables it; its commands go through the same policy table
+                         and TX arbiter as a WebSocket frame (_bridge_apply)
 
 Every WS text frame goes through the policy table (backend/policy.py): role, strict argument
 types, canonical commands, the TX locks. TX start/stop goes to the TX arbiter (backend/txarb.py);
@@ -62,6 +65,7 @@ from starlette.websockets import WebSocket
 from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio,
                layout_store, policy, profiles, settings, txarb)
 from . import updater as updater_mod
+from . import bridge as bridge_mod
 from .account_api import read_json
 from .audio_router import AudioRouter
 from .hub import AUDIO_RATE, Coalescer, Hub, MenuQueue  # noqa: F401  (AUDIO_RATE: hostaudio.RATE must match)
@@ -157,11 +161,22 @@ _bind_radio(radio)
 
 # -- TX arbiter, audio router, continuous-setter coalescer, SET-menu queue (§2.12-§2.14) ----------
 def _conn_alive(c) -> bool:
-    return c is not None and not c.closing and hub.conns.get(c.id) is c
+    """A live WebSocket, or a live WSJT-X bridge client (it is not in the hub: it gets no frames)."""
+    return c is not None and not c.closing and (hub.conns.get(c.id) is c or bridge.has(c))
+
+
+def _send_to_conn(c, frame: dict) -> None:
+    """The arbiter's frame for one connection: a bridge client takes it itself (BridgeConn.deliver,
+    it only looks at tx_revoked); a WebSocket gets it on its control queue."""
+    deliver = getattr(c, "deliver", None)
+    if callable(deliver):
+        deliver(frame)
+    else:
+        hub.send_to(c, frame)
 
 
 audio = AudioRouter(hub, host_audio, lambda: radio, lambda: _transport_kind(), log=console)
-arb = txarb.TxArbiter(lambda: radio, send_to=lambda c, f: hub.send_to(c, f),
+arb = txarb.TxArbiter(lambda: radio, send_to=_send_to_conn,
                       broadcast=lambda f: hub.broadcast_control(f), audit=audit.log,
                       flush_audio=lambda: audio.flush_tx(), conn_alive=_conn_alive, log=console)
 audio.arb = arb
@@ -200,6 +215,175 @@ _radio_transition = False          # set while /api/connect or /api/disconnect s
 _connect_lock = asyncio.Lock()     # never waited on: a second caller gets 409 connecting
 
 
+# -- the WSJT-X bridge (backend/bridge.py, docs/WSJTX-BRIDGE.md) ----------------------------------
+def _bridge_apply(conn, cmd: dict) -> str:
+    """One command from a WSJT-X bridge client: decided by the SAME policy table as a browser's
+    frame (role, strict types, canonical command, the connect transition, the TX locks) and carried
+    out by the same TX arbiter / dispatcher. Returns ok | busy | failed | denied:<reason>. Runs on
+    the loop, so the decision and the arbiter call are atomic like a WebSocket message.
+
+    Like a WebSocket frame, a stop (policy.is_fast: an unkey) is decided on the fast path and is
+    never refused, not even while the server is locked or the connection is closing; everything
+    else is refused then. Denials are audited per peer address ("bridge:<ip>"), so a program that
+    retries in a loop is one coalesced line, not one per reconnect."""
+    a = cmd.get("action")
+    if policy.is_fast(cmd):
+        v = policy.evaluate_fast(conn, cmd, _ctx)
+    else:
+        if _locked is not None or conn.closing:
+            return "denied:locked"
+        rule = policy.WS_POLICY.get(a)
+        if rule is None:
+            return "denied:invalid"
+        v = policy.evaluate(rule, conn, cmd, _ctx)
+    k = v.kind
+    key = "bridge:" + str(getattr(conn, "ip", "?"))
+    try:
+        if k == "busy" and (v.extra or {}).get("tx_denied"):
+            audit.log("tx_denied", key=key, user=conn.user, conn=conn.id, action=a,
+                      owner=(v.extra or {}).get("owner"))
+        elif k in ("busy", "deny"):
+            audit.log("denied", key=key, user=conn.user, conn=conn.id, action=a,
+                      reason="busy" if k == "busy" else v.reason)
+    except Exception:
+        pass
+    if k == "deny":
+        return "denied:" + (v.reason or "invalid")
+    if k == "busy":
+        return "busy"
+    if k == "ignore":
+        return "ok"
+    if k == "claim":
+        r = arb.claim(conn, v.extra["claim"], args=v.extra.get("args"))
+        return "ok" if r in ("started", "added", "noop") else ("busy" if r == "busy" else "failed")
+    if k == "release":
+        arb.release(conn, v.extra["claim"])
+        return "ok"
+    if k == "noowner_stop":
+        arb.stop_idle(v.extra["claims"])
+        return "ok"
+    if k == "plain":
+        _handle_cmd(v.cmd)
+        return "ok"
+    return "denied:invalid"                           # never allow by default
+
+
+class _BridgeOps:
+    """What the bridge may do in the server (looked up at call time; see bridge.Bridge)."""
+
+    def radio(self):
+        return radio
+
+    def usable(self) -> bool:
+        return bool(radio.state.get("connected")) and not _radio_transition and _locked is None
+
+    def new_id(self) -> int:
+        return hub.new_id()
+
+    def apply(self, conn, cmd: dict) -> str:
+        return _bridge_apply(conn, cmd)
+
+    def heartbeat(self, conn) -> None:
+        arb.on_tx_hb(conn)                            # never calls the radio (I16)
+
+    def closed(self, conn) -> None:
+        arb.on_conn_closed(conn)                      # a TX owner is released at once (I5)
+
+    def owner(self):
+        return arb.owner
+
+    def stop_owner(self, by: str) -> None:
+        if bridge.owns_tx():
+            arb.force_release("stopped", by=by)
+
+    def web_port(self):
+        """TeleRig's own web port (run.py exports it), never opened as the bridge port."""
+        try:
+            return int(os.environ.get("TELERIG_PORT") or 0) or None
+        except ValueError:
+            return None
+
+    def persist_pause(self, info) -> None:
+        settings.set_bridge_paused(info)              # config.json "bridge_paused" (None: removed)
+
+
+_bridge_bcast = None               # the pending (debounced) status broadcast
+
+
+def _bridge_broadcast() -> None:
+    """The bridge status to every WebSocket: operators and admins get the peers and the error
+    text, viewers the summary."""
+    global _bridge_bcast
+    _bridge_bcast = None
+    try:
+        full = {"type": "bridge", "bridge": bridge.status(True)}
+        lite = {"type": "bridge", "bridge": bridge.status(False)}
+        op = auth.ROLE_RANK["operator"]
+        hub.broadcast_control(full, lambda c: auth.rank(c.role) >= op)
+        hub.broadcast_control(lite, lambda c: auth.rank(c.role) < op)
+    except Exception as e:
+        console(f"TeleRig: bridge status broadcast failed: {e!r}")
+
+
+def _bridge_changed() -> None:
+    """Something the UI shows changed (a client came or went, pause / resume, the listener): one
+    broadcast at most every 0.25 s, so a client that reconnects in a loop cannot flood the tabs."""
+    global _bridge_bcast
+    loop = hub.loop
+    if loop is None or _bridge_bcast is not None:
+        return
+    try:
+        _bridge_bcast = loop.call_later(0.25, _bridge_broadcast)
+    except RuntimeError:
+        _bridge_bcast = None
+
+
+bridge = bridge_mod.Bridge(_BridgeOps(), audit=audit.log, log=console, on_change=_bridge_changed,
+                           version=__version__)
+
+
+_bridge_pause_restored = False     # the pause saved at the last stop was read (once, at start)
+_bridge_task = None                # the running follow (single flight)
+
+
+async def _bridge_follow() -> None:
+    """The bridge follows config.json (an admin's save or a hand edit, picked up within a tick);
+    while the server is locked, or the file is unreadable, it is off. The first readable look also
+    restores a transmit pause that was in force when TeleRig stopped."""
+    global _bridge_pause_restored
+    try:
+        cfg = None if _locked is not None else settings.bridge()
+    except Exception:
+        cfg = None
+    if cfg is not None and not _bridge_pause_restored:
+        try:
+            bridge.restore_pause(settings.bridge_paused())
+            _bridge_pause_restored = True
+        except Exception as e:
+            console(f"TeleRig: reading the saved bridge pause failed: {e!r}")
+    want = dict(bridge_mod.DEFAULTS, allow=[]) if cfg is None else cfg
+    if want != bridge.cfg:
+        await bridge.configure(want)
+    await bridge.tick()
+
+
+def _bridge_kick() -> None:
+    """From the watchdog tick: drop bridge clients whose radio is gone NOW (synchronous), then run
+    the follow as its own task, one at a time, so the arbiter tick never waits for a listener to
+    close or open."""
+    global _bridge_task
+    bridge.sweep()
+    if _bridge_task is not None and not _bridge_task.done():
+        return
+
+    async def run():
+        try:
+            await _bridge_follow()
+        except Exception as exc:
+            console(f"TeleRig: bridge tick failed: {exc!r}")
+    _bridge_task = asyncio.ensure_future(run())
+
+
 def _menu_group_run(group: str) -> int:
     """Start reading one SET-menu group (the radio spaces the reads on its own thread)."""
     r = radio
@@ -233,7 +417,7 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 # -- HTTP routes -------------------------------------------------------------
 # One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15).
 ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js",
-          "account.js", "admin.js")
+          "account.js", "bridge.js", "device.js", "admin.js")
 
 
 def _asset_version():
@@ -274,6 +458,7 @@ def status_for(p) -> dict:
            "transport_kind": _transport_kind(), "connecting": bool(_radio_transition),
            "host_audio": audio.status(),
            "tx": arb.snapshot(),
+           "bridge": bridge.status(p is not None and auth.rank(p.role) >= auth.ROLE_RANK["operator"]),
            "autoconnect_allowed": not no_autoconnect() and not _autoconnect_spent,
            "sim_only": sim_only()}
     if p is not None and auth.rank(p.role) >= auth.ROLE_RANK["operator"]:
@@ -525,6 +710,7 @@ async def api_connect(request):
         try:
             if arb.owner is not None:
                 arb.force_release("radio_change", by=p.user)
+            bridge.on_radio_change()        # every bridge client reconnects and re-reads the radio
             menu_queue.clear()
             await audio.on_radio_change()
             try:
@@ -569,6 +755,7 @@ async def api_disconnect(request):
         try:
             _autoconnect_spent = True       # explicit disconnect: page loads no longer auto-connect
             arb.force_release("radio_disconnect", by=p.user)
+            bridge.on_radio_change()
             menu_queue.clear()
             await audio.on_radio_change()   # release the host sound cards with the radio
             rid = radio.state.get("radio") if radio.state.get("connected") else None
@@ -580,6 +767,24 @@ async def api_disconnect(request):
     return JSONResponse({"ok": True})
 
 
+BRIDGE_STOP_WINDOW = txarb.REATTACH_WINDOW   # a STOP this soon after a bridge session ended pauses it
+
+
+def _tx_stop(by) -> bool:
+    """STOP (WS tx_stop, POST /api/tx_stop) from `by`. Stopping a bridge client's TX pauses bridge
+    transmit (its tx_revoked "stopped"). A STOP that finds nobody transmitting moments after a
+    bridge session ended (the program unkeyed on its own just as the operator pressed STOP) pauses
+    it too: the operator meant the program to stop, and it would key again at its next slot."""
+    had_owner = arb.owner is not None
+    stopped = arb.stop(by, explicit=True)
+    if not had_owner:
+        ls = arb.last_session or {}
+        if getattr(ls.get("conn"), "kind", None) == "bridge" \
+                and arb.clock() - ls.get("ended_at", -1e9) < BRIDGE_STOP_WINDOW:
+            bridge.pause("stopped", by=getattr(by, "user", None))
+    return stopped
+
+
 @requires("operator")
 async def api_tx_stop(request):
     """HTTP STOP (AR-15): stops whoever transmits (the owner's own claims, another user's TX, or a
@@ -587,7 +792,7 @@ async def api_tx_stop(request):
     body = await read_json(request)
     if not isinstance(body, dict):
         return body
-    stopped = arb.stop(request.state.principal, explicit=True)
+    stopped = _tx_stop(request.state.principal)
     return JSONResponse({"ok": True, "stopped": bool(stopped)})
 
 
@@ -824,7 +1029,7 @@ def _dispatch(conn, v) -> None:
     elif k == "release":
         arb.release(conn, v.extra["claim"])
     elif k == "stop":                                # tx_stop only (F18, I23)
-        arb.stop(conn, explicit=True)
+        _tx_stop(conn)
     elif k == "noowner_stop":                        # nobody owns TX: the stop primitive, as v1
         arb.stop_idle(v.extra["claims"])
     elif k == "plain":
@@ -870,8 +1075,19 @@ def _h_menu_group(conn, v) -> None:
         _reply(conn, policy.busy("menu_read_group", None, retry_after=retry))
 
 
+def _h_bridge_tx(conn, v) -> None:
+    """Pause (on:false) or resume (on:true) transmit over the WSJT-X bridge (operators). Pausing
+    while a bridge client transmits stops that transmission first, the same forced stop as STOP."""
+    if v.cmd["on"]:
+        bridge.resume(by=conn.user)
+        return
+    if bridge.owns_tx():
+        arb.stop(conn, explicit=True)            # tx_revoked "stopped" -> the bridge pauses itself
+    bridge.pause("operator", by=conn.user)       # (a no-op when the stop above already paused it)
+
+
 NEW_HANDLERS = {"tx_hb": _h_tx_hb, "rx_audio": _h_rx_audio, "mic": _h_mic,
-                "menu_read_group": _h_menu_group}
+                "menu_read_group": _h_menu_group, "bridge_tx": _h_bridge_tx}
 
 
 def _coalesced_apply(conn, cmd: dict) -> None:
@@ -921,6 +1137,8 @@ def _handle_cmd(cmd: dict) -> None:
                 radio.set_mode(code, cmd.get("filter"))
         elif action == "set_filter":
             radio.set_filter(int(cmd["filter"]))
+        elif action == "data_mode":
+            radio.set_data(bool(cmd["on"]))
         elif action == "vfo":
             radio.select_vfo(int(cmd["code"]))
         elif action == "mem_recall":
@@ -1096,6 +1314,10 @@ def _enter_locked(e: StoreCorrupt) -> None:
         audio.stop_all()
     except Exception:
         pass
+    try:
+        bridge.drop_all("server_locked")         # no bridge client stays connected while locked
+    except Exception:
+        pass
     hub.kick_all(4403, "server_locked")
 
 
@@ -1237,7 +1459,7 @@ def _shutdown_for_restart() -> None:
 
 updater = updater_mod.Updater(_update_repo(), log=console, audit=audit.log)
 admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind(),
-               updater=updater, restart=_restart_self, boot=_BOOT_ID)
+               bridge=bridge, updater=updater, restart=_restart_self, boot=_BOOT_ID)
 
 
 def _revalidate_conns() -> int:
@@ -1308,6 +1530,10 @@ async def _store_tick() -> None:
                 limiter.sweep()
     except StoreCorrupt as exc:
         _enter_locked(exc)
+    try:
+        _bridge_kick()               # config changes, a listener to retry, clients without a radio
+    except Exception as exc:
+        console(f"TeleRig: bridge tick failed: {exc!r}")
 
 
 async def _watchdog() -> None:
@@ -1357,10 +1583,20 @@ async def _lifespan(app):
         if _watchdog_task is not None:
             _watchdog_task.cancel()
         # Shutdown never leaves the radio keyed (§2.13): explicit release, audio off, disconnect.
+        # The bridge first: from here it serves nothing and nobody is connected to it, so no
+        # bridge command can key again between the release and the end.
+        try:
+            bridge.begin_stop()
+        except Exception as e:
+            console(f"TeleRig: bridge stop failed: {e!r}")
         try:
             arb.force_release("shutdown", explicit=True)
         except Exception as e:
             console(f"TeleRig: TX release at shutdown failed: {e!r}")
+        try:
+            await bridge.stop()
+        except Exception as e:
+            console(f"TeleRig: bridge stop failed: {e!r}")
         try:
             audio.stop_all()
         except Exception:

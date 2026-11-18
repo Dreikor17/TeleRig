@@ -96,6 +96,10 @@ class Capabilities:
     tab_tx: bool = True         # the TX control tab (comp/vox/mon/tuner/split/RIT)
     tab_dsp: bool = True        # the DSP control tab
     memory: bool = False        # Radio-tab MEMORY recall group (CI-V 08/0A). Off unless a rig uses it.
+    # Icom DATA mode switch (CI-V 1A 06): USB-D / LSB-D / FM-D / AM-D. In DATA mode the radio takes
+    # its modulation from the DATA MOD source and bypasses the speech processor, which is what a
+    # digital-mode program (WSJT-X "Data/Pkt") expects. Yaesu has real DATA-USB/LSB/FM modes instead.
+    data_mode: bool = False
 
 
 @dataclass
@@ -303,6 +307,7 @@ IC9700 = RadioProfile(
         ]},
     ],
 )
+IC9700.capabilities.data_mode = True        # DATA mode with filter: CI-V 1A 06 (CI-V guide p. 18)
 
 from .menus.ic7300mk2_menu import IC7300MK2_MENU  # noqa: E402  (after MenuItem is defined above)
 
@@ -346,6 +351,7 @@ IC7300MK2 = RadioProfile(
         cw_tx=True, menus=True,
         fm_tone=True, fm_dcs=False,               # FM repeater tone/TSQL (no DTCS over CI-V)
         icom_cw=True,                             # APF / break-in / CW pitch+speed / filter shape
+        data_mode=True,                           # DATA mode with filter: CI-V 1A 06 (CI-V guide p. 22)
     ),
     menu=IC7300MK2_MENU,
     connect_help=[

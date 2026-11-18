@@ -7,6 +7,26 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
+### WSJT-X bridge, PTT hotkey, full screen (unreleased)
+- **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
+  TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
+  and the browser share one radio, including an Icom on its LAN port. Off by default, this PC only
+  by default, receive-only until an admin allows transmit. A bridge program is one more user:
+  one transmitter at a time, **ON AIR · WSJT-X BRIDGE** for everyone, STOP by any operator (which
+  then pauses bridge transmit until an operator resumes it), the 120 s limit, a silence limit,
+  and every transmission in the TX log. Checked against the real Hamlib client of 4.6.5, 4.7.1
+  (WSJT-X's build) and 4.7.2 on the simulator; on-air use is for the operator to confirm. Control
+  only: audio still comes from the radio's USB sound card. See [docs/WSJTX-BRIDGE.md](docs/WSJTX-BRIDGE.md).
+- **Icom DATA mode** (USB-D / LSB-D / FM-D / AM-D, CI-V `1A 06`) on the IC-9700 and IC-7300MK2: a
+  **DATA** switch next to the mode buttons, and what the bridge selects for WSJT-X's "Data/Pkt".
+- **PTT hotkey.** A key of your choice on this device, hold-to-talk or press-to-toggle, with the PTT
+  button's fail-safe rule: a press while you transmit always stops, and the key never keys while
+  you type, while a dialog or menu is open or while the tab is hidden (user menu > PTT hotkey). A
+  hold whose claim is answered late can never stay keyed after the key is up; Shift, Ctrl and Alt
+  can't be the hotkey.
+- **Full screen with the screen kept awake** (top bar; "Keep screen awake" on phones without a
+  full-screen mode). The wake lock needs HTTPS or localhost.
+
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
   CW — that can be moved, resized, collapsed, hidden and added back in **Arrange** mode (mouse,
@@ -207,6 +227,22 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - Read **true IF filter widths** (`1A 03`); scope **reference-level / sweep-speed /
   VBW** controls.
 
+### WSJT-X bridge follow-ups
+- **Audio for the bridge**: route a LAN radio's audio to and from sound devices on the TeleRig PC
+  (a virtual audio cable), so WSJT-X works with an Icom reached over LAN only; and an audio path
+  for a program on another computer.
+- **Split with a separate transmit VFO** over the bridge (WSJT-X "Rig" split), per radio.
+- **Meters over the bridge** (SWR, power out) for programs that show them.
+
+### From the Rig-Control-Web review
+- **Spots panel**: POTA / SOTA / WWFF / DX spots with band and mode filters; click a spot to tune.
+- **HF conditions**: solar numbers and MUF maps.
+- **Command console**: send a raw CI-V / CAT command and see the answer; a diagnostics panel.
+- **FT8 decoder** in the browser, for a quick look at a band.
+- **Live CW keying** from a paddle (MIDI adapter), the keyboard or touch.
+- **Video feed** of the radio's own screen.
+- **Packaging**: a desktop app, Docker, installers.
+
 ### UI
 - The **FUNCTION-screen panel** — a clean modern panel of the IC-9700 FUNCTION-screen
   toggles grouped by category. *(The SET-mode menu tree shipped — see Done.)*
@@ -217,7 +253,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   a single TX owner (see Done). *Built-in HTTPS shipped* — serve TLS directly with
   `run.py --ssl-certfile/--ssl-keyfile` (or `TELERIG_SSL_CERT/_KEY`).
 - **Phase 2 follow-ups** to sign-in and TX ownership: front-panel TX detection on the Icom radios
-  (a `1C 00` read), the high-SWR cutoff, LAN radio credentials kept on the server (admin-only)
+  (a `1C 00` read; until then a WSJT-X bridge program cannot see a hand-mic over at an Icom and
+  can key under it), the high-SWR cutoff, LAN radio credentials kept on the server (admin-only)
   instead of in each browser, server-side session ids with a shorter admin session, stable host
   audio device ids, and a per-radio serial-line (RTS/DTR) policy.
 - **Remote power-on** from networked standby where the radio supports it.

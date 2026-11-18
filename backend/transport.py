@@ -196,8 +196,8 @@ class SimTransport(Transport):
         sub_freq = profile.bands[1].default if (self.dual and len(profile.bands) > 1) else main_freq
         self.active = "main"
         self.b = {
-            "main": {"freq": main_freq, "mode": 0x01, "filt": 0x01},   # USB
-            "sub":  {"freq": sub_freq, "mode": 0x05, "filt": 0x01},    # FM
+            "main": {"freq": main_freq, "mode": 0x01, "filt": 0x01, "data": 0},   # USB
+            "sub":  {"freq": sub_freq, "mode": 0x05, "filt": 0x01, "data": 0},    # FM
         }
         self.att = 0x00
         self.span = 500_000        # full span Hz (±250k, widest)
@@ -347,6 +347,17 @@ class SimTransport(Transport):
                 self._scope_cmd(s, d)
             elif c == 0x1A and s == 0x05:                   # SET-menu (1A 05 <data-number>)
                 self._menu_cmd(d)
+            elif c == 0x1A and s == 0x06:                   # DATA mode with filter
+                if not d:                                   # read
+                    on = act.get("data", 0)
+                    self._emit(0x1A, 0x06, bytes([on, act["filt"] if on else 0]))
+                elif d[0] and act["mode"] not in (0x00, 0x01, 0x02, 0x05):
+                    self._emit(civ.NG, None)                # CW / RTTY: DATA is "OFF (fixed)"
+                else:
+                    act["data"] = 1 if d[0] else 0
+                    if act["data"] and len(d) > 1 and d[1] in (1, 2, 3):
+                        act["filt"] = d[1]
+                    self._ok()
             elif c == 0x1C and s == 0x01:                   # internal antenna tuner
                 if d:
                     self.tuner = 1 if d[0] in (1, 2) else 0; self._ok()

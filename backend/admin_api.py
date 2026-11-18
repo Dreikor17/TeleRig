@@ -20,6 +20,8 @@ which cannot ride in a path segment). Errors are {ok:false, error, message[, fie
   GET    /api/admin/allowed_hosts · PUT (sudo)    names (Host check) and full origins (I15)
   GET    /api/admin/audio · PUT (sudo)            host sound-card pins per radio (F22 defaults)
   PUT    /api/admin/radio_transport       sudo    the F20 transport pin (never LAN credentials)
+  GET    /api/admin/bridge · PUT (sudo)           the WSJT-X bridge: on/off, port, who may connect,
+                                                  transmit on/off, the silence limit (+ live status)
   GET    /api/admin/remote_status                 Tailscale + behind_proxy (+ stale flag)
   POST   /api/admin/tailscale_serve       sudo + direct-local (F9)
   POST   /api/admin/tailscale_serve_off           (closing exposure: no sudo)
@@ -49,6 +51,7 @@ from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
 from . import __version__, accounts, audit, auth, hostaudio, layout_store, policy, profiles, settings, tailscale
+from . import bridge as bridge_mod
 from .account_api import (NO_STORE, _layout_write, _record_failure, _sem, err, hash_async, rate_limited,
                           read_json, source, verify_async)
 from .audio_router import CODEC_RE, codec_default, find_device
@@ -63,6 +66,7 @@ class _Ctx:
     hub: Any = None
     arb: Any = None
     audio: Any = None
+    bridge: Any = None
     radio: Callable[[], Any] = staticmethod(lambda: None)
     transport_kind: Callable[[], str] = staticmethod(lambda: "none")
     updater: Any = None                     # backend/updater.py (Administration > Update)
@@ -74,8 +78,10 @@ _ctx = _Ctx()
 
 
 def bind(*, hub=None, arb=None, audio=None, radio: Optional[Callable] = None,
-         transport_kind: Optional[Callable] = None, updater=None, restart: Optional[Callable] = None,
-         boot: Optional[str] = None) -> None:
+         transport_kind: Optional[Callable] = None, bridge=None, updater=None,
+         restart: Optional[Callable] = None, boot: Optional[str] = None) -> None:
+    if bridge is not None:
+        _ctx.bridge = bridge
     if updater is not None:
         _ctx.updater = updater
     if restart is not None:
@@ -931,6 +937,69 @@ async def api_audit(request):
                                             "Cache-Control": "no-store"})
 
 
+# -- the WSJT-X bridge (backend/bridge.py) ------------------------------------------------------
+def _bridge_status():
+    b = _ctx.bridge
+    return b.status(True) if b is not None else None
+
+
+@requires("admin")
+async def api_bridge_get(request):
+    return JSONResponse({"config": settings.bridge(), "status": _bridge_status(),
+                         "web_port": auth.bound_port(request.scope),
+                         "limits": {"port": [bridge_mod.PORT_MIN, bridge_mod.PORT_MAX],
+                                    "silence_s": [bridge_mod.SILENCE_MIN, bridge_mod.SILENCE_MAX],
+                                    "allow": bridge_mod.ALLOW_MAX, "clients": bridge_mod.MAX_CLIENTS},
+                         "defaults": dict(bridge_mod.DEFAULTS, allow=[])}, headers=NO_STORE)
+
+
+@requires("admin", sudo=True)
+async def api_bridge_put(request):
+    """Save the bridge settings (sudo: this decides who may command the radio, and whether a
+    program may transmit through it). Applied at once; a client already connected is dropped when
+    what it was told at connect is no longer true.
+
+    `expect` (optional) is the configuration the form was showing: when the saved one differs
+    (another admin's save, or a hand edit of config.json meanwhile) nothing is written and the
+    answer is 409 conflict with the current configuration, so a stale form never undoes a change it
+    did not show. Switching transmit from off to on ends a transmit pause (audited as a resume by
+    this admin): it is a deliberate new go-ahead, like an operator's resume."""
+    p = request.state.principal
+    body = await read_json(request)
+    if not isinstance(body, dict):
+        return body
+    cfg, bad = bridge_mod.validate_config(body, web_port=auth.bound_port(request.scope))
+    if bad is not None:
+        return err(400, "invalid", bad[1], field=bad[0] or None)
+    old = settings.bridge()
+    if "expect" in body:
+        exp = body["expect"]
+        if not isinstance(exp, dict):
+            return err(400, "invalid", "expect must be the settings object the form was showing.", field="expect")
+        if bridge_mod.normalize_config(exp)[0] != bridge_mod.normalize_config(old)[0]:
+            return err(409, "conflict", "The bridge settings were changed meanwhile (by another admin, or by "
+                                        "hand in config.json). Here they are as saved now: check them and save again.",
+                       config=old)
+    _, fail = await _write(settings.set_bridge, cfg)
+    if fail is not None:
+        return fail
+    audit.log("bridge_config", by=p.user, ip=auth.client_ip(request.scope), enabled=cfg["enabled"],
+              port=cfg["port"], listen=cfg["listen"], allow=list(cfg["allow"]), ptt=cfg["ptt"],
+              silence_s=cfg["silence_s"], was_enabled=old.get("enabled"), was_ptt=old.get("ptt"))
+    b = _ctx.bridge
+    if b is not None:
+        try:
+            await b.configure(cfg)
+        except Exception as e:
+            console(f"TeleRig: applying the bridge settings failed: {e!r}")
+        if cfg["ptt"] and not old.get("ptt"):
+            try:
+                b.resume(by=p.user)                  # a no-op (False) when it was not paused
+            except Exception as e:
+                console(f"TeleRig: ending the bridge pause failed: {e!r}")
+    return _ok(config=cfg, status=_bridge_status())
+
+
 # -- Administration > Update (backend/updater.py) ------------------------------------------------
 def _update_payload() -> dict:
     u = _ctx.updater
@@ -1009,6 +1078,8 @@ def routes() -> list:
         Route("/api/admin/audio", api_audio_get, methods=["GET"]),
         Route("/api/admin/audio", api_audio_put, methods=["PUT"]),
         Route("/api/admin/radio_transport", api_radio_transport, methods=["PUT"]),
+        Route("/api/admin/bridge", api_bridge_get, methods=["GET"]),
+        Route("/api/admin/bridge", api_bridge_put, methods=["PUT"]),
         Route("/api/admin/remote_status", api_remote_status, methods=["GET"]),
         Route("/api/admin/tailscale_serve", api_tailscale_serve, methods=["POST"]),
         Route("/api/admin/tailscale_serve_off", api_tailscale_serve_off, methods=["POST"]),

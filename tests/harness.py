@@ -66,7 +66,7 @@ def eq(got: Any, want: Any, msg: str = "") -> None:
 
 
 # -- test registry (used by run_phase1.py) --------------------------------------------------
-KNOWN_GROUPS = ("unit", "smoke", "store", "auth", "ws", "tx", "admin", "layout")
+KNOWN_GROUPS = ("unit", "smoke", "store", "auth", "ws", "tx", "admin", "layout", "bridge")
 REGISTRY: list = []                                # [(group, name, fn)]
 
 

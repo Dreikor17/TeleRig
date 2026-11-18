@@ -1,7 +1,8 @@
 """TX arbiter (spec §2.13, E6, F18, F19): at most one TX owner (I3).
 
-The owner is a WebSocket connection or EXTERNAL (-1, "FRONT PANEL": a radio that reports TX was
-keyed outside TeleRig). An owner holds claims from {ptt, cw, tune, vox}; the mic is NOT a claim
+The owner is a connection (a WebSocket, or a WSJT-X bridge client: backend/bridge.py) or EXTERNAL
+(-1, "FRONT PANEL": a radio that reports TX was keyed outside TeleRig). An owner holds claims from
+{ptt, cw, tune, vox}; the mic is NOT a claim
 (F12). Runs only on the event-loop thread: every method is called from the loop (WS messages,
 HTTP handlers, the watchdog, and radio-state pushes scheduled with call_soon_threadsafe).
 
@@ -21,7 +22,9 @@ Rules (see the table in §2.13):
     simply ends there. The session ends at a cap only when nothing else is held.
   * The owner's socket closing or being kicked (the server's kick hook; the watchdog checks it
     too), or 6 s without tx_hb from the owner, releases (I5, I7). A kicked connection's tx_hb is
-    ignored.
+    ignored. A connection may carry its own limit in `hb_timeout` (a bridge client: every command
+    it sends is its heartbeat, and its limit is the admin's "silence" setting); a missing or
+    invalid value means the 6 s default, never "no limit".
   * Reconciliation: a claim not shown in radio state for 1 s after the key grace is dropped (the
     radio failsafe, a finished CW message, a start that silently did nothing).
   * EXTERNAL needs 0.6 s of persistent radio TX while idle; a session the radio ended is reattached
@@ -503,7 +506,7 @@ class TxArbiter:
         if expired and self._caps_expired(expired, st):
             return
         if not lag and now > self.hb_grace_until and oc is not None \
-                and now - getattr(oc, "last_hb", 0.0) > HB_TIMEOUT:
+                and now - getattr(oc, "last_hb", 0.0) > hb_limit(oc):
             self._audit("tx_hb_timeout", user=self.owner_user, conn=self.owner,
                         silent_s=round(now - getattr(oc, "last_hb", 0.0), 1))
             self.force_release("heartbeat")
@@ -587,6 +590,15 @@ class TxArbiter:
                            "radio": st.get("radio"), "freq": st.get("freq"), "mode": st.get("mode_name")}
         self._audit("tx_start", **self.tx_session)
         self._bcast()
+
+
+def hb_limit(conn) -> float:
+    """The owner's heartbeat limit in seconds: the connection's own `hb_timeout` when it is a
+    sane positive number (at most SESSION_MAX), else HB_TIMEOUT. Fails safe to the default."""
+    v = getattr(conn, "hb_timeout", None)
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and 0 < v <= SESSION_MAX:
+        return float(v)
+    return HB_TIMEOUT
 
 
 def _iso(t: float) -> str:

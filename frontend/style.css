@@ -167,6 +167,42 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
    is more specific than a plain .phone-only rule, so the desktop hide needs !important. A [hidden]
    item stays hidden at every width: the global [hidden] rule is !important and nothing un-hides it. */
 @media (min-width:900px){ .phone-only{display:none!important} }
+/* the WSJT-X bridge button + its panel (bridge.js). The button exists only while the bridge is enabled. */
+.bridge-wrap{position:relative;display:flex}
+.bridge-btn{position:relative}
+.bridge-dot{position:absolute;right:4px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--txt-dim);
+  box-shadow:0 0 0 2px var(--field)}
+.bridge-btn[data-state="live"]{color:var(--accent-hi);border-color:var(--accent-line)}
+.bridge-btn[data-state="live"] .bridge-dot{background:var(--accent-hi)}
+.bridge-btn[data-state="paused"]{color:var(--warn-hi);border-color:rgba(245,158,11,.5);background:var(--warn-tint)}
+.bridge-btn[data-state="paused"] .bridge-dot{background:var(--warn-hi)}
+.bridge-btn[data-state="error"]{color:var(--danger-hi);border-color:var(--danger)}
+.bridge-btn[data-state="error"] .bridge-dot{background:var(--danger)}
+.bridge-btn[data-state="onair"]{color:#fff;border-color:var(--tx-solid);background:var(--tx-solid)}
+.bridge-btn[data-state="onair"] .bridge-dot{background:#fff;box-shadow:none;animation:trpulse 1.6s ease-in-out infinite}
+.bridge-pop{position:absolute;right:0;top:calc(100% + 6px);z-index:150;width:min(340px,calc(100vw - 24px));padding:10px 12px;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--r-card);box-shadow:var(--shadow-pop);
+  font:12px/1.45 var(--font-ui);color:var(--txt)}
+.bp-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+.bp-head b{letter-spacing:.08em;font-size:11px}
+.bp-tag{display:inline-block;font:700 9px/1 var(--font-ui);letter-spacing:.08em;text-transform:uppercase;padding:3px 6px;border-radius:999px;
+  border:1px solid var(--border);color:var(--txt-dim);background:var(--hover);white-space:nowrap}
+.bp-tag.bp-live{color:var(--accent-hi);border-color:var(--accent-line);background:var(--accent-tint)}
+.bp-tag.bp-paused{color:var(--warn-hi);border-color:rgba(245,158,11,.4);background:var(--warn-tint)}
+.bp-tag.bp-error{color:var(--danger-hi);border-color:var(--danger)}
+.bp-tag.bp-onair{color:#fff;border-color:var(--tx-solid);background:var(--tx-solid)}
+.bp-line{margin:4px 0}
+.bp-dim,.bp-hint{color:var(--txt-dim)}
+.bp-warn{color:var(--warn-hi)}
+.bp-hint{margin:8px 0 0;font-size:11px}
+.bp-peers{list-style:none;margin:4px 0;padding:0}
+.bp-peers li{display:flex;align-items:center;flex-wrap:wrap;gap:4px 6px;margin:2px 0}
+.bp-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+/* a touch-only device has no key to bind: no "PTT hotkey…" item there */
+@media (hover:none) and (pointer:coarse){ #umHotkey{display:none!important} }
+/* MODE group: the Icom DATA switch (hidden for radios without it) */
+#dataRow{margin-top:6px}
+#dataBtn.dim{opacity:.5}
 /* connection cluster */
 .conn{display:flex;align-items:center;gap:8px;margin-left:auto;flex-wrap:wrap;justify-content:flex-end;min-width:0}
 .conn-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
@@ -656,6 +692,27 @@ details.tm-card[open]>summary::before{content:"\25BE";color:var(--accent-hi)}
   box-shadow:var(--shadow-pop);padding:16px}
 .tm-sudo-title{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt)}
 .tm-sudo-title svg.i{color:var(--warn-hi)}
+/* Administration > WSJT-X bridge */
+.tm-input.tm-short{width:120px}
+textarea.tm-area{width:100%;max-width:100%;min-height:64px;resize:vertical;padding:7px 9px;
+  background:var(--field);color:var(--txt);border:1px solid var(--border);border-radius:var(--r-ctl);
+  font:12px/1.5 var(--font-ui)}
+textarea.tm-area::placeholder{color:var(--txt-dim);opacity:.8}
+textarea.tm-area:focus-visible{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-tint)}
+.tm-field>.tm-radio{display:flex;margin:4px 0}
+/* the PTT hotkey dialog (device.js) */
+.hk-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0 4px}
+.hk-row .tm-label{margin:0}
+.hk-key{display:inline-block;min-width:96px;padding:6px 12px;text-align:center;border:1px solid var(--border-strong);border-bottom-width:3px;
+  border-radius:var(--r-ctl);background:var(--field);color:var(--txt);font:700 13px/1.2 var(--font-ui);letter-spacing:.02em}
+.hk-key.empty{color:var(--txt-dim);font-weight:600;border-style:dashed}
+.hk-key.wait{color:var(--accent-hi);border-color:var(--accent-line);background:var(--accent-tint)}
+.hk-msg{min-height:16px;color:var(--txt-dim)}
+.hk-modes{display:grid;gap:6px;margin:10px 0}
+.hk-mode{display:flex;align-items:flex-start;gap:8px;font-size:12.5px;cursor:pointer}
+.hk-mode input{margin-top:2px}
+.hk-notes{margin:10px 0 0;padding-left:18px;font:12px/1.5 var(--font-prose,var(--font-ui));color:var(--txt-dim)}
+.hk-notes li{margin:2px 0}
 /* #hostAudioInfo for admins: a link to Admin → Radio & audio (G-5) */
 .host-audio-info .ha-link{color:var(--accent-hi);text-decoration:underline;text-underline-offset:2px;cursor:pointer}
 @media (max-width:899px){

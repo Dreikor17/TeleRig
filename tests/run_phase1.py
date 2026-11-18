@@ -4,7 +4,7 @@
     .venv\\Scripts\\python.exe tests\\run_phase1.py [--only GROUP[,GROUP...]] [-k TEXT] [--list]
                                                   [--tmp DIR] [--keep] [-v]
 
-Groups: unit, smoke, store, auth, ws, tx, admin, layout. Tests live in tests/t_<anything>.py and
+Groups: unit, smoke, store, auth, ws, tx, admin, layout, bridge. Tests live in tests/t_<anything>.py and
 register with @harness.test("<group>"); `unit` also runs every backend/*_test.py as a module
 (python -m backend.<name>) with a scratch environment.
 

@@ -146,6 +146,22 @@ When `transports`/`capabilities` are omitted they are **synthesized from the fla
 flags in `__post_init__`**, so you only spell them out where the radio differs (e.g. the
 FT‑991A has no CAT active‑VFO selector → `vfo_select=False`).
 
+## The WSJT-X bridge and a new radio
+
+The bridge ([WSJTX-BRIDGE.md](WSJTX-BRIDGE.md)) lets WSJT-X and other Hamlib programs use a radio
+through TeleRig. It needs nothing from the handler: every bridge command becomes the canonical
+command a browser sends and goes through the policy table and the TX arbiter, so the
+transmit-safety contract above covers it unchanged (a bridge program is one more TX owner). Per
+radio, in `backend/rigctl.py`:
+
+- **Mode names.** Every mode in the profile's `modes` needs a Hamlib name: `_CIV` for a CI-V radio
+  (keyed by mode name and DATA on/off), `_YAESU` for the Yaesu labels. `python -m backend.rigctl_test`
+  fails for a profile mode without one.
+- **Data modes.** Yaesu-style radios have data modes of their own (`DATA-USB` = `PKTUSB`). On an
+  Icom with the DATA switch set `capabilities.data_mode = True` (CI-V `1A 06`); the handler then
+  reads the DATA state with the mode and sends it explicitly after every mode change.
+- **Model number.** Add the radio's Hamlib model number (`rigctl -l`) to `HAMLIB_MODEL`.
+
 ## Steps to add a radio
 1. Add a `RadioProfile` (id, name, make, protocol, address/baud, bands, modes, filters, steps,
    `connect_help`, the **safety/feature fields** — `tot_civ`/`tot_cat`, SWR meter source,

@@ -1,5 +1,5 @@
 """config.json accessors (spec §2.3): allowed hosts, behind_proxy, host-audio pins, radio
-transports, last radio, and a raw read of the v1 keys.
+transports, last radio, the WSJT-X bridge settings, and a raw read of the v1 keys.
 
 Lenient by design (AR-51): config.json is "corrupt" (locked mode) only when it is not valid JSON
 or its top level is not an object. Unknown keys are ignored. A known key with the wrong type is
@@ -28,7 +28,8 @@ __all__ = ["StoreCorrupt", "View", "path", "store", "status", "load", "raw", "vi
            "allowed_hosts", "allowed_names", "allowed_origins", "behind_proxy",
            "behind_proxy_source", "host_audio", "radio_transports", "last_radio",
            "set_behind_proxy", "clear_managed_behind_proxy", "proxy_source_managed",
-           "MANAGED_PROXY_SOURCES", "add_allowed_host", "normalize_entry"]
+           "MANAGED_PROXY_SOURCES", "add_allowed_host", "normalize_entry", "bridge", "set_bridge",
+           "bridge_paused", "set_bridge_paused"]
 
 _NAME_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$")
 TRANSPORT_KINDS = ("sim", "serial", "lan")
@@ -155,6 +156,10 @@ class View:
     radio_transports: dict = field(default_factory=dict)  # {radio: {transport, port?, baud?, host?}}
     last_radio: Optional[str] = None
     warnings: tuple = ()
+    # the WSJT-X bridge (backend/bridge.py): off, local and receive-only unless an admin says so
+    bridge: dict = field(default_factory=dict)
+    # a bridge transmit pause in force when TeleRig stopped: {"reason", "by", "at"} or None
+    bridge_paused: Optional[dict] = None
 
 
 def normalize(data: dict) -> View:
@@ -237,7 +242,24 @@ def normalize(data: dict) -> View:
         warn.append("last_radio is not a string; ignored")
         lr = None
 
-    return View(tuple(entries), names, origins, bp, src, pins, tps, lr, tuple(warn))
+    from .bridge import normalize_config          # lazy: bridge imports nothing from here
+    bcfg, bwarn = normalize_config(data.get("bridge"))
+    warn.extend(bwarn)
+
+    bpause = _pause_info(data.get("bridge_paused"))
+    if data.get("bridge_paused") is not None and bpause is None:
+        warn.append("bridge_paused is not a pause record; ignored")
+
+    return View(tuple(entries), names, origins, bp, src, pins, tps, lr, tuple(warn), bcfg, bpause)
+
+
+def _pause_info(raw) -> Optional[dict]:
+    """A bridge pause record, cleaned: {"reason": str, "by": str | None, "at": float | None}."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("reason"), str) or not raw["reason"].strip():
+        return None
+    by, at = raw.get("by"), raw.get("at")
+    return {"reason": raw["reason"].strip()[:32], "by": by[:64] if isinstance(by, str) else None,
+            "at": float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) else None}
 
 
 def view() -> View:
@@ -304,6 +326,48 @@ def radio_transports() -> dict:
 
 def last_radio() -> Optional[str]:
     return view().last_radio
+
+
+def bridge() -> dict:
+    """The WSJT-X bridge settings (normalised; defaults when the key is absent)."""
+    from .bridge import DEFAULTS
+    b = dict(DEFAULTS, **(view().bridge or {}))
+    return dict(b, allow=list(b.get("allow") or []))
+
+
+def bridge_paused() -> Optional[dict]:
+    """The bridge transmit pause that was in force when TeleRig last stopped (None: not paused).
+    A pause outlives a restart: only an operator's resume ends it (backend/bridge.py)."""
+    return view().bridge_paused
+
+
+def set_bridge_paused(info: Optional[dict]) -> None:
+    """Remember a bridge transmit pause (or forget it: None) across a restart."""
+    clean = _pause_info(info)
+    if clean is None and status() == "missing":
+        return                                   # nothing to forget; do not create the file for it
+
+    def fn(d: dict) -> None:
+        if clean is None:
+            if "bridge_paused" not in d:
+                raise _NoChange()
+            d.pop("bridge_paused", None)
+        else:
+            d["bridge_paused"] = clean
+    try:
+        mutate(fn, create=True)
+    except _NoChange:
+        pass
+
+
+def set_bridge(cfg: dict) -> None:
+    """An admin's save (already validated by bridge.validate_config)."""
+    clean = {k: cfg[k] for k in ("enabled", "port", "listen", "ptt", "silence_s")}
+    clean["allow"] = list(cfg.get("allow") or [])
+
+    def fn(d: dict) -> None:
+        d["bridge"] = clean
+    mutate(fn, create=True)
 
 
 # -- writers (explicit actions only) ------------------------------------------------------------

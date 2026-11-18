@@ -480,6 +480,9 @@ class YaesuRadio:
             self.set_filter(filt)
         self._emit_state()
 
+    def set_data(self, on: bool) -> None:
+        pass          # Icom-only switch; on Yaesu, DATA-USB / DATA-LSB / DATA-FM are modes of their own
+
     def set_filter(self, filt: int) -> None:
         # FT-991A has narrow/wide (NA0), not 3 discrete filters: FIL1 = wide,
         # FIL2/FIL3 = narrow. Reflect the choice and tell the radio.

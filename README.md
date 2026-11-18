@@ -27,8 +27,9 @@ and only one operator transmits at a time.
   spectrum** scope built from their RX audio instead.
 - **Tuning** — main dial, **tap-to-select and drag/slide on the waterfall**,
   mouse-wheel, selectable step, and direct frequency entry.
-- **Control** — band, mode, filter, VFO A/B / A=B / swap, RX DSP (NB / NR / notch)
-  and TX (mic / COMP / VOX / monitor / RIT / split), where the radio supports them.
+- **Control** — band, mode (with the Icom **DATA** switch: USB-D and friends), filter,
+  VFO A/B / A=B / swap, RX DSP (NB / NR / notch) and TX (mic / COMP / VOX / monitor / RIT /
+  split), where the radio supports them.
 - **Full SET-menu tab** — the radio's own menu, read and written live over the
   control link (Icom `1A 05`, Yaesu `EX`); connection/transmit-sensitive items are
   admin-only and confirm-gated before writing (viewers can read the values).
@@ -42,6 +43,15 @@ and only one operator transmits at a time.
   client countdown, an independent server-side auto-unkey and a 120 s session limit, plus
   release on screen-lock / disconnect; a hidden tab never keys (not even a touch hold begun just
   before). A hardware TX time-out is set on connect as a backstop.
+- **PTT hotkey** — a key of your choice on this device (user menu > PTT hotkey), hold-to-talk or
+  press-to-toggle, under the same fail-safe rule: a press while you transmit always stops, and the
+  key never keys while you type, while a dialog or menu is open or while the tab is hidden. A
+  function key works best (F13-F24 if your keyboard or foot switch has them); Shift, Ctrl and Alt
+  can't be used.
+- **WSJT-X bridge** — WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" shares the
+  radio TeleRig holds, including an Icom on its LAN port. Off by default, receive-only until an
+  admin allows transmit, and bound by the same one-transmitter rule, STOP and 120 s limit as a
+  browser. See [docs/WSJTX-BRIDGE.md](docs/WSJTX-BRIDGE.md).
 - **One transmitter, many users** — accounts with roles (viewer / operator / admin); one
   connection owns TX at a time, the others see **ON AIR · *callsign*** and get "busy", and any
   operator can stop a transmission with a two-tap **STOP**. Every TX session is logged.
@@ -53,6 +63,8 @@ and only one operator transmits at a time.
 - **Modular panels** — VFO, Transmit, Audio, Meter, Scope, Controls and CW are cards you can
   move, resize, collapse, hide and add back (**Arrange** mode); the layout is saved per user,
   separately for desktop and phone.
+- **Full screen** that keeps the screen awake (top bar; needs HTTPS or localhost for the
+  keep-awake part), for a tablet or phone on the bench.
 - **Mobile-friendly** responsive layout; remembers the radio + connection per
   radio (transport, ports, and audio devices).
 
@@ -184,6 +196,8 @@ backend/
   policy.py       what each role may do: the WebSocket action table and route rules
   txarb.py        the TX arbiter: one owner, heartbeats, the 120 s session clock, STOP
   audio_router.py RX/TX audio routing (only the TX owner's mic reaches the radio)
+  rigctl.py       Hamlib's rigctld text protocol (parsing, replies, mode tables), I/O-free
+  bridge.py       the WSJT-X bridge: a rigctld-compatible TCP server through policy + TX arbiter
   account_api.py  sign-in, password change, sign-out, per-user layouts
   admin_api.py    Administration: users, access lists, remote, pins, activity, lockouts
   hub.py, store.py, settings.py, layout_store.py, audit.py, ratelimit.py
@@ -192,6 +206,7 @@ backend/
   server.py       Starlette/uvicorn — /api/radios, connect/ports, WebSocket
 frontend/         adaptive multi-radio panel; controls render from the profile
                   (tr.js session layer, layout.js panel grid, account.js / admin.js dialogs,
+                  bridge.js bridge indicator, device.js full screen + PTT hotkey dialog,
                   login.html / change-password.html)
 ```
 

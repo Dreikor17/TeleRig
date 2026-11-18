@@ -79,12 +79,24 @@
       case "tx": onTxFrame(msg); break;
       case "tx_revoked": onTxRevoked(msg); break;
       case "busy": onBusy(msg); break;
+      case "bridge": onBridgeFrame(msg); break;
       case "denied": onDenied(msg); break;
       case "error": onErrorFrame(msg); break;
       default: break;
     }
   }
   TR._onFrame = handleFrame;                      // TR._inject (sim-only) feeds frames here
+
+  // ---- the WSJT-X bridge status (bridge.js draws it): from hello / /api/status and `bridge` frames ----
+  function emitBridge() {
+    document.dispatchEvent(new CustomEvent("tr:bridge", { detail: (TR.status && TR.status.bridge) || null }));
+  }
+  function onBridgeFrame(m) {
+    if (!m.bridge || typeof m.bridge !== "object") return;
+    if (!TR.status || typeof TR.status !== "object") TR.status = {};
+    TR.status.bridge = m.bridge;
+    emitBridge();
+  }
 
   // ---- hello: this connection's identity, role, status and the TX owner (§2.11) ----
   function onHello(m, meta) {
@@ -191,10 +203,20 @@
   function flushHeld() {
     if (!pendingClaims.size && heldTx) { const f = heldTx; heldTx = null; applyTx(f); }
   }
+  // A claim nobody answered within 3 s is given up, and released at the same time: if its grant is
+  // only late, the release (queued behind the claim on the same socket) unkeys it again, so a late
+  // grant never leaves the radio keyed while this tab shows it unkeyed. The server ignores the
+  // auto release of a claim that lost.
+  const EXPIRED_RELEASE = { ptt: { action: "ptt", tx: false, auto: true }, cw: { action: "cw_stop", auto: true },
+                            vox: { action: "rx_func", name: "vox", on: false, auto: true } };
   function expirePending() {
     const now = performance.now();
     let changed = false;
-    for (const [s, p] of pendingClaims) if (now - p.at > 3000) { pendingClaims.delete(s); changed = true; }
+    for (const [s, p] of pendingClaims) {
+      if (now - p.at <= 3000) continue;
+      pendingClaims.delete(s); changed = true;
+      if (EXPIRED_RELEASE[p.kind]) send(Object.assign({}, EXPIRED_RELEASE[p.kind]));
+    }
     if (pttPending && now - pttPending.at > 3000) { pttPending = null; changed = true; }
     if (changed) { flushHeld(); renderTx(); }
   }
@@ -211,6 +233,9 @@
       answeredSeq = req.seq;
     }
     applyTx(m);
+    // the grant of a hold-to-talk claim whose key is already up (pttKeyEnd sent its release too;
+    // this covers a grant that overtakes it): unkey now
+    if (isMine(req) && req.seq <= pttKeyDeadSeq && ownedPtt()) send({ action: "ptt", tx: false, auto: true });
   }
   function answerFromReply(m) {                  // a busy / denied frame answering one of our claims
     if (!isMine(m.req) || m.req.seq < answeredSeq) return;
@@ -431,8 +456,9 @@
       renderFreq($("mainFreq"), 0, false);
       renderFreq($("subFreq"), 0, false);
     } else {
-      fillBand("main", s.main, s.active_band !== "sub");
-      fillBand("sub", s.sub, s.active_band === "sub");
+      const data = (s.data || 0) > 0;             // DATA mode belongs to the operating band
+      fillBand("main", s.main, s.active_band !== "sub", data && s.active_band !== "sub");
+      fillBand("sub", s.sub, s.active_band === "sub", data && s.active_band === "sub");
     }
     // no-scope radios (Yaesu CAT): no sweeps. While RX audio runs we draw an AF
     // spectrum (afTimer); otherwise drive the band plan + freq labels from the freq.
@@ -488,6 +514,10 @@
     setActive(".band", b => b.dataset.band === String(bandOf(s.freq)));
     setActive(".mode", b => b.dataset.mode === s.mode_name);
     setActive(".filt", b => b.dataset.filter === String(s.filter));
+    { const db = $("dataBtn"); if (db) {             // Icom DATA mode: only SSB / AM / FM have a -D variant
+        db.classList.toggle("on", (s.data || 0) > 0);
+        db.classList.toggle("dim", !DATA_MODES.includes(s.mode_name));
+      } }
 
     // RX DSP toggles + AGC
     for (const f of ["nb", "nr", "anotch", "mnotch"]) {
@@ -553,10 +583,10 @@
     }
     el.innerHTML = html;
   }
-  function fillBand(name, b, active) {
+  function fillBand(name, b, active, data) {
     if (!b) return;
     renderFreq($(name + "Freq"), b.freq, !!active);
-    $(name + "Mode").textContent = b.mode_name || "";
+    $(name + "Mode").textContent = (b.mode_name || "") + (data && b.mode_name ? "-D" : "");   // USB-D, like the radio
     $(name + "Fil").textContent = b.filter_name || "";
     const bn = bandOf(b.freq);
     const lbl = $(name + "Band");
@@ -578,6 +608,7 @@
     el.innerHTML = inds.map(([t, c]) => '<span class="ind ' + c + '">' + t + "</span>").join("");
   }
 
+  const DATA_MODES = ["LSB", "USB", "AM", "FM"];   // the modes with a DATA (-D) variant (backend Radio.DATA_MODES)
   function bandOf(hz) {
     if (!currentRadio) return "";
     for (const b of currentRadio.bands) if (hz >= b.lo && hz <= b.hi) return b.name;
@@ -793,6 +824,10 @@
     else if (act === "rit_d") { const v = Math.max(-9999, Math.min(9999, (state.rit_freq || 0) + (+b.dataset.d))); state.rit_freq = v; send({ action: "rit_freq", hz: v }); }
     else if (act === "rit_z") { state.rit_freq = 0; send({ action: "rit_freq", hz: 0 }); }
     else if (act === "mode") send({ action: "set_mode", mode: b.dataset.mode });
+    else if (act === "datamode") {
+      if (DATA_MODES.includes(state.mode_name)) send({ action: "data_mode", on: !((state.data || 0) > 0) });
+      else TR.toast("DATA mode exists only in LSB, USB, AM and FM.", "info");
+    }
     else if (act === "filter") send({ action: "set_filter", filter: +b.dataset.filter });
     else if (act === "vfo") send({ action: "vfo", code: +b.dataset.code });
     else if (act === "mem_recall") { const ch = Math.max(1, Math.min(99, +($("memCh") || {}).value || 1)); send({ action: "mem_recall", ch }); }
@@ -1014,11 +1049,137 @@
   // and while hidden / gone no claim is sent at all (txSendClaim). Back from the bfcache (pageshow)
   // or visible again, presses and grants work as usual.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { cancelPttHold(); autoRelease(); }
+    if (document.hidden) { cancelPttHold(); pttKeyEnd(); autoRelease(); }
     else pageGone = false;
   });
-  window.addEventListener("pagehide", () => { pageGone = true; cancelPttHold(); autoRelease(); });
+  window.addEventListener("pagehide", () => { pageGone = true; cancelPttHold(); pttKeyEnd(); autoRelease(); });
   window.addEventListener("pageshow", () => { pageGone = false; });
+
+  // ---- PTT hotkey: a key on THIS device (user menu > PTT hotkey…, device.js) ----
+  // localStorage "telerig.pttkey" = {"code": <KeyboardEvent.code>, "mode": "hold" | "toggle", "label"}.
+  // The key follows the PTT button's asymmetric, fail-safe rule (I4, G-1 c):
+  //  - while this tab owns ptt or has a ptt claim pending, a press of the key ALWAYS unkeys, also
+  //    with a dialog open and as part of a chord (the one exception: a key that types, pressed in a
+  //    text field, is text);
+  //  - only KEYING is held back: the re-key guard, another owner and a hidden page (all inside
+  //    pttPress / txSendClaim), and here a text field with a key that types, a shortcut chord
+  //    (Ctrl/Alt/Meta + key), a STOP control holding the focus, any visible dialog / confirm bar /
+  //    menu, Arrange mode, Space while a control has the focus from the KEYBOARD (Space is that
+  //    control's key; a button that only got the focus from a click does not keep it), and a held
+  //    key's auto-repeat;
+  //  - "hold": key down = PTT, key up = unkey, and losing the window focus, hiding the tab or a
+  //    changed hotkey unkey too. The release is sent whatever happened to the claim meanwhile (an
+  //    unanswered claim is given up after 3 s): a grant that lands after the key went up is
+  //    released, never left keyed. "toggle": each press is one click on PTT.
+  //  - Shift, Ctrl and Alt can't be the hotkey (they are part of other shortcuts; AltGr reports
+  //    Ctrl + Alt and types characters): a function key or a foot switch that sends one is the choice.
+  // A key this code acts on is kept from scrolling the page or clicking the focused button; a STOP
+  // control always gets its key.
+  const PTT_KEY_STORE = "telerig.pttkey";
+  const PTT_KEY_DENY = new Set(["Unidentified", "Escape", "Tab", "Enter", "NumpadEnter", "Backspace", "Delete",
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown", "F5", "F11", "F12",
+    "MetaLeft", "MetaRight", "OSLeft", "OSRight", "ContextMenu", "PrintScreen", "CapsLock", "NumLock",
+    "ScrollLock", "Fn", "FnLock", "Power", "Sleep", "WakeUp",
+    "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight", "AltLeft", "AltRight", "AltGraph"]);
+  const PTT_KEY_STOPS = "#onAirStop, #txStopFab, #cwTx";     // STOP controls: their keys are their own
+  function pttKeyAllowed(code) {
+    return typeof code === "string" && /^[A-Za-z0-9]{1,32}$/.test(code) && !PTT_KEY_DENY.has(code);
+  }
+  // true for a key that puts text into a field (letters, digits, Space, punctuation, the numpad)
+  function pttKeyTypes(code) { return !(/^F\d{1,2}$/.test(code) || code === "Pause"); }
+  let pttKey = null;                               // {code, mode, label} | null
+  let pttKeyHeld = false;                          // hold mode: this press keyed (or is claiming) and is still down
+  let pttKeySeq = 0;                               // hold mode: the seq of the claim the held key sent
+  let pttKeyDeadSeq = 0;                           // the newest held claim whose key is already up
+  let pttKeyDown = false;                          // we took the key-down: its key-up is ours too
+  let pttPtrAt = -1e9, pttFocusKbd = false;        // was the focus last moved by a pointer or by the keyboard?
+  document.addEventListener("pointerdown", () => { pttPtrAt = performance.now(); }, true);
+  document.addEventListener("focusin", () => { pttFocusKbd = performance.now() - pttPtrAt > 600; }, true);
+  // The held key is up (key-up, window blur, hidden tab, a changed hotkey): ALWAYS send the release
+  // for the claim it sent, owned or not (pending, given up, or lost: the server ignores an auto
+  // release of a claim that is not ours), and remember it, so a grant that still lands is unkeyed.
+  function pttKeyEnd() {
+    const seq = pttKeySeq;
+    pttKeyHeld = false; pttKeySeq = 0;
+    if (!seq) return;
+    if (seq > pttKeyDeadSeq) pttKeyDeadSeq = seq;
+    if (ownedPtt()) send({ action: "ptt", tx: false });
+    else if (seq > answeredSeq) send({ action: "ptt", tx: false, auto: true });   // unanswered: a grant may still land
+    pttPending = null;
+    renderTx();
+  }
+  function loadPttKey() {
+    let k = null;
+    try {
+      const raw = JSON.parse(localStorage.getItem(PTT_KEY_STORE) || "null");
+      if (raw && pttKeyAllowed(raw.code))
+        k = { code: raw.code, mode: raw.mode === "toggle" ? "toggle" : "hold",
+              label: typeof raw.label === "string" && raw.label ? raw.label.slice(0, 24) : raw.code };
+    } catch (_) {}
+    pttKeyEnd();                                   // the key changed under a held press
+    pttKeyDown = false;
+    pttKey = k;
+    if (ptt) ptt.title = k ? "PTT — hotkey: " + k.label + (k.mode === "hold" ? " (hold to talk)" : " (press to toggle)") : "";
+  }
+  function pttKeyTyping(el) {                      // the focus is somewhere that takes typed text
+    if (!el || el === document.body || el === document) return false;
+    const tag = String(el.tagName || "").toUpperCase();
+    if (tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable === true) return true;
+    if (tag !== "INPUT") return false;
+    const t = String(el.type || "text").toLowerCase();
+    return !["button", "submit", "reset", "checkbox", "radio", "range", "color", "file", "image"].includes(t);
+  }
+  function pttKeyVisible(el) { return !!el && !el.hidden && (typeof el.getClientRects !== "function" || el.getClientRects().length > 0); }
+  function pttKeyBlocked() {                       // the key belongs to a dialog / menu / Arrange mode: never KEY
+    const b = document.body;
+    if (b && b.classList && (b.classList.contains("tr-modal-open") || b.classList.contains("arranging"))) return true;
+    if (TR.menu && typeof TR.menu.isOpen === "function" && TR.menu.isOpen()) return true;
+    // any rendered dialog, confirm bar or menu, modal or not (a popover too)
+    const open = document.querySelectorAll('.tr-confirm, [role="dialog"], [role="alertdialog"], [role="menu"]');
+    for (const el of open) if (pttKeyVisible(el)) return true;
+    return false;
+  }
+  function pttKeyOnStop(el) { return !!(el && typeof el.closest === "function" && el.closest(PTT_KEY_STOPS)); }
+  function pttKeySpaceForControl(e) {              // Space for a control that has the focus from the keyboard
+    if (pttKey.code !== "Space" || !pttFocusKbd) return false;
+    const el = e.target;
+    if (!el || el === document.body || el === document || typeof el.getAttribute !== "function") return false;
+    const tag = String(el.tagName || "").toUpperCase();
+    if (["BUTTON", "A", "SUMMARY", "INPUT", "SELECT", "TEXTAREA"].includes(tag)) return true;
+    return /^(button|switch|checkbox|radio|tab|menuitem|menuitemcheckbox|menuitemradio|option|slider|link)$/.test(el.getAttribute("role") || "");
+  }
+  function onPttKeyDown(e) {
+    if (!pttKey || e.code !== pttKey.code) return;
+    if (pttKeyTypes(pttKey.code) && pttKeyTyping(e.target)) return;   // text for the field
+    const mine = ownedPtt() || !!pttPending;
+    const onStop = pttKeyOnStop(e.target);
+    if (!mine) {                                    // only KEYING is held back (I4):
+      if (e.ctrlKey || e.altKey || e.metaKey) return;                  // a shortcut chord, not the hotkey
+      if (onStop || pttKeyBlocked()) return;                           // a STOP control / an open panel keeps its key
+      if (pttKeySpaceForControl(e)) return;                            // Space is that control's key
+    }
+    if (!onStop) { e.preventDefault(); e.stopPropagation(); }          // a STOP control still gets its key
+    pttKeyDown = true;
+    if (e.repeat) return;                                           // a held key neither keys nor unkeys again
+    if (mine) { pttKeyHeld = false; pttKeySeq = 0; pttRelease(); return; }   // a press always unkeys (I4)
+    pttPress(0);                                                    // the guard / busy / hidden-page rules are in there
+    if (pttKey.mode === "hold" && pttPending) { pttKeyHeld = true; pttKeySeq = pttPending.seq; }
+  }
+  function onPttKeyUp(e) {
+    if (!pttKey || e.code !== pttKey.code) return;
+    if (pttKeyDown && !pttKeyOnStop(e.target)) { e.preventDefault(); e.stopPropagation(); }   // Space's key-up would click the focused button
+    pttKeyDown = false;
+    pttKeyEnd();                                                    // hold: key up = unkey, whatever the claim did meanwhile
+  }
+  document.addEventListener("keydown", onPttKeyDown, true);
+  document.addEventListener("keyup", onPttKeyUp, true);
+  window.addEventListener("blur", () => {                           // the key-up will not reach this window
+    pttKeyDown = false;
+    pttKeyEnd();
+  });
+  document.addEventListener("tr:pttkey", loadPttKey);              // device.js saved a new key
+  window.addEventListener("storage", (e) => { if (e && e.key === PTT_KEY_STORE) loadPttKey(); });
+  loadPttKey();
 
   // ---- ON-AIR chip, two-tap STOP and the STOP FAB (§4.5) ----
   function fmtMmSs(ms) {
@@ -1648,6 +1809,7 @@
     }
     const at = $("attBtn"); if (at) at.style.display = capHas("att", p.has_att) ? "" : "none";
     const nb = $("narBtn"); if (nb) nb.style.display = capHas("narrow", false) ? "" : "none";
+    { const dr = $("dataRow"); if (dr) dr.hidden = !capHas("data_mode", false); }   // Icom DATA switch (1A 06)
     // FM Tone/DCS group: base-hide unless the rig supports it (updateState shows it in FM modes)
     const fg = $("fmGrp"); if (fg && !capHas("fm_tone", false)) fg.style.display = "none";
     const tu = $("tunerBtn"); if (tu) tu.style.display = capHas("tuner", p.has_tuner) ? "" : "none";
@@ -1917,6 +2079,7 @@
   function applyStatusUi() {
     applyTransportUi();
     applyOperatorForm();
+    emitBridge();
   }
   function applyRadioSelLock() {                    // F20: only an admin switches a connected radio
     const sel = $("radioSel");
@@ -2440,6 +2603,8 @@
     owner: () => txOwner(),
     nextSeq: () => nextSeq(),
     stop: () => txStop(),
+    hotkey: () => (pttKey ? { code: pttKey.code, mode: pttKey.mode, label: pttKey.label } : null),
+    hotkeyAllowed: (code) => pttKeyAllowed(code),
   };
   // Sim-only test hook (like TR._inject): mark a PTT claim as pending WITHOUT sending anything, so the
   // AR-8 stale-frame check can be exercised with injected frames and no transmit command at all.

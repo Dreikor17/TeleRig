@@ -48,6 +48,13 @@
     <!-- #adminBtn / #umAdmin (admin.js) and the account items #umChangePw / #umSignoutAll / #umSignout
          (account.js) carry `hidden` until their script binds them, so a script that failed to load never
          leaves a dead control; data-perm="admin" keeps the admin entries off for other roles (§4.6). -->
+    <!-- #bridgeBtn (bridge.js) shows only while the WSJT-X bridge is enabled; #fullBtn / #umFull /
+         #umHotkey (device.js) carry `hidden` until their script binds them. -->
+    <div class="bridge-wrap">
+      <button id="bridgeBtn" class="tb-btn bridge-btn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="bridgePop" title="WSJT-X bridge" aria-label="WSJT-X bridge" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-bridge"/></svg><span class="bridge-dot" aria-hidden="true"></span></button>
+      <div id="bridgePop" class="bridge-pop" role="dialog" aria-label="WSJT-X bridge" hidden></div>
+    </div>
+    <button id="fullBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Full screen (keeps the screen awake)" aria-label="Full screen" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-fullscreen"/></svg></button>
     <button id="arrangeBtn" class="tb-btn desk-only" type="button" aria-pressed="false" title="Arrange panels" aria-label="Arrange panels"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg></button>
     <button id="themeBtn" class="tb-btn desk-only" type="button" title="Day / night theme" aria-label="Day / night theme"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg></button>
     <a id="sourceLink" class="tb-btn desk-only" href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener" title="Source code (AGPL-3.0)" aria-label="Source code (AGPL-3.0)"><svg class="i" aria-hidden="true"><use href="#i-code-xml"/></svg></a>
@@ -59,6 +66,8 @@
         <div class="um-head"><b id="umUser"></b> <span id="umRole" class="badge"></span></div>
         <button role="menuitem" type="button" id="umArrange" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
         <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Day / night theme</span></button>
+        <button role="menuitem" type="button" id="umFull" class="phone-only" aria-pressed="false" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-fullscreen"/></svg><span id="umFullLbl">Full screen</span></button>
+        <button role="menuitem" type="button" id="umHotkey" data-tx hidden><svg class="i" aria-hidden="true"><use href="#i-keyboard"/></svg><span>PTT hotkey…</span></button>
         <button role="menuitem" type="button" id="umAdmin" class="phone-only" data-perm="admin" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Administration</button>
         <button role="menuitem" type="button" id="umChangePw" hidden><svg class="i" aria-hidden="true"><use href="#i-key-round"/></svg>Change password…</button>
         <button role="menuitem" type="button" id="umSignoutAll" hidden><svg class="i" aria-hidden="true"><use href="#i-users"/></svg>Sign out everywhere</button>
@@ -305,6 +314,9 @@
     <div class="grp">
       <div class="grp-title">MODE</div>
       <div class="row wrap" id="modeRow"></div>
+      <div class="row" id="dataRow" hidden>
+        <button class="key tog" data-act="datamode" id="dataBtn" title="DATA mode (USB-D / LSB-D / FM-D / AM-D): modulation from the radio's DATA MOD source, speech processor bypassed. For digital modes.">DATA</button>
+      </div>
     </div>
 
     <div class="grp">
@@ -614,7 +626,8 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <div id="srLive" class="sr-only" aria-live="assertive"></div>
 <button id="txStopFab" class="tx-fab" type="button" hidden data-tx><svg class="i" aria-hidden="true"><use href="#i-octagon-x"/></svg>STOP · <span id="txStopFabTime"></span></button>
-<!-- Modals (change password: account.js; administration: admin.js) are built here on first open (§5) -->
+<!-- Modals (change password: account.js; PTT hotkey: device.js; administration: admin.js) are built
+     here on first open (§5) -->
 <div id="modalRoot"></div>
 
 <script src="/static/vendor/gridstack/gridstack-all.js?v=14.0.0"></script>
@@ -625,6 +638,8 @@
 <script src="/static/app.js"></script>
 <script src="/static/cwtool.js"></script>
 <script src="/static/account.js"></script>
+<script src="/static/bridge.js"></script>
+<script src="/static/device.js"></script>
 <script src="/static/admin.js"></script>
 </body>
 </html>

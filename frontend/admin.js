@@ -1,7 +1,7 @@
 /* TeleRig — Administration (spec §5.4, §2.17-§2.19, E10): the admin modal, built on first open in
  * #modalRoot with the TR.modal shell from account.js.
  *
- * Tabs: Users · Access · Remote · Radio & audio · Activity · Lockouts. Every request goes through
+ * Tabs: Users · Access · Remote · Radio & audio · WSJT-X bridge · Activity · Lockouts. Every request goes through
  * TR.api to the /api/admin/* routes (§2.17). A 403 reauth_required opens the sudo prompt ("Confirm
  * your password to continue", §2.18) and the call is retried ONCE. Mutating controls carry
  * data-mut: all of them are disabled while one request is pending (8 s fallback), and the result is
@@ -87,7 +87,7 @@
 
   // ---- state ---------------------------------------------------------------------------------------
   const TABS = [["users", "Users"], ["access", "Access"], ["remote", "Remote"], ["audio", "Radio & audio"],
-                ["activity", "Activity"], ["lockouts", "Lockouts"], ["update", "Update"]];
+                ["bridge", "WSJT-X bridge"], ["activity", "Activity"], ["lockouts", "Lockouts"], ["update", "Update"]];
   const TAB_KEY = "telerig.admin.tab";
   let M = null;                          // the modal shell (built on first open)
   const tabBtns = {};
@@ -1189,6 +1189,154 @@
     }
   }
 
+  // ---- WSJT-X bridge (docs/WSJTX-BRIDGE.md, backend/bridge.py) -------------------------------------------
+  // GET / PUT /api/admin/bridge. The server validates and decides everything; this form only asks.
+  const BR_PAUSE = { stopped: "stopped", operator: "held", timeout: "the 120 s limit was reached",
+                     heartbeat: "the program stopped talking to TeleRig", admin_switch: "an admin switched the radio",
+                     server_locked: "the server was locked" };
+  function brAgo(secs) {
+    const s = Math.max(0, +secs || 0);
+    return s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : Math.round(s / 3600) + " h";
+  }
+  function bridgeStatus(box, st, cfg) {
+    box.textContent = "";
+    box.append(head3("STATUS"));
+    if (!st) { box.append(note("No status.")); return; }
+    const chips = h("div", { class: "tm-chips" });
+    if (!st.enabled) chips.append(chip("off", null));
+    else if (st.listening) chips.append(chip("listening on port " + st.port, "ok"),
+                                        chip(st.listen === "network" ? "this PC + allowed computers" : "this PC only", "info"));
+    else chips.append(chip("not listening", "danger"));
+    if (st.enabled) chips.append(chip(st.ptt ? "transmit allowed" : "receive only", st.ptt ? "warn" : null));
+    if (st.on_air) chips.append(chip("ON AIR", "danger"));
+    if (st.paused) chips.append(chip("transmit paused", "warn"));
+    box.append(chips);
+    if (st.enabled && !st.listening)
+      box.append(h("div", { class: "tm-box err", role: "alert", text: st.error_text || "The bridge port could not be opened." }));
+    if (st.paused) {
+      const why = (BR_PAUSE[st.paused.reason] || "paused") + (st.paused.by ? " by " + st.paused.by : "");
+      box.append(h("div", { class: "tm-box warn", role: "status" },
+        h("span", { text: "Transmit over the bridge is paused (" + why + "). The program cannot key until it is resumed. " }),
+        btn("Resume transmit", { icon: "tr-play", cls: "sm", id: "admBrResume", on: () => {
+          const rc = window.RadioControl;
+          if (rc && rc.send({ action: "bridge_tx", on: true })) say("Transmit over the bridge resumed.", true);
+          else say("Not connected to the server — try again in a moment.", false);
+        } })));
+    }
+    const peers = st.peers || [];
+    if (st.enabled && st.listening) {
+      if (!peers.length) box.append(note("No program is connected."));
+      else {
+        const tb = h("table", { class: "tm-table", id: "admBrPeers" },
+          h("thead", null, h("tr", null, h("th", { text: "Program at" }), h("th", { text: "Connected" }),
+                                         h("th", { text: "Commands" }), h("th", { text: "" }))));
+        const body = h("tbody");
+        for (const x of peers)
+          body.append(h("tr", null, h("td", null, h("code", { text: x.ip })), h("td", { text: brAgo(x.secs) }),
+                        h("td", { text: String(x.cmds) }), h("td", null, x.tx ? chip("transmitting", "danger") : null)));
+        tb.append(body);
+        box.append(tb);
+      }
+      const where = st.listen === "network" ? "<this PC's address>" : "localhost";
+      box.append(h("p", { class: "tm-note" },
+        "In WSJT-X (File > Settings > Radio): Rig ", h("code", { text: "Hamlib NET rigctl" }),
+        ", Network Server ", h("code", { text: where + ":" + st.port }),
+        ", PTT Method ", h("code", { text: st.ptt ? "CAT" : "VOX (transmit over the bridge is off)" }),
+        ", Mode ", h("code", { text: "Data/Pkt" }), ", Split Operation ", h("code", { text: "Fake It" }), " or None."));
+    }
+  }
+  async function renderBridge(p, seq) {
+    p.append(loading("Reading the bridge settings…"));
+    const j = await TR.api("/api/admin/bridge");
+    if (!alive(seq)) return;
+    p.textContent = "";
+    const c = j.config || {}, lim = j.limits || {};
+    const portLim = lim.port || [1024, 65535], silLim = lim.silence_s || [3, 120];
+    p.append(note("The bridge lets WSJT-X, JS8Call, Fldigi or a logging program share the radio TeleRig is connected to, " +
+                  "including an Icom on its LAN port. The program connects to TeleRig as if it were Hamlib's rigctld; " +
+                  "TeleRig keeps the radio and applies the same rules as for a browser: one transmitter at a time, STOP, the 120 s limit."));
+    const stBox = h("section", { class: "tm-sec", id: "admBrStatus" });
+    bridgeStatus(stBox, j.status, c);
+    p.append(stBox);
+    timers.push(setInterval(async () => {
+      try {
+        const jj = await TR.api("/api/admin/bridge", { quiet: true });
+        if (alive(seq) && cur === "bridge") bridgeStatus(stBox, jj.status, jj.config || c);
+      } catch (_) {}
+    }, 3000));
+
+    // ---- settings ----
+    const on = h("input", { type: "checkbox", id: "admBrOn", checked: !!c.enabled });
+    const port = h("input", { type: "number", id: "admBrPort", class: "tm-input tm-short", min: String(portLim[0]), max: String(portLim[1]),
+                              step: "1", value: String(c.port), inputmode: "numeric", "aria-describedby": "admBrPortHint" });
+    const loc = h("input", { type: "radio", name: "admBrListen", id: "admBrLocal", value: "local", checked: c.listen !== "network" });
+    const net = h("input", { type: "radio", name: "admBrListen", id: "admBrNet", value: "network", checked: c.listen === "network" });
+    const allow = h("textarea", { id: "admBrAllow", class: "tm-input tm-area", rows: "3", spellcheck: "false", autocomplete: "off",
+                                  placeholder: "one per line, e.g.\n100.101.102.103\n192.168.1.0/24", "aria-label": "Computers that may connect",
+                                  value: (c.allow || []).join("\n") });
+    const allowWrap = h("div", { class: "tm-field", id: "admBrAllowWrap" },
+      h("label", { class: "tm-label", for: "admBrAllow" }, "Computers that may connect",
+        h("span", { class: "tm-hint", text: " IP addresses or networks; this PC is always allowed" })),
+      allow,
+      h("div", { class: "tm-box warn", role: "note", text: "The rigctl protocol has no password: every program on a listed computer can tune this radio " +
+        "(and key it, if transmit is allowed below) without signing in to TeleRig. List only computers you control, " +
+        "and prefer a private network such as Tailscale." }));
+    const ptt = h("input", { type: "checkbox", id: "admBrPtt", checked: !!c.ptt });
+    const pttWarn = h("div", { class: "tm-box warn", role: "note", id: "admBrPttWarn", text:
+      "With this on, a connected program keys the radio by itself (WSJT-X transmits on its own schedule once you enable Tx there). " +
+      "You are the control operator: stay at the station. TeleRig still shows ON AIR to everyone, any operator can STOP it " +
+      "(which also pauses the bridge until someone resumes it), and the 120 s limit and the silence limit below apply." });
+    const sil = h("input", { type: "number", id: "admBrSilence", class: "tm-input tm-short", min: String(silLim[0]), max: String(silLim[1]),
+                             step: "1", value: String(c.silence_s), inputmode: "numeric" });
+    const ferr = h("div", { class: "tm-ferr", id: "admBrErr", role: "alert", hidden: true });
+    const sync = () => { allowWrap.hidden = !net.checked; pttWarn.hidden = !ptt.checked; };
+    for (const x of [loc, net, ptt]) x.addEventListener("change", sync);
+    sync();
+    const lines = (t) => String(t || "").split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean);
+    const num = (el) => { const v = String(el.value).trim(); return /^\d+$/.test(v) ? parseInt(v, 10) : v; };
+    const FIELD = { enabled: on, port, listen: loc, allow, ptt, silence_s: sil };
+    const save = btn("Save", { icon: "check", cls: "primary", id: "admBrSave", mut: true, on: async () => {
+      ferr.hidden = true;
+      // `expect`: the settings this form was showing. If they changed meanwhile (another admin, a hand
+      // edit), the server saves nothing and answers 409 conflict; the tab then shows the saved ones.
+      const body = { enabled: on.checked, port: num(port), listen: net.checked ? "network" : "local",
+                     allow: lines(allow.value), ptt: ptt.checked, silence_s: num(sil), expect: c };
+      if (body.ptt && !c.ptt) {
+        const yes = await TR.confirm("Allow programs to transmit through the bridge? A connected program then keys the radio on its own schedule.",
+                                     { ok: "Allow transmit", danger: true });
+        if (!yes) { say("Cancelled — nothing changed.", false); return; }
+      }
+      const res = await act(() => api("/api/admin/bridge", { method: "PUT", json: body }), "Bridge settings saved.");
+      if (res.ok) { document.dispatchEvent(new CustomEvent("tr:refresh-status")); select("bridge"); return; }
+      if (res.err && res.err.code === "conflict") { select("bridge"); say(errText(res.err), false); return; }
+      if (res.err && res.err.code !== "cancelled") {
+        ferr.textContent = errText(res.err);
+        ferr.hidden = false;
+        const f = FIELD[res.err.field];
+        if (f && typeof f.focus === "function") f.focus();
+      }
+    } });
+    p.append(h("section", { class: "tm-sec" }, head3("SETTINGS", "saved in config.json; applied at once"),
+      h("label", { class: "tm-check1", for: "admBrOn" }, on, h("b", { text: "Bridge on" })),
+      h("div", { class: "tm-field" },
+        h("label", { class: "tm-label", for: "admBrPort" }, "Port", h("span", { class: "tm-hint", id: "admBrPortHint", text: " rigctld's standard port is 4532, which is also WSJT-X's default" })),
+        port),
+      h("div", { class: "tm-field", role: "radiogroup", "aria-label": "Who may connect" },
+        h("span", { class: "tm-label", text: "Who may connect" }),
+        h("label", { class: "tm-radio", for: "admBrLocal" }, loc, "Programs on this PC only"),
+        h("label", { class: "tm-radio", for: "admBrNet" }, net, "Also the computers listed below")),
+      allowWrap,
+      h("label", { class: "tm-check1", for: "admBrPtt" }, ptt, h("b", { text: "Allow transmit (PTT) through the bridge" })),
+      pttWarn,
+      h("div", { class: "tm-field" },
+        h("label", { class: "tm-label", for: "admBrSilence" }, "Silence limit, seconds",
+          h("span", { class: "tm-hint", text: " a keyed program that sends TeleRig nothing for this long is unkeyed (WSJT-X polls every second)" })),
+        sil),
+      ferr, h("div", { class: "tm-actions tm-left" }, save)));
+    p.append(note("Not offered over the bridge: split with a separate transmit VFO (use WSJT-X's “Fake It”), RIT, memories. " +
+                  "Audio does not go through the bridge: the program uses the radio's USB sound card as usual."));
+  }
+
   // ---- Update (backend/updater.py) ------------------------------------------------------------------------
   // GET /api/admin/update; POST /api/admin/update/check (fetch + compare, changes nothing); POST
   // /api/admin/update (sudo). The server updates itself from GitHub (this install's own branch: master
@@ -1325,7 +1473,7 @@
   }
 
   const RENDER = { users: renderUsers, access: renderAccess, remote: renderRemote, audio: renderAudio,
-                   activity: renderActivity, lockouts: renderLockouts, update: renderUpdate };
+                   bridge: renderBridge, activity: renderActivity, lockouts: renderLockouts, update: renderUpdate };
 
   // ---- entry points --------------------------------------------------------------------------------------
   window.TRAdmin = { open, close, isOpen: () => !!(M && M.isOpen()) };

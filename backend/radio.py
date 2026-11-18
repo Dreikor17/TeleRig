@@ -132,6 +132,7 @@ def fresh_state(p) -> dict:
         "filter": 1,
         "filter_name": "FIL1",
         "filter_bw": 2400,
+        "data": 0,                # Icom DATA mode on (USB-D ...); always 0 on radios without it
         "span": 500_000,
         "span_label": civ.SPAN_LABELS.get(500_000, ""),
         "scope_center": True,
@@ -343,6 +344,8 @@ class Radio:
 
         self._write(self._b(0x03))                       # read freq
         self._write(self._b(0x04))                       # read mode
+        if self._data_capable():
+            self._write(self._b(0x1A, 0x06))             # read DATA mode
         for sub in (0x02, 0x22, 0x40, 0x41, 0x48, 0x12, 0x57,
                     0x44, 0x45, 0x46, 0x58,              # preamp + RX-DSP + (M3) COMP/MON/VOX/TBW
                     0x32, 0x42, 0x43, 0x47, 0x56):       # APF / FM tone / TSQL / break-in / filter shape
@@ -551,6 +554,13 @@ class Radio:
             idx = civ.bcd_to_tone_index(d)
             if idx is not None:
                 self.state["tone_freq"] = idx; changed = True
+        elif c == 0x1A and s == 0x06 and d:              # DATA mode read: <00|01> <filter>
+            if time.monotonic() - self._switch_at < 0.3:
+                return                                   # a stale read right after a band switch
+            v = 1 if d[0] else 0
+            if v != self.state.get("data"):
+                self.state["data"] = v
+                changed = True
         elif c == 0x1A and s == 0x05 and len(d) >= 2:    # 1A 05 <data-number> read response
             dataoff, level = self.profile.mod_dataoff, self.profile.lan_mod_level
             if len(d) >= 3 and d[0] == dataoff[0] and d[1] == dataoff[1] and self._modsrc_orig is None:
@@ -618,6 +628,8 @@ class Radio:
                 if tick % panel_n == 0:                  # ~1.2s: catch panel changes
                     self._write(self._b(0x03))
                     self._write(self._b(0x04))
+                    if self._data_capable():
+                        self._write(self._b(0x1A, 0x06))  # DATA mode follows the mode
                     if self.state["dual_watch"]:         # is MAIN the operating band?
                         self._write(self._b(0x07, 0xD2, b"\x00"))
                 if tick % full_n == 0:                   # ~6s: re-sync the whole panel from the radio
@@ -666,6 +678,7 @@ class Radio:
         if getattr(self.profile, "civ_legacy", False):
             self._set_mode_legacy(mode_code)
             return
+        same_mode = mode_code == self.state.get("mode")
         self.state["mode"] = mode_code
         self.state["mode_name"] = civ.MODES.get(mode_code, "?")
         filt = filt or self.state["filter"]
@@ -673,6 +686,36 @@ class Radio:
         self.state["filter_name"] = civ.FILTERS.get(filt, "FIL1")
         self._recalc_filter_bw()
         self._write(self._b(0x06, None, bytes([mode_code, filt])))
+        if self._data_capable():
+            # A mode button selects the PLAIN mode (DATA off); a filter change within the same mode
+            # keeps DATA as it is. Always said explicitly: the radio keeps a DATA setting of its own
+            # per mode, and the panel must not guess it.
+            keep = bool(self.state.get("data")) and same_mode and self._data_modes_ok()
+            self.state["data"] = 1 if keep else 0
+            self._write(self._b(0x1A, 0x06, bytes([1, filt]) if keep else bytes(2)))
+        self._emit_state()
+
+    # -- Icom DATA mode (CI-V 1A 06) --------------------------------------------
+    DATA_MODES = ("LSB", "USB", "AM", "FM")              # CW / RTTY are "OFF (fixed)" in the CI-V guides
+
+    def _data_capable(self) -> bool:
+        return bool(getattr(getattr(self.profile, "capabilities", None), "data_mode", False))
+
+    def _data_modes_ok(self) -> bool:
+        return self.state.get("mode_name") in self.DATA_MODES
+
+    def set_data(self, on: bool) -> None:
+        """DATA mode on/off for the current mode: 1A 06 01 <FIL> / 1A 06 00 00 (when OFF the filter
+        byte must be 00). Ignored on a radio without the switch and, for ON, in a mode that has no
+        DATA variant, so the panel never shows a state the radio refused."""
+        if not self._data_capable():
+            return
+        on = bool(on)
+        if on and not self._data_modes_ok():
+            return
+        self.state["data"] = 1 if on else 0
+        filt = self.state.get("filter") or 1
+        self._write(self._b(0x1A, 0x06, bytes([1, filt]) if on else bytes(2)))
         self._emit_state()
 
     def _set_mode_legacy(self, mode) -> None:

@@ -39,9 +39,45 @@ def c1_ui_fixes_in_node_vm(ctx):
                        timeout=120, cwd=str(REPO))
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
-    for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js"):
+    for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
+              "device.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
+
+
+@test("unit")
+def ptt_hotkey_in_node_vm(ctx):
+    """app.js PTT hotkey: the PTT button's fail-safe rule for a key. A press while this tab owns or claims
+    ptt always unkeys; keying is held back by the re-key guard, another owner, a hidden tab, an open
+    dialog / menu / Arrange mode, a text field (for a key that types), auto-repeat and chords; hold to
+    talk unkeys on key-up and on window blur. The real tr.js + app.js in a Node vm against an in-memory
+    fake server (no browser, no server, no radio)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "ptt_hotkey_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"ptt_hotkey_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"ptt_hotkey_test.js output: {r.stdout}")
+    app = _strip_comments(_read("app.js"))
+    m = re.search(r"function onPttKeyDown\(e\) \{(.*?)\n  \}", app, re.S)
+    check(m, "app.js onPttKeyDown")
+    body = m.group(1)
+    i_rel, i_press = body.find("pttRelease()"), body.find("pttPress(0)")
+    check(0 <= i_rel < i_press, "onPttKeyDown order: the release path first, then the shared pttPress (guard, busy, hidden page)")
+    check('send({ action: "ptt", tx: true })' not in body, "the hotkey never sends a ptt claim of its own: it goes through pttPress")
+
+
+@test("unit")
+def device_and_bridge_ui_in_node_vm(ctx):
+    """device.js (full screen + screen wake lock, the PTT hotkey dialog) and bridge.js (the WSJT-X bridge
+    indicator: states, the panel per role, pause / resume) on the real scripts in a Node vm, with fake
+    Fullscreen / Wake Lock APIs (no browser, no server, no radio)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "device_bridge_ui_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"device_bridge_ui_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"device_bridge_ui_test.js output: {r.stdout}")
+    for f in ("bridge.js", "device.js"):
+        js = _strip_comments(_read(f))
+        check("innerHTML" not in js and "insertAdjacentHTML" not in js and "outerHTML" not in js, f"{f} never parses text as HTML")
+        check("eval(" not in js and "new Function" not in js, f"{f} has no eval")
 
 
 @test("unit")

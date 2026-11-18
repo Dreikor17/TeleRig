@@ -281,6 +281,16 @@ When a sign-in on the host PC is refused as "not on this PC", the sign-in page's
 on this PC?" note names the reason: the server is marked behind a proxy, a forwarding header was
 present, or the page was opened by name instead of `http://localhost:<port>`.
 
+## The WSJT-X bridge port is separate
+
+The [WSJT-X bridge](WSJTX-BRIDGE.md) is a second port (4532 by default) for programs such as WSJT-X,
+not for browsers. Nothing above applies to it: it is not behind the sign-in page, Tailscale Serve
+does not publish it, and its protocol has no password. It is off by default and listens on the host
+PC only. If an admin lets other computers in (Administration > WSJT-X bridge), only the listed
+addresses can connect, but every program on such a computer can then tune the radio, and key it
+when transmit over the bridge is allowed. List single addresses of computers you control, reach
+them over a private network such as Tailscale, and never forward this port from the internet.
+
 ## Troubleshooting "can't connect over MagicDNS"
 
 With `run.bat` / `python3 run.py` bound to `0.0.0.0` (the default), a refused or blocked MagicDNS
