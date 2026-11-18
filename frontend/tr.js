@@ -177,7 +177,8 @@
     const ub = $("userBtn");
     if (ub) ub.title = (TR.user ? TR.user + " · " : "") + TR.role;
     const v = $("verNow");
-    if (v && boot.version && v.textContent === "v—") v.textContent = "v" + boot.version;
+    // a dev install shows its label ("0.3.0-dev+<commit>", server VERSION_LABEL); a release the number
+    if (v && boot.version && v.textContent === "v—") v.textContent = "v" + (boot.version_label || boot.version);
   }
 
   // The user menu: opens from #userBtn, closes on an outside pointerdown, Escape (focus returns to

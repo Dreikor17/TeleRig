@@ -121,18 +121,31 @@ try:
     C("a master install: git, branch, updatable", (inf["git"], inf["branch"], inf["updatable"], inf["reason"]), (True, "master", True, None))
     C("... its commit and subject", (inf["head"] == head(im), inf["short"] == head(im)[:7], inf["subject"]), (True, True, "v1"))
     C("a dev install", (ud.info()["branch"], ud.info()["updatable"]), ("dev", True))
+    # the version the pages show (server VERSION_LABEL): "-dev+<commit>" on a dev install only
+    C("version label: a master install shows the release number alone", U.version_label("1.0.0", um.info()), "1.0.0")
+    C("version label: a dev install adds -dev and the commit it is on", U.version_label("1.0.0", ud.info()),
+      "1.0.0-dev+" + head(idv)[:7])
+    labels = {}
     other = install("inst-other", "master")
     git(other, "checkout", "-b", "feature")
     r = mk(other).info()
+    labels["another branch"] = U.version_label("1.0.0", r)
     C("another branch is not updated by the button (and says so)", (r["updatable"], "feature" in (r["reason"] or "")), (False, True))
     git(other, "checkout", "--detach")
+    labels["a detached checkout"] = U.version_label("1.0.0", mk(other).info())
     C("a detached checkout neither", (mk(other).info()["updatable"], "detached" in (mk(other).info()["reason"] or "")), (False, True))
     plain = tmp / "zip-copy"
     shutil.copytree(im / "backend", plain / "backend")
     r = mk(plain).info()
+    labels["a zip copy"] = U.version_label("1.0.0", r)
     C("a copy without git (a zip download): not updatable, says so", (r["git"], r["updatable"], "not installed with git" in r["reason"]), (False, False, True))
     r = mk(im, git=None).info()
+    labels["no git"] = U.version_label("1.0.0", mk(idv, git=None).info())
     C("no git on the PC: not updatable, says so", (r["updatable"], "git is not installed" in r["reason"]), (False, True))
+    C("version label: another branch, a detached checkout, a zip copy, no git: the number alone", labels,
+      {"another branch": "1.0.0", "a detached checkout": "1.0.0", "a zip copy": "1.0.0", "no git": "1.0.0"})
+    C("version label: on dev with no readable commit, just -dev; nothing known, the number",
+      (U.version_label("1.0.0", {"branch": "dev", "short": None}), U.version_label("1.0.0", None)), ("1.0.0-dev", "1.0.0"))
     C("start refuses with the reason (no git)", "git is not installed" in (mk(im, git=None).start("A", tx_busy=lambda: False, restart=lambda: None) or ""), True)
 
     # -- 2. a check sees ITS branch only -----------------------------------------------------------------

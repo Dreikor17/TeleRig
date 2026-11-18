@@ -2592,7 +2592,8 @@
     if (!link) return;
     function check(retry) {
       TR.api("/api/version", { noRedirect: true }).then((v) => {
-        if (v.current) { const n = $("verNow"); if (n) n.textContent = "v" + v.current; }   // source of truth = backend __version__
+        // source of truth = backend __version__; a dev install shows its label ("0.3.0-dev+<commit>")
+        if (v.current) { const n = $("verNow"); if (n) n.textContent = "v" + (v.label || v.current); }
         if (v.update_available && v.url) {
           link.href = v.url;
           link.textContent = "↑ " + (v.latest || "update");

@@ -507,7 +507,7 @@ def _boot_json(p, request) -> str:
     port = auth.bound_port(request.scope)
     layout, layout_error = layout_store.get(p.user)
     boot = {"v": 1, "user": p.user, "role": p.role, "perms": auth.perms_for(p.role),
-            "port": port, "version": __version__,
+            "port": port, "version": __version__, "version_label": VERSION_LABEL,
             "source": f"https://github.com/{_REPO}",
             "autoconnect": not no_autoconnect() and not _autoconnect_spent, "sim_only": sim_only(),
             "layout": layout, "layout_error": layout_error, "layout_bounds": layout_store.BOUNDS,
@@ -558,6 +558,7 @@ async def api_version(request):
     available = bool(latest) and _ver_tuple(latest) > _ver_tuple(__version__)
     return JSONResponse({
         "current": __version__,
+        "label": VERSION_LABEL,           # what the top bar shows (a dev install: "-dev+<commit>")
         "latest": latest,
         "update_available": available,
         "url": url,
@@ -1458,6 +1459,19 @@ def _shutdown_for_restart() -> None:
 
 
 updater = updater_mod.Updater(_update_repo(), log=console, audit=audit.log)
+
+
+def _version_label() -> str:
+    """The version the pages show (updater.version_label): a dev install adds "-dev+<commit>". Read
+    once, at start, from TeleRig's own folder (never a test's scratch update repository), so it names
+    the commit THIS process runs; an update restarts the server. Any trouble: the number alone."""
+    try:
+        return updater_mod.version_label(__version__, updater_mod.Updater(_REPO_DIR).info())
+    except Exception:
+        return __version__
+
+
+VERSION_LABEL = _version_label()
 admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind(),
                bridge=bridge, updater=updater, restart=_restart_self, boot=_BOOT_ID)
 

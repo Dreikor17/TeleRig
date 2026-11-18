@@ -31,7 +31,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   releases), a dev install from dev. Fast-forward only; packages only when `requirements.txt`
   changed; the new code must import, or it goes back to the previous commit; then TeleRig restarts
   and the page reloads onto the new version. Refused while anyone transmits, and on a folder with
-  local changes or commits GitHub does not have. Every step is in the security log.
+  local changes or commits GitHub does not have. Every step is in the security log. A dev install
+  says so in the top bar: the version reads `0.3.0-dev+<commit>`, the commit it runs.
 - **Band plan in its own strip** just above the scope, so it no longer covers the bottom of the
   spectrum; it lines up with the scope's frequency axis, and hovering (or tapping) names the segment.
 - **Radio screen theme**, the third step of the theme button (night, day, radio screen): the same

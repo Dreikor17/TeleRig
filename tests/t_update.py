@@ -9,7 +9,9 @@ keyed on the simulator, through harness.WS (assert_sim first).
 """
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -19,6 +21,8 @@ from pathlib import Path
 
 import harness
 from harness import check, eq, test
+
+REPO = Path(__file__).resolve().parent.parent
 
 
 def _git(cwd, *args):
@@ -262,4 +266,29 @@ def u4_update_restarts_telerig_for_real(ctx):
                     break
                 time.sleep(0.3)
             time.sleep(1.0)
+    _rmtree(base)
+
+
+@test("admin")
+def u5_version_label_names_the_running_checkout(ctx):
+    """The top bar's version (boot.version_label, /api/version label; tr.js / app.js show it): THIS
+    checkout's branch and commit, read when the server starts, never the scratch update repository's.
+    A dev checkout shows "<number>-dev+<commit>", any other the number alone; boot.version and
+    /api/version current stay the number alone (the update check compares those)."""
+    base = ctx.tmp("repo")
+    repo = Repo(base)
+    inst = repo.install("install", "dev")             # a scratch DEV install with commits of its own
+    srv, admin = _server(ctx, inst)
+    ver = re.search(r'__version__ = "([^"]+)"', (REPO / "backend" / "__init__.py").read_text(encoding="utf-8")).group(1)
+    branch, sha = _git(REPO, "rev-parse", "--abbrev-ref", "HEAD"), _git(REPO, "rev-parse", "HEAD")[:7]
+    want = f"{ver}-dev+{sha}" if branch == "dev" else ver
+    html = admin.get("/").text
+    boot = json.loads(re.search(r'<script id="tr-boot" type="application/json">(.*?)</script>', html, re.S).group(1))
+    eq((boot["version"], boot["version_label"]), (ver, want), f"U5 the page (this checkout is on {branch} at {sha})")
+    v = admin.get("/api/version").json()
+    eq((v["current"], v["label"]), (ver, want), "U5 /api/version")
+    scratch = _git(inst, "rev-parse", "HEAD")[:7]
+    check(scratch == sha or scratch not in boot["version_label"], "U5 never the scratch update repository's commit")
+    for f, use in (("tr.js", "boot.version_label || boot.version"), ("app.js", "v.label || v.current")):
+        check(use in (REPO / "frontend" / f).read_text(encoding="utf-8"), f"U5 {f} shows the label ({use})")
     _rmtree(base)

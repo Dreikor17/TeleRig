@@ -49,6 +49,18 @@ def _short(text: str, n: int = OUT_MAX) -> str:
     return text if len(text) <= n else "…" + text[-n:]
 
 
+def version_label(version: str, info: Optional[dict]) -> str:
+    """The version the pages show, from Updater.info() of the copy that runs. A dev install (a git
+    checkout on the dev branch) is not the release it will become, so it shows "-dev" and its commit
+    after the number: "0.3.0-dev+0205284" (semver build metadata). A master install, another branch,
+    a zip copy or no git: the release number alone. Version checks keep using the number alone."""
+    info = info or {}
+    if info.get("branch") != "dev":
+        return version
+    short = str(info.get("short") or "").strip()
+    return f"{version}-dev+{short}" if short else f"{version}-dev"
+
+
 class Updater:
     """`runner(args, timeout) -> (exit code, output)` runs a command in the repo (tests replace it);
     `git` is the git executable (None: not installed); `python` the interpreter that runs TeleRig."""
