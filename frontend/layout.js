@@ -63,7 +63,7 @@
   if (!window.GridStack) { fallback("GridStack did not load"); return; }
 
   // ---- the tile registry (§3.1), mirrored by layout_store.TILE_IDS ----
-  const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots"];
+  const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv"];
   const TILES = {
     vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 64,  bodyPxAlt: 120 },
     // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
@@ -78,9 +78,11 @@
     recorder: { title: "Recorder", icon: "tr-record",          minW: 2, bodyPx: 80 },
     // spots bodyPx: the filter row (31), the status line (21) and a few two-line spots
     spots:    { title: "Spots",    icon: "globe",              minW: 3, bodyPx: 180 },
+    // sstv bodyPx: the mode row (31), the status line (21) and a 320 x 256 picture at the panel's width
+    sstv:     { title: "SSTV",     icon: "tr-sstv",            minW: 3, bodyPx: 220 },
   };
   const GATEABLE = new Set(["ptt", "meter"]);              // the only tiles a gate can park
-  const PHONE_RESIZABLE = new Set(["scope", "cw", "spots"]); // phone: user-sized (stored h, `s` handle)
+  const PHONE_RESIZABLE = new Set(["scope", "cw", "spots", "sstv"]); // phone: user-sized (stored h, `s` handle)
   const PHONE_FIT = new Set(["audio", "meter", "controls", "recorder"]); // phone: height follows the content
   const HEAD_ROWS = 2;                                     // collapsed slot, fixed (AR-58)
   const B = (boot.layout_bounds && boot.layout_bounds.desktop && boot.layout_bounds.phone) ? boot.layout_bounds
@@ -94,11 +96,11 @@
       { id: "ptt", x: 7, y: 0, w: 2, h: 5 }, { id: "audio", x: 9, y: 0, w: 3, h: 5 },
       { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 },
       { id: "cw", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "recorder", x: 0, y: 18, w: 3, h: 6 },
-      { id: "spots", x: 9, y: 9, w: 3, h: 15, hidden: true }] },
+      { id: "spots", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "sstv", x: 9, y: 9, w: 3, h: 15, hidden: true }] },
     phone: { column: 1, items: [
       { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 }, { id: "meter", y: 3 },
       { id: "audio", y: 4 }, { id: "controls", y: 5 }, { id: "recorder", y: 6 }, { id: "cw", y: 7, h: 10, hidden: true },
-      { id: "spots", y: 8, h: 10, hidden: true }] },
+      { id: "spots", y: 8, h: 10, hidden: true }, { id: "sstv", y: 9, h: 12, hidden: true }] },
   };
   // the Recorder came after layouts were first saved: a saved layout without it gets it right under
   // Controls (placeRecorder), the place the default gives it
@@ -709,6 +711,7 @@
       case "cw": return $("cwDecodeBtn") && $("cwDecodeBtn").getAttribute("aria-pressed") === "true" ? "decoder on" : "decoder off";
       case "recorder": return (window.Recorder && typeof window.Recorder.summary === "function" && window.Recorder.summary()) || "";
       case "spots": return (window.SpotsPanel && typeof window.SpotsPanel.summary === "function" && window.SpotsPanel.summary()) || "";
+      case "sstv": return (window.SstvPanel && typeof window.SstvPanel.summary === "function" && window.SstvPanel.summary()) || "";
       default: return "";
     }
   }

@@ -554,6 +554,15 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .spots-credit{margin:8px 0 0;font-size:9.5px;color:var(--txt-faint)}
 .spots-credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 
+/* ---- SSTV (sstv.js): the mode menu, the status, the picture as it arrives, the pictures received ---- */
+.sstv-bar{display:flex;align-items:center;gap:6px}
+.sstv-bar select{flex:1 1 auto;min-width:0;font-size:11px;padding:3px 5px}
+.sstv-status{margin:6px 0;font-size:11px;line-height:1.35;color:var(--txt-dim)}
+.sstv-canvas{display:block;width:100%;height:auto;background:#000;border:1px solid var(--tft-border);border-radius:var(--r-sm)}
+.sstv-gallery{display:flex;gap:4px;margin-top:6px;overflow-x:auto}
+.sstv-pic{flex:none;display:block;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden}
+.sstv-pic img{display:block;width:64px;height:auto}
+
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
   min-width:76px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}

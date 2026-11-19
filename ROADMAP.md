@@ -57,6 +57,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   radio's bands, or seen by a viewer, is shown but not clickable. The server fetches the sources
   only while someone has the panel open, never more often than each allows (POTA and WWFF once a
   minute, HamQTH every 30 s), and every page shares that; text from the sources is only ever text.
+- **SSTV receive** (Add panel > SSTV): slow-scan TV pictures decoded in the browser from the radio's
+  audio, painting line by line as they arrive. Robot 36 / 72, Martin M1 / M2, Scottie S1 / S2 / DX
+  and PD-50 to PD-290 (PD-120 is the ISS's usual mode on 145.800 MHz FM). The VIS header picks the
+  mode and its leader measures the tuning offset; each line re-locks on its sync pulse, so a station
+  with a fast or slow sound card clock does not slant the picture; a chosen mode joins a picture
+  already under way. Finished pictures go into a strip, each a PNG download named after the mode,
+  frequency and UTC time. Receive only.
 - **Icom front-panel TX detection.** The Icom radios now report their own transmit state (CI-V
   `1C 00`, read about 3 times a second), like the Yaesu radios always did: a hand-mic or
   front-panel key is the FRONT PANEL owner, shown to everyone, and nobody can key over it (a
@@ -255,6 +262,12 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   fixed-window seam (after e04/web-deep-cw-decoder). *Follow-ups:* optional WebGPU backend.
 - **Recorder, next steps** — the TX audio in the recording too, and QSO timestamps / a
   recording log on top of the Recorder panel (Done above).
+- **SSTV transmit** — an image (file, paste or drop), cropped to the mode with a callsign line, sent
+  as an operator-triggered, bounded transmission on the same rules as PTT (ON AIR, STOP, a dropped
+  browser unkeys), the audio made in the page and sent like the mic. TeleRig's 120 s PTT session and
+  the 2-minute radio time-out it sets allow Robot 36 / 72, Martin M2, Scottie S1 / S2 and PD-90;
+  longer modes need a deliberate decision (an SSTV claim with its own cap, like CW's, and a longer
+  radio time-out). Also: decoding a saved recording.
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. RTTY/FT8
   decode, a tuning/zero-beat aid, memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).

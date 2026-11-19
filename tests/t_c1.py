@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js", "recorder.js", "spots.js"):
+              "device.js", "recorder.js", "spots.js", "sstv.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -335,3 +335,19 @@ def spots_panel_in_node_vm(ctx):
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function"):
         check(bad not in js, f"spots.js never uses {bad}")
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["set_freq", "set_mode"], "spots.js sends only set_freq / set_mode")
+
+
+@test("unit")
+def sstv_receive_in_node_vm(ctx):
+    """sstv.js (receive only): the decoder against a reference encoder (tests/sstv_encode.js) in every
+    mode, in noise, mistuned, from a station with a fast clock, joined mid-picture, never started by
+    noise, an unknown VIS reported, a lost signal ended (tests/sstv_test.js); the panel on the real
+    script: RX hint, painting, status, the PNG strip, off-grid, the mode menu, Clear
+    (tests/sstv_panel_test.js). Static: it never sends a radio action and never parses text as HTML."""
+    for name in ("sstv_test.js", "sstv_panel_test.js"):
+        r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=300, cwd=str(REPO))
+        eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
+        check("ALL PASS" in r.stdout, f"{name} output: {r.stdout}")
+    js = _strip_comments(_read("sstv.js"))
+    for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", ".send(", "WebSocket", "fetch("):
+        check(bad not in js, f"sstv.js never uses {bad}")

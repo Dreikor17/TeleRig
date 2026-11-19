@@ -21,7 +21,7 @@ let failures = 0, checks = 0;
 function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL " + msg); } }
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
-const IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots"];
+const IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv"];
 const OLD_DESKTOP = [
   { id: "controls", x: 0, y: 0, w: 3, h: 24 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 }, { id: "ptt", x: 7, y: 0, w: 2, h: 5 },
   { id: "audio", x: 9, y: 0, w: 3, h: 5 }, { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 6, h: 15 },
