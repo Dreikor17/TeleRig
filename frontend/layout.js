@@ -711,7 +711,8 @@
       case "cw": return $("cwDecodeBtn") && $("cwDecodeBtn").getAttribute("aria-pressed") === "true" ? "decoder on" : "decoder off";
       case "recorder": return (window.Recorder && typeof window.Recorder.summary === "function" && window.Recorder.summary()) || "";
       case "spots": return (window.SpotsPanel && typeof window.SpotsPanel.summary === "function" && window.SpotsPanel.summary()) || "";
-      case "sstv": return (window.SstvPanel && typeof window.SstvPanel.summary === "function" && window.SstvPanel.summary()) || "";
+      case "sstv": return (window.SstvTx && typeof window.SstvTx.summary === "function" && window.SstvTx.summary()) ||
+        (window.SstvPanel && typeof window.SstvPanel.summary === "function" && window.SstvPanel.summary()) || "";
       default: return "";
     }
   }

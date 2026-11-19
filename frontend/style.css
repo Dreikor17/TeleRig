@@ -451,11 +451,12 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .cw-status{color:var(--txt-dim);font-family:var(--font-ui);font-size:10px}
 .cw-row input.cw-wpm{flex:0 0 52px;min-width:52px}
 /* CW transmit button — amber (it keys the radio), red + pulse while on air */
-.key.sm.cw-tx{border-color:var(--warn);color:var(--warn-hi);background:var(--warn-tint);font-weight:700;min-width:34px}
-.key.sm.cw-tx:hover{background:var(--warn);color:#1a1205}
-.key.sm.cw-tx[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--border);color:var(--txt-dim);background:none}
-.key.sm.cw-tx.on{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff;box-shadow:0 0 12px rgba(239,68,68,.6);animation:cwtxpulse 1s ease-in-out infinite}
+.key.sm.cw-tx,.key.sstv-send{border-color:var(--warn);color:var(--warn-hi);background:var(--warn-tint);font-weight:700;min-width:34px}
+.key.sm.cw-tx:hover,.key.sstv-send:hover{background:var(--warn);color:#1a1205}
+.key.sm.cw-tx[disabled],.key.sstv-send[disabled]{opacity:.45;cursor:not-allowed;border-color:var(--border);color:var(--txt-dim);background:none}
+.key.sm.cw-tx.on,.key.sstv-send.on{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff;box-shadow:0 0 12px rgba(239,68,68,.6);animation:cwtxpulse 1s ease-in-out infinite}
 @keyframes cwtxpulse{50%{box-shadow:0 0 4px rgba(239,68,68,.6)}}
+.key.sstv-send{flex:none;min-width:84px;font-variant-numeric:tabular-nums}
 .cw-txhint{font-size:10px;color:var(--warn-hi);flex:1 1 auto}
 .cw-credit{font-size:9px;color:var(--txt-dim);margin-top:3px;text-align:center}
 .cw-credit a{color:var(--txt-dim);text-decoration:none}
@@ -568,6 +569,22 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .sstv-gallery{display:flex;gap:4px;margin-top:6px;overflow-x:auto}
 .sstv-pic{flex:none;display:block;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden}
 .sstv-pic img{display:block;width:64px;height:auto}
+/* Receive / Send (sstv-tx.js): two tabs; Send is hidden from viewers ([data-tx]) */
+.sstv-tabs{display:flex;gap:2px;margin:0 0 7px;border-bottom:1px solid var(--border)}
+.sstv-tab{appearance:none;background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;padding:3px 9px 5px;
+  font:600 11px/1 var(--font-ui);color:var(--txt-dim);cursor:pointer}
+.sstv-tab.on{color:var(--txt);border-bottom-color:var(--accent)}
+.sstv-tab:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#sstvTx .sstv-bar{flex-wrap:wrap}
+#sstvTx .sstv-bar select{flex:1 1 100%}       /* the mode and its time on a row of its own; the picture keys below */
+.sstv-pick{position:relative;cursor:pointer}
+.sstv-pick:focus-within{outline:2px solid var(--accent);outline-offset:1px}
+.sstv-text{display:block;width:100%;box-sizing:border-box;margin:6px 0;font-size:12px;padding:4px 6px}
+.sstv-level{margin-top:6px}
+.sstv-send-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+.sstv-send-row .sstv-status{margin:0;flex:1 1 auto;min-width:0}
+.sstv-note{margin:6px 0 0;font-size:10px;line-height:1.35;color:var(--txt-faint)}
+.grid-stack-item.sstv-on-air .tile{border-color:var(--tx-solid);box-shadow:0 0 0 1px var(--tx-solid)}   /* this panel is keying the radio */
 
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
@@ -938,7 +955,7 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
 .tr-confirm.danger{border-color:var(--danger)}
 .tr-confirm-msg{flex:1 1 240px}
 @media (prefers-reduced-motion:reduce){
-  .toast,.onair-dot,.lb-spin,.key.sm.cw-tx.on,body{transition:none!important;animation:none!important}
+  .toast,.onair-dot,.lb-spin,.key.sm.cw-tx.on,.key.sstv-send.on,body{transition:none!important;animation:none!important}
 }
 
 /* ===== responsive / touch ===== */
@@ -1293,8 +1310,8 @@ body.tr-nogrid .ui-resizable-handle{display:none!important}
 .screen .pill-go:hover:not(:disabled){background:var(--sk-sel);border-color:var(--sk-sel-edge);color:#fff}
 .screen .pill-stop:hover:not(:disabled),.screen .ctl-btn.danger{background:#c02620;border-color:#ff8a82;color:#fff}
 /* anything that transmits is a red softkey */
-.screen .key.ptt,.screen #pttBtn,.screen #pttBtn.on,.screen .key.sm.cw-tx{background:var(--sk-tx);border:1px solid var(--sk-tx-edge);color:#fff;box-shadow:none}
-.screen .key.ptt:hover,.screen #pttBtn:hover,.screen .key.sm.cw-tx:hover{background:var(--sk-tx);border-color:#ff8a82;color:#fff}
+.screen .key.ptt,.screen #pttBtn,.screen #pttBtn.on,.screen .key.sm.cw-tx,.screen .key.sstv-send{background:var(--sk-tx);border:1px solid var(--sk-tx-edge);color:#fff;box-shadow:none}
+.screen .key.ptt:hover,.screen #pttBtn:hover,.screen .key.sm.cw-tx:hover,.screen .key.sstv-send:hover{background:var(--sk-tx);border-color:#ff8a82;color:#fff}
 .screen .key.ptt.on,.screen #pttBtn.tx-mine,.screen .key.sm.cw-tx.on{background:var(--sk-tx-on);border-color:#ff8a82;color:#fff;
   box-shadow:0 0 22px rgba(240,89,79,.45)}
 .screen .key.sm.cw-tx[disabled]{background:var(--sk);border-color:var(--sk-edge);color:var(--txt-dim);opacity:.6}

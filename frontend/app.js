@@ -14,6 +14,7 @@
   let blanked = false;                            // after a radio change: VFO zeroed + waterfall cleared until reconnect
   let radios = [], currentRadio = null;          // radio profiles from /api/radios
   let afOk = false, afAsking = false, afSeen = 0; // the AF (radio speaker) warning: see the level sliders
+  let genTx = false;                              // generated TX audio (SSTV) has the mic's path: genTxBegin
   const LEVELS = ["af", "rf", "sql", "rfpwr", "nb_level", "nr_level", "pbt1", "pbt2", "mnotch_pos",
                   "mic", "comp_level", "vox_gain", "mon_level", "cw_pitch", "keyer_speed"];
 
@@ -86,6 +87,7 @@
       case "bridge": onBridgeFrame(msg); break;
       case "denied": onDenied(msg); break;
       case "error": onErrorFrame(msg); break;
+      case "mic": document.dispatchEvent(new CustomEvent("tr:mic", { detail: msg })); break;   // {ready}: TX path open
       default: break;
     }
   }
@@ -281,6 +283,7 @@
     if (ownedOrPending()) wasOwnedAtDrop = true;   // the server released our claims with the socket
     if (ownedPtt() || pttPending) pttGuard();
     pendingClaims.clear(); pttPending = null; heldTx = null; answeredSeq = 0;
+    genTx = false;                               // the server dropped this connection's mic flag with it
     TR.myConn = null;
     TR.tx = { owner: null };
     txSince = 0;
@@ -374,6 +377,7 @@
     if ((code.indexOf("tx_device") === 0 || (code === "tx_failed" && /^could not open/i.test(m.message || ""))) && micOn) {
       stopMic(); $("micBtn").classList.remove("on");
     }
+    document.dispatchEvent(new CustomEvent("tr:error", { detail: m }));   // sstv-tx.js: a TX device that won't open
     TR.toast(m.message || code || "Server error", "error");
   }
 
@@ -2401,7 +2405,9 @@
   const pcmTaps = new Set();
   window.RadioAudio = { ensure: ensureAudioCtx, ctx: () => audioCtx, bus: () => rxBus, state: () => state,
     on: () => !!($("audioBtn") && $("audioBtn").classList.contains("active")),
-    tapPcm: (fn) => { pcmTaps.add(fn); return () => { pcmTaps.delete(fn); }; } };
+    tapPcm: (fn) => { pcmTaps.add(fn); return () => { pcmTaps.delete(fn); }; },
+    // generated TX audio (sstv-tx.js): see genTxBegin below. Keys nothing.
+    txBegin: () => genTxBegin(), txPush: (pcm) => genTxPush(pcm), txEnd: () => genTxEnd(), txActive: () => genTx };
   // control channel for overlay tools (CW TX): send a WS command + read live state
   window.RadioControl = { send: (o) => send(o), state: () => state, radios: () => radios.slice() };
   function playAudio(buf) {
@@ -2597,6 +2603,7 @@
       }
       const ml = $("micLevel");
       if (ml) ml.style.width = Math.min(100, Math.round(Math.sqrt(peak) * 100)) + "%";   // perceptual level
+      if (genTx) return;                                   // generated TX audio has the path (SSTV)
       if (ws && ws.readyState === 1) ws.send(out.buffer);
     };
     micSrc.connect(micProc); micProc.connect(micSink); micSink.connect(audioCtx.destination);
@@ -2608,6 +2615,29 @@
     if (micStream) micStream.getTracks().forEach(t => t.stop());
     micProc = micSrc = micSink = micStream = null;
     const ml = $("micLevel"); if (ml) ml.style.width = "0%";
+  }
+  // ---- generated TX audio (sstv-tx.js): the mic's path, the mic's rules ----
+  // genTxBegin() takes the path: the server's mic flag goes on for this connection (it answers
+  // {type: mic, ready} once its TX path is open: the "tr:mic" event), and the client mic, if on,
+  // sends nothing until genTxEnd(). genTxPush(pcm) sends one chunk of 16 kHz mono int16 as a binary
+  // frame, the mic's format; the server forwards it only while this connection owns TX with ptt (I10),
+  // so none of this keys anything: the caller claims ptt itself, through RadioControl.send.
+  // genTxEnd() gives the path back (the server's mic flag off again unless the mic is on).
+  function genTxBegin() {
+    if (genTx || !TR.can("tx")) return false;
+    genTx = true;
+    send({ action: "mic", on: true });
+    return true;
+  }
+  function genTxPush(pcm) {
+    if (!genTx || !(pcm instanceof Int16Array) || !pcm.length || !ws || ws.readyState !== 1) return false;
+    ws.send(pcm.byteOffset === 0 && pcm.byteLength === pcm.buffer.byteLength ? pcm.buffer : pcm.slice().buffer);
+    return true;
+  }
+  function genTxEnd() {
+    if (!genTx) return;
+    genTx = false;
+    if (!micOn) send({ action: "mic", on: false });
   }
 
   // Turn RX audio ON (the RX button, and the auto-start after a COM connect). Every transport

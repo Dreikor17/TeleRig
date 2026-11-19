@@ -117,9 +117,13 @@ async def main():
     await r.on_conn_closed(b)
     C("T43 ... stopped once after the last one leaves", [c for c in host.calls if c[0] == "stop_rx"], [("stop_rx",)])
     # -- T43: mic refcount -------------------------------------------------------------------------
+    hub.sent.clear()
     await r.set_mic(a, True)
+    C("mic on: the requester hears 'ready' once the host TX device is open",
+      (hub.sent, [c for c in host.calls if c[0] == "start_tx"]), ([(1, {"type": "mic", "on": True, "ready": True})], [("start_tx", 5)]))
     await r.set_mic(b, True)
     C("T43 mic refcount: TX device opened ONCE", [c for c in host.calls if c[0] == "start_tx"], [("start_tx", 5)])
+    C("... the second requester hears 'ready' too (already open)", hub.sent[-1], (2, {"type": "mic", "on": True, "ready": True}))
     await r.set_mic(a, False)
     C("T43 ... kept open while another mic is on", [c for c in host.calls if c[0] == "stop_tx"], [])
     await r.set_mic(a, True)
@@ -152,6 +156,11 @@ async def main():
     x = conn(hubl, 1)
     await rl.set_mic(x, True)
     C("LAN mic on opens no host device", hostl.calls, [])
+    C("... and is ready at once", hubl.sent, [(1, {"type": "mic", "on": True, "ready": True})])
+    hubl.sent.clear()
+    await rl.set_mic(x, False)
+    C("mic off: no 'ready'", hubl.sent, [])
+    await rl.set_mic(x, True)
     arbl.owner, arbl.claims = 1, {"ptt"}
     C("LAN owner PCM -> radio.write_audio", (rl.mic_in(x, pcm), radiol.audio), (True, [640]))
     await rl.set_rx(x, True)
@@ -198,6 +207,7 @@ async def main():
     await r.set_mic(c, True)
     C("no CODEC output -> tx_device_unpinned, mic flag cleared", ([f["code"] for cid, f in hub.sent], c.tx_audio),
       (["tx_device_unpinned"], False))
+    C("... and no 'ready' (the error frame is the only answer)", [f.get("type") for cid, f in hub.sent], ["error"])
 
     # -- radio change: stop all, restart for the subscribers -------------------------------------------
     r, hub, host, radio, arb = make()

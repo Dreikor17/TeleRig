@@ -75,9 +75,11 @@ function pageEnv(lat, opts) {
     deliver({ type: "tx", owner: null });
   };
   e.log = [];                                      // [time, label, op] for every non-heartbeat frame the page sent
+  e.binary = [];                                   // [time, ArrayBuffer]: binary frames (TX audio) the page sent
   e.curOp = "boot";
   const orig = ws.send;
   ws.send = (d) => {
+    if (typeof d !== "string") { e.binary.push([e.clock.now, d]); return; }
     orig(d);
     const f = JSON.parse(d);
     if (f.action !== "tx_hb") {
@@ -141,6 +143,7 @@ function pageEnv(lat, opts) {
   const CLAIM_LBL = /^(ptt:on|vox:on|cw_tx|tune_atu)$/;
   const orig2 = ws.send;
   ws.send = (d) => {
+    if (typeof d !== "string") { orig2(d); return; }       // binary (TX audio): never a claim
     const f = JSON.parse(d);
     const lbl = f.action === "ptt" ? "ptt:" + (f.tx ? "on" : "off") : f.action === "rx_func" ? "vox:" + (f.on ? "on" : "off") : f.action;
     if (CLAIM_LBL.test(lbl) && e.awayNow()) e.claimsSentAway.push([e.clock.now, lbl, e.curOp]);

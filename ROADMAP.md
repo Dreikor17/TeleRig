@@ -66,7 +66,15 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   mode and its leader measures the tuning offset; each line re-locks on its sync pulse, so a station
   with a fast or slow sound card clock does not slant the picture; a chosen mode joins a picture
   already under way. Finished pictures go into a strip, each a PNG download named after the mode,
-  frequency and UTC time. Receive only.
+  frequency and UTC time.
+- **SSTV transmit** (the SSTV panel's Send tab, operators only): a picture (chosen, dropped or
+  pasted, cropped to fill the mode's frame) or a test card, with a line of text such as your
+  callsign, sent as one operator-triggered transmission on the same rules as PTT: one TX owner, the
+  120 s limit, STOP, and a hidden tab or a dropped connection unkeys. The audio is made in the page
+  before anything is keyed and goes out on the mic's path in real time; the radio is released only
+  after the last line has played out. The modes offered are the ones whose whole transmission fits
+  the 120 s PTT session: Robot 36 / 72, Martin M1 / M2, Scottie S1 / S2, PD-50 and PD-90, each with
+  its time on the air. Never in CW, RTTY, DV or C4FM; a level control for the ALC.
 - **Icom front-panel TX detection.** The Icom radios now report their own transmit state (CI-V
   `1C 00`, read about 3 times a second), like the Yaesu radios always did: a hand-mic or
   front-panel key is the FRONT PANEL owner, shown to everyone, and nobody can key over it (a
@@ -271,12 +279,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   fixed-window seam (after e04/web-deep-cw-decoder). *Follow-ups:* optional WebGPU backend.
 - **Recorder, next steps** — the TX audio in the recording too, and QSO timestamps / a
   recording log on top of the Recorder panel (Done above).
-- **SSTV transmit** — an image (file, paste or drop), cropped to the mode with a callsign line, sent
-  as an operator-triggered, bounded transmission on the same rules as PTT (ON AIR, STOP, a dropped
-  browser unkeys), the audio made in the page and sent like the mic. TeleRig's 120 s PTT session and
-  the 2-minute radio time-out it sets allow Robot 36 / 72, Martin M2, Scottie S1 / S2 and PD-90;
-  longer modes need a deliberate decision (an SSTV claim with its own cap, like CW's, and a longer
-  radio time-out). Also: decoding a saved recording.
+- **SSTV transmit, longer modes** — Scottie DX and PD-120 to PD-290 (2 to 5 minutes) don't fit the
+  120 s PTT session or the 2-minute radio time-out TeleRig sets on connect. Sending them needs a
+  deliberate decision: an SSTV claim with its own cap (like CW's) and a longer radio time-out while
+  it runs. Also: replying with a received picture, and decoding a saved recording.
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. RTTY/FT8
   decode, a tuning/zero-beat aid, memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).

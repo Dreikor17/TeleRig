@@ -6,7 +6,9 @@ server-chosen default, F22) is opened when the subscriber count goes 0 -> 1 and 
 LAN audio already flows from the radio. Device errors go to the requesting connection only.
 
 Mic (non-exclusive, F12). `mic {on}` sets the connection's tx_audio flag; for a serial radio the
-host TX device opens on the first such connection and closes when the last one leaves. A binary
+host TX device opens on the first such connection and closes when the last one leaves. Once the
+TX path is open the requester gets `{type: mic, on: true, ready: true}` (a device error instead
+gets its error frame and no ready), so generated TX audio (SSTV) can wait before keying. A binary
 frame reaches the radio ONLY from the TX owner holding ptt or vox with its mic on (I10); anything
 else is dropped silently, and never closes the socket.
 
@@ -210,9 +212,15 @@ class AudioRouter:
             await self._maybe_close_tx()
             return
         conn.tx_audio = True
-        if self.kind_getter() != "serial":
-            return
-        await self._ensure_tx([conn])
+        if self.kind_getter() == "serial":
+            await self._ensure_tx([conn])
+        if conn.tx_audio and not getattr(conn, "closing", False):
+            # the TX path is open (a serial radio's host TX device, or nothing to open): tell this
+            # connection, so generated audio (SSTV) can wait for it before keying. Changes nothing.
+            try:
+                self.hub.send_to(conn, {"type": "mic", "on": True, "ready": True})
+            except Exception:
+                pass
 
     async def _ensure_tx(self, requesters: list) -> None:
         async with self._alock():

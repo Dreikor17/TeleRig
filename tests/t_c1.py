@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js", "recorder.js", "spots.js", "sstv.js"):
+              "device.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -399,3 +399,35 @@ def rf_power_slider_is_in_the_tx_tab(ctx):
     body = tx[start:end if end > 0 else len(tx)] if start >= 0 else ""
     check(0 <= body.find('id="rfpwr"') < body.find('id="mic"'), "... in the TX group, before MIC")
     eq(re.findall(r'<input type="range"[^>]*id="([a-z_]+)"', rx), ["af", "rf", "sql"], "the RX tab's sliders: AF, RF, SQL")
+
+
+@test("unit")
+def sstv_transmit_in_node_vm(ctx):
+    """sstv-tx.js (one picture, operator-triggered, on the PTT rules): the modes offered fit the 120 s
+    PTT session (117 s on the air at most); the encoder equals the reference encoder sample for sample
+    and decodes; Send takes the TX path, waits for the server's ready, sends ONE ptt claim, streams in
+    real time only after the grant, releases after the tail has played; STOP at every step; a lost
+    claim, a closed panel, busy / denied / no ready / a device error / a claim that can't be sent key
+    nothing; never for a viewer, without PTT, or in CW / RTTY / DV / C4FM (tests/sstv_tx_test.js).
+    Static: its only radio action is ptt, claimed in one place; it never parses text as HTML."""
+    r = subprocess.run(["node", str(REPO / "tests" / "sstv_tx_test.js")], capture_output=True, text=True,
+                       timeout=600, cwd=str(REPO))
+    eq(r.returncode, 0, f"sstv_tx_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"sstv_tx_test.js output: {r.stdout}")
+    js = _strip_comments(_read("sstv-tx.js"))
+    for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", "WebSocket", "fetch(", "XMLHttpRequest"):
+        check(bad not in js, f"sstv-tx.js never uses {bad}")
+    eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["ptt"], "sstv-tx.js sends no radio action but ptt")
+    eq(js.count('action: "ptt", tx: true'), 1, "sstv-tx.js claims ptt in one place only")
+
+
+@test("unit")
+def generated_tx_audio_path_in_node_vm(ctx):
+    """app.js RadioAudio.txBegin / txPush / txEnd (for sstv-tx.js): the server's mic flag on and off, the
+    audio as the mic's binary frames (exactly the samples), nothing before begin or after end, no claim
+    (it keys nothing), a viewer refused, a dropped connection gives the path back; the server's
+    {type: mic, ready} and TX device errors reach the page as tr:mic / tr:error (tests/tx_audio_test.js)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "tx_audio_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"tx_audio_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"tx_audio_test.js output: {r.stdout}")

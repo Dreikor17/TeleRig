@@ -211,7 +211,7 @@ def index_tiles_parking_and_script_order(ctx):
     eq(srcs, ["/static/vendor/gridstack/gridstack-all.js?v=14.0.0", "/static/tr.js", "/static/waterfall.js",
               "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js",
               "/static/vendor/lamejs/lame.min.js?v=1.2.1", "/static/recorder.js", "/static/spots.js", "/static/sstv.js",
-              "/static/account.js", "/static/bridge.js", "/static/device.js", "/static/admin.js"], "script order")
+              "/static/sstv-tx.js", "/static/account.js", "/static/bridge.js", "/static/device.js", "/static/admin.js"], "script order")
     check(not re.search(r"<script>\s*/\*\s*tabbed control panels", html), "the inline tab switcher moved to layout.js")
     css = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
     eq(css, ["/static/vendor/gridstack/gridstack.min.css?v=14.0.0", "/static/style.css"], "stylesheets")
@@ -317,10 +317,10 @@ def scripts_tile_mode_and_cwdiag(ctx):
     m = re.search(r"^ASSETS = \((.*?)\)\s*$", srv, re.M | re.S)
     check(m, "server.py ASSETS")
     eq(re.findall(r'"([^"]+)"', m.group(1)), ["style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js",
-                                               "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "account.js", "bridge.js", "device.js",
-                                               "admin.js"],
+                                               "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "account.js", "bridge.js",
+                                               "device.js", "admin.js"],
        "ASSETS (cache-busted, §3.15)")
-    for f in ("layout.js", "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "tr.js", "waterfall.js", "account.js", "bridge.js", "device.js",
+    for f in ("layout.js", "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "tr.js", "waterfall.js", "account.js", "bridge.js", "device.js",
               "admin.js"):
         r = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(r.returncode, 0, f"node --check {f}: {r.stderr}")

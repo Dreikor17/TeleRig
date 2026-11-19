@@ -1,6 +1,7 @@
-/* A reference SSTV encoder for the tests (tests/sstv_test.js, tests/sstv_panel_test.js): phase-continuous
- * tones at 16 kHz, VIS header included, for every mode in frontend/sstv.js's table, written from the mode
- * specifications (not from the decoder). It is the start of the TX side, which is not built yet.
+/* A reference SSTV encoder for the tests (tests/sstv_test.js, tests/sstv_panel_test.js, tests/sstv_tx_test.js):
+ * phase-continuous tones at 16 kHz, VIS header included, for every mode in frontend/sstv.js's table, written
+ * from the mode specifications (not from the decoder). frontend/sstv-tx.js's encoder must match it sample
+ * for sample (tests/sstv_tx_test.js E2).
  *
  *   pic(w, h)                    a test picture: colour bars over a grey ramp, a dark box, one-row stripes
  *   vis(code), picture(m, img)   segment lists [[ms, freq(t)]]
