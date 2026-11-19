@@ -530,6 +530,30 @@ a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decorat
 .rec-credit{margin:8px 0 0;font-size:9.5px;color:var(--txt-faint)}
 .rec-credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 
+/* ---- spots (spots.js): the filters, then one two-line row per spot (a button when it can be tuned) ---- */
+.spots-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.spots-bar .spots-src{padding:5px 8px;font-size:11px}
+.spots-bar select{flex:1 1 84px;min-width:0;font-size:11px;padding:3px 5px}
+.spots-band{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--txt-dim);white-space:nowrap}
+.spots-status{margin:6px 0 4px;font-size:11px;line-height:1.35;color:var(--txt-dim)}
+.spots-list{display:flex;flex-direction:column;gap:3px}
+.spot{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;grid-template-areas:"freq mode call age" "ref ref ref src";
+  column-gap:8px;row-gap:1px;align-items:baseline;width:100%;padding:4px 7px;margin:0;text-align:left;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);color:var(--txt);
+  font:12px/1.25 var(--font-ui);font-variant-numeric:tabular-nums}
+button.spot{cursor:pointer}
+button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
+.spot.off{opacity:.55}
+.spot span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp-freq{grid-area:freq;font-weight:700;color:var(--num)}
+.sp-mode{grid-area:mode;font-size:10.5px;color:var(--txt-dim)}
+.sp-call{grid-area:call;font-weight:700}
+.sp-age{grid-area:age;font-size:10.5px;color:var(--txt-dim);text-align:right}
+.sp-ref{grid-area:ref;font-size:10.5px;color:var(--txt-dim)}
+.sp-src{grid-area:src;font-size:10px;color:var(--txt-faint);text-align:right}
+.spots-credit{margin:8px 0 0;font-size:9.5px;color:var(--txt-faint)}
+.spots-credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
+
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
   min-width:76px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}

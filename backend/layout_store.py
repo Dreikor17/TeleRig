@@ -33,7 +33,7 @@ from typing import Any, Optional
 
 from .store import JsonStore, StoreCorrupt, StoreMissing, console
 
-TILE_IDS = ("vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder")   # == layout.js TILES (§3.1)
+TILE_IDS = ("vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots")   # == layout.js TILES (§3.1)
 DEVICES = ("desktop", "phone")
 COLUMNS = {"desktop": 12, "phone": 1}
 BOUNDS = {"desktop": {"cols": 12, "y_max": 199, "h_max": 96, "bottom_max": 200, "dw_max": 11},

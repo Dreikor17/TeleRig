@@ -625,6 +625,35 @@
   </section>
 </div>
 
+<div class="grid-stack-item" gs-id="spots" data-tile="spots">
+  <section class="grid-stack-item-content tile" aria-labelledby="th-spots">
+    <header class="tile-head">
+      <svg class="tile-icon" aria-hidden="true"><use href="#i-globe"/></svg>
+      <h2 class="tile-title" id="th-spots">SPOTS</h2>
+      <span class="tile-summary" aria-hidden="true"></span>
+      <div class="tile-actions">
+        <button type="button" class="tile-btn tile-up" aria-label="Move Spots up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Spots down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Spots" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Spots panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+    </header>
+    <!-- spots.js: POTA / WWFF / DX spots, fetched by the server only while this panel is shown (backend/spots.py); a click tunes -->
+    <div class="tile-body tile-spots"><div class="tile-fit">
+      <div class="spots-bar" role="group" aria-label="Spot sources and filters">
+        <button type="button" class="key sm tog spots-src on" data-src="pota" aria-pressed="true" title="Parks on the Air activators">POTA</button>
+        <button type="button" class="key sm tog spots-src on" data-src="wwff" aria-pressed="true" title="World Wide Flora and Fauna activators">WWFF</button>
+        <button type="button" class="key sm tog spots-src on" data-src="dx" aria-pressed="true" title="DX cluster spots from HamQTH.com">DX</button>
+        <select id="spotsMode" aria-label="Mode"><option value="">All modes</option><option value="CW">CW</option><option value="SSB">SSB</option><option value="DIGI">Data</option><option value="FMAM">FM / AM</option></select>
+        <label class="spots-band"><input type="checkbox" id="spotsBand"> This band</label>
+      </div>
+      <p class="spots-status" id="spotsStatus" aria-live="polite">Loading spots…</p>
+      <div class="spots-list" id="spotsList"></div>
+      <p class="spots-credit">Spots from POTA and WWFF. DX spots: <a href="https://www.hamqth.com/" target="_blank" rel="noopener">data provided by HamQTH.com</a>; register there and keep your profile current.</p>
+    </div></div>
+  </section>
+</div>
+
 </div><!-- /tileParking -->
 
 <!-- Arrange mode (§3.10): a fixed toolbar at the bottom; never inside the grid -->
@@ -668,6 +697,7 @@
 <script src="/static/cwtool.js"></script>
 <script src="/static/vendor/lamejs/lame.min.js?v=1.2.1"></script>
 <script src="/static/recorder.js"></script>
+<script src="/static/spots.js"></script>
 <script src="/static/account.js"></script>
 <script src="/static/bridge.js"></script>
 <script src="/static/device.js"></script>

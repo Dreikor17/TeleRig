@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js", "recorder.js"):
+              "device.js", "recorder.js", "spots.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -317,3 +317,21 @@ def rx_volume_db_scale_with_headroom_in_node_vm(ctx):
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"volume_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"volume_test.js output: {r.stdout}")
+
+
+@test("unit")
+def spots_panel_in_node_vm(ctx):
+    """spots.js: asks /api/spots only while the panel is on the grid (not again before 30 s); the list
+    newest first with text kept as text; a click tunes (set_freq, then set_mode in this radio's names:
+    SSB by band, CW / CW-USB, DATA-USB / USB, FM); spots off the radio's bands, or for a viewer, can't be
+    clicked; the filters work and are kept; a silent source is named. The real tr.js + spots.js in a
+    Node vm (tests/spots_ui_test.js). Static: no HTML parsing, the only actions sent are set_freq and
+    set_mode."""
+    r = subprocess.run(["node", str(REPO / "tests" / "spots_ui_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"spots_ui_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"spots_ui_test.js output: {r.stdout}")
+    js = _strip_comments(_read("spots.js"))
+    for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function"):
+        check(bad not in js, f"spots.js never uses {bad}")
+    eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["set_freq", "set_mode"], "spots.js sends only set_freq / set_mode")

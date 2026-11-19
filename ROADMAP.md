@@ -51,6 +51,12 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   minute; a browser that can't load the encoder gets WebM/Opus instead. Recordings stay in the
   browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
   saved before the Recorder existed gets it under Controls too.
+- **Spots panel** (Add panel > Spots): POTA and WWFF activators and DX cluster spots (HamQTH.com),
+  newest first, with source, mode and "this band" filters each browser keeps. Click a spot to tune:
+  the frequency, then the mode in the radio's own names (SSB by band, CW, data, FM); a spot off the
+  radio's bands, or seen by a viewer, is shown but not clickable. The server fetches the sources
+  only while someone has the panel open, never more often than each allows (POTA and WWFF once a
+  minute, HamQTH every 30 s), and every page shares that; text from the sources is only ever text.
 - **Icom front-panel TX detection.** The Icom radios now report their own transmit state (CI-V
   `1C 00`, read about 3 times a second), like the Yaesu radios always did: a hand-mic or
   front-panel key is the FRONT PANEL owner, shown to everyone, and nobody can key over it (a
@@ -266,7 +272,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **Meters over the bridge** (SWR, power out) for programs that show them.
 
 ### From the Rig-Control-Web review
-- **Spots panel**: POTA / SOTA / WWFF / DX spots with band and mode filters; click a spot to tune.
+- **SOTA spots** in the Spots panel: SOTA's API terms ask for SOTA's approval before AI-written
+  software connects, and for the developer to join their API-consumers group, so it waits for that.
 - **HF conditions**: solar numbers and MUF maps.
 - **Command console**: send a raw CI-V / CAT command and see the answer; a diagnostics panel.
 - **FT8 decoder** in the browser, for a quick look at a band.

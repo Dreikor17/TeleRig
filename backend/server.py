@@ -65,6 +65,7 @@ from starlette.websockets import WebSocket
 from . import (__version__, account_api, accounts, admin_api, audit, auth, civ, hostaudio,
                layout_store, policy, profiles, settings, txarb)
 from . import updater as updater_mod
+from . import spots as spots_mod
 from . import bridge as bridge_mod
 from .account_api import read_json
 from .audio_router import AudioRouter
@@ -417,7 +418,7 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 # -- HTTP routes -------------------------------------------------------------
 # One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15).
 ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js",
-          "recorder.js", "account.js", "bridge.js", "device.js", "admin.js")
+          "recorder.js", "spots.js", "account.js", "bridge.js", "device.js", "admin.js")
 
 
 def _asset_version():
@@ -563,6 +564,16 @@ async def api_version(request):
         "update_available": available,
         "url": url,
     })
+
+
+@requires("viewer")
+async def api_spots(request):
+    """The Spots panel (backend/spots.py): POTA / WWFF / DX spots. ?src= picks the sources (unknown
+    names ignored; none left = all). The server fetches a source only as pages ask, never more often
+    than that source allows, and every page shares the cache."""
+    asked = [s.strip() for s in (request.query_params.get("src") or "").split(",")]
+    want = [k for k in spots_mod.SOURCES if k in asked] or list(spots_mod.SOURCES)
+    return JSONResponse(await run_in_threadpool(spots.get, want), headers={"Cache-Control": "no-store"})
 
 
 @requires("operator")
@@ -1472,6 +1483,21 @@ def _version_label() -> str:
 
 
 VERSION_LABEL = _version_label()
+
+
+def _spots_fetch():
+    """Only a --sim-only test server may answer the spot sources from files (TELERIG_TEST_SPOTS = a
+    folder with pota.json / wwff.json / dx.json), so the test suite never reaches them; every other
+    server asks the real sources (None = backend/spots.py's own fetch)."""
+    d = os.environ.get("TELERIG_TEST_SPOTS")
+    if not (d and sim_only()):
+        return None
+    folder, names = Path(d), {v["url"]: k for k, v in spots_mod.SOURCES.items()}
+    return lambda url: (folder / f"{names[url]}.json").read_bytes()
+
+
+# The spot sources see an app name and its home page, as WWFF asks; nothing of the user's.
+spots = spots_mod.Spots(f"TeleRig/{__version__} (+https://github.com/{_REPO})", fetch=_spots_fetch())
 admin_api.bind(hub=hub, arb=arb, audio=audio, radio=lambda: radio, transport_kind=lambda: _transport_kind(),
                bridge=bridge, updater=updater, restart=_restart_self, boot=_BOOT_ID)
 
@@ -1775,6 +1801,7 @@ routes = [
     Route("/api/status", api_status),
     Route("/api/radios", api_radios),
     Route("/api/version", api_version),
+    Route("/api/spots", api_spots),
     Route("/api/ports", api_ports),
     Route("/api/connect", api_connect, methods=["POST"]),
     Route("/api/disconnect", api_disconnect, methods=["POST"]),
