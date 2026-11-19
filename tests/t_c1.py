@@ -351,3 +351,14 @@ def sstv_receive_in_node_vm(ctx):
     js = _strip_comments(_read("sstv.js"))
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", ".send(", "WebSocket", "fetch("):
         check(bad not in js, f"sstv.js never uses {bad}")
+
+
+@test("unit")
+def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
+    """cwtool.js: received text after a pause of 5 s or more (new characters, committed or in the live
+    preview) starts a new RX bubble; text committed later stays where it showed; Clear forgets the pause.
+    The real tr.js + cwtool.js in a Node vm with a stand-in decoder worker (tests/cw_chat_test.js)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "cw_chat_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"cw_chat_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"cw_chat_test.js output: {r.stdout}")

@@ -73,6 +73,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **RX volume with headroom.** VOL is a dB scale from off to +24 dB with 0 dB (the audio exactly as
   the radio sends it, the old top of the slider) a little past the middle, shows its value, and a
   limiter keeps boosted peaks from clipping. Each browser keeps its own VOL.
+- **CW chat: a pause splits received text.** After 5 s with nothing new decoded, the next received
+  characters start a new bubble, so each over reads as its own message.
 
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,

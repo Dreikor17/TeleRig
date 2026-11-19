@@ -166,6 +166,7 @@
   const TAIL_GUARD = (1.25 * SR) | 0;            // never commit text inside the freshest tail (may still change)
   const MAX_SEGMENT = 18 * SR;                   // force a commit before the model's input grows too long
   const SILENCE = 1.5e-3;                        // |sample| below this across the buffer = no RX signal
+  const RX_SPLIT_MS = 5000;                      // a pause this long in the received text starts a new RX bubble
 
   let worker = null, workerReady = false, HOP = 48;      // HOP (frame -> sample) comes from the worker
   let capNode = null, ticker = 0, workletReady = false;  // realtime capture worklet
@@ -184,6 +185,15 @@
     const m = messages[messages.length - 1];
     if (m && m.dir === "rx" && !m.text) messages.pop();  // drop an RX bubble that never confirmed any text
     rxOpen = false;
+  }
+  // New characters after RX_SPLIT_MS or more without any (committed or in the live preview) go into a new
+  // bubble, with its own time: a band with steady noise never goes quiet enough to close one. Only new
+  // characters split: text committed later was already shown in the bubble it stays in.
+  let lastRxAt = 0, lastPreview = "";
+  function splitIfPaused() {
+    const now = Date.now(), m = messages[messages.length - 1];
+    if (rxOpen && m && m.dir === "rx" && m.text && lastRxAt && now - lastRxAt >= RX_SPLIT_MS) { closeRx(); openRx(); }
+    lastRxAt = now;
   }
   function addRxText(seg) {                               // append a committed segment to the open RX bubble
     if (!seg) return;
@@ -222,7 +232,7 @@
     const ctx = ra.ctx(), bus = ra.bus();
     if (!ctx || !bus) return;
     stopCapture();
-    pendingLen = 0; pendingText = ""; lastPeak = 0; messages = []; rxOpen = false;
+    pendingLen = 0; pendingText = ""; lastPeak = 0; messages = []; rxOpen = false; lastRxAt = 0; lastPreview = "";
     inflight = false; analysisLen = 0;
     render();
     try {
@@ -294,13 +304,15 @@
     inflight = false;
     if (m.err) { return; }
     pendingText = norm(m.text || "");            // running decode of the pending buffer = the live preview
+    if (pendingText && pendingText !== lastPreview) splitIfPaused();   // new characters: after a pause, a new bubble
+    lastPreview = pendingText;
     const ws = m.wordSpaceSpans || [], cs = m.characterSpans || [];
     let split = findSplit(ws, false);
     if (!split && pendingLen >= MAX_SEGMENT) split = findSplit(ws, true);
     const confirmedLen = split ? split.sample : (pendingLen >= MAX_SEGMENT ? analysisLen : 0);
     if (confirmedLen >= MIN_CONFIRMED) {
       const segText = split ? norm(trimToFrame(cs, split.endFrame)) : pendingText;   // forced: whole analysis
-      if (segText) addRxText(segText);            // append to the current grey RX bubble
+      if (segText) { addRxText(segText); lastRxAt = Date.now(); }   // append to the current grey RX bubble
       buf.copyWithin(0, confirmedLen, pendingLen); pendingLen -= confirmedLen;       // slide past committed audio
       pendingText = "";                          // cleared so committed text never appears twice in one tick
     }
@@ -332,7 +344,7 @@
   }
   function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
-  $("cwClear").addEventListener("click", () => { messages = []; rxOpen = false; pendingText = ""; render(); });
+  $("cwClear").addEventListener("click", () => { messages = []; rxOpen = false; pendingText = ""; lastRxAt = 0; lastPreview = ""; render(); });
 
   // ---- coder (text -> Morse sidetone; never transmits) ----
   $("cwPlay").addEventListener("click", () => playMorse($("cwSend").value));
