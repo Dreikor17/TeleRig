@@ -544,6 +544,8 @@ a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decorat
 button.spot{cursor:pointer}
 button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .spot.off{opacity:.55}
+.spot.picked{border-color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}   /* the spot you are tuned to */
+.spot.picked .sp-src{color:var(--accent-hi);font-weight:700}
 .spot span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sp-freq{grid-area:freq;font-weight:700;color:var(--num)}
 .sp-mode{grid-area:mode;font-size:10.5px;color:var(--txt-dim)}

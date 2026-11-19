@@ -7,7 +7,8 @@
  *   SSB -> USB / LSB by band, digital -> DATA-USB or USB, FM / AM), the same WS actions the
  *   frequency box and the mode keys send, so the server's rules apply (operators, no retune under
  *   someone else's transmission). A spot outside the radio's bands, or seen by a viewer, is shown
- *   but cannot be clicked.
+ *   but cannot be clicked. The spot clicked stays at the top ("Tuned"), whatever the filters and
+ *   after the sources drop it, until the radio is tuned more than 3 kHz away from it.
  *
  * Text from the sources is shown with textContent only. window.SpotsPanel = { summary() } (layout.js).
  */
@@ -67,7 +68,34 @@
     c.send({ action: "set_freq", hz: spot.hz });
     const m = radioMode(p, spot);
     if (m && m !== radioState().mode_name) c.send({ action: "set_mode", mode: m });
+    picked = { key: keyOf(spot), spot, hz: spot.hz, at: Date.now() };
+    try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
     try { TR.srLive("Tuned to " + spot.call + ", " + fmtFreq(spot.hz)); } catch (_) {}
+    render();
+    const body = list && list.closest(".tile-body");         // the panel back at its top, where the pin is
+    if (body) body.scrollTop = 0;
+  }
+
+  // ---- the spot you are on: the one clicked, pinned at the top until the radio is tuned away from it
+  // (more than AWAY_HZ off the frequency it was tuned to; the first SETTLE_MS let the radio get there).
+  // The newest copy of it is shown, so a station that moves shows its new frequency up there.
+  const AWAY_HZ = 3000, SETTLE_MS = 3000, PICK_KEY = "telerig.spots.picked";
+  const keyOf = (s) => s.src + "|" + s.call + "|" + (s.ref || "");
+  let picked = null;
+  try {                                                     // this tab's pin survives a reload
+    const v = JSON.parse(sessionStorage.getItem(PICK_KEY) || "null");
+    if (v && typeof v.key === "string" && v.spot && typeof v.spot.hz === "number") picked = { key: v.key, spot: v.spot, hz: v.hz, at: 0 };
+  } catch (_) { picked = null; }
+  function current() {
+    if (!picked) return null;
+    const fresh = (data.spots || []).find((s) => keyOf(s) === picked.key);
+    if (fresh) picked.spot = fresh;
+    const st = radioState();
+    if (Date.now() - picked.at > SETTLE_MS && st.connected && st.freq && Math.abs(st.freq - picked.hz) > AWAY_HZ) {
+      picked = null;
+      try { sessionStorage.removeItem(PICK_KEY); } catch (_) {}
+    }
+    return picked ? picked.spot : null;
   }
 
   // ---- formatting ----
@@ -101,19 +129,23 @@
     }
     if (modeSel && modeSel.value !== filt.mode) modeSel.value = filt.mode;
     if (bandChk) bandChk.checked = filt.band;
-    const rows = shown(), p = profile(), op = canTune();
+    const pin = current(), pinKey = pin ? keyOf(pin) : null;
+    let rows = shown();
+    if (pin) rows = [pin].concat(rows.filter((s) => keyOf(s) !== pinKey));   // first, whatever the filters
+    const p = profile(), op = canTune();
     list.textContent = "";
     for (const s of rows) {
-      const ok = op && !!bandOf(p, s.hz);
+      const ok = op && !!bandOf(p, s.hz), on = keyOf(s) === pinKey;
       const row = document.createElement(ok ? "button" : "div");
-      row.className = "spot spot-" + s.src + (ok ? "" : " off");
+      row.className = "spot spot-" + s.src + (ok ? "" : " off") + (on ? " picked" : "");
+      if (on) row.setAttribute("aria-current", "true");
       if (ok) { row.type = "button"; row.addEventListener("click", () => tune(s)); }
-      row.title = (ok ? "Tune to " : (op ? "Not on this radio: " : "")) + s.call + " " + fmtFreq(s.hz) + " " + modeLabel(s.mode) +
+      row.title = (on ? "Tuned to " : ok ? "Tune to " : (op ? "Not on this radio: " : "")) + s.call + " " + fmtFreq(s.hz) + " " + modeLabel(s.mode) +
         (s.ref ? " · " + s.ref : "") + (s.name ? " · " + s.name : "") + (s.note ? " · " + s.note : "") +
-        (s.spotter ? " · spotted by " + s.spotter : "");
+        (s.spotter ? " · spotted by " + s.spotter : "") + (on ? " · " + (SRC_LABEL[s.src] || "") : "");
       row.append(cell("sp-age", age(s.time)), cell("sp-freq", fmtFreq(s.hz)), cell("sp-mode", modeLabel(s.mode)),
                  cell("sp-call", s.call), cell("sp-ref", [s.ref, s.name].filter(Boolean).join(" ")),
-                 cell("sp-src", SRC_LABEL[s.src] || ""));
+                 cell("sp-src", on ? "Tuned" : SRC_LABEL[s.src] || ""));
       list.appendChild(row);
     }
     let msg = "";
@@ -164,6 +196,8 @@
   document.addEventListener("tr:layout", schedule);
   document.addEventListener("visibilitychange", schedule);
   setInterval(render, 30000);                               // the ages move on
+  // tuned away from the pinned spot? (redrawn only then, so keyboard focus in the list stays put)
+  setInterval(() => { if (picked) { current(); if (!picked) render(); } }, 2000);
   render();
   schedule();
 

@@ -54,7 +54,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **Spots panel** (Add panel > Spots): POTA and WWFF activators and DX cluster spots (HamQTH.com),
   newest first, with source, mode and "this band" filters each browser keeps. Click a spot to tune:
   the frequency, then the mode in the radio's own names (SSB by band, CW, data, FM); a spot off the
-  radio's bands, or seen by a viewer, is shown but not clickable. The server fetches the sources
+  radio's bands, or seen by a viewer, is shown but not clickable. The spot you clicked stays at the
+  top, marked Tuned, until the radio is tuned more than 3 kHz away from it. The server fetches the sources
   only while someone has the panel open, never more often than each allows (POTA and WWFF once a
   minute, HamQTH every 30 s), and every page shares that; text from the sources is only ever text.
 - **SSTV receive** (Add panel > SSTV): slow-scan TV pictures decoded in the browser from the radio's

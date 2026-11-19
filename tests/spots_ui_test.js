@@ -47,7 +47,8 @@ function page(opts) {
   sel.value = "";
   e.el("input", { id: "spotsBand", type: "checkbox" });
   e.el("p", { id: "spotsStatus" });
-  e.el("div", { id: "spotsList" });
+  e.body = e.el("div", { class: "tile-body tile-spots" });  // the panel's scrolling body
+  e.el("div", { id: "spotsList" }, e.body);
   e.load("tr.js");
   const perms = new Set(opts.viewer ? ["view", "listen"] : ["view", "listen", "operate"]);
   e.ctx.TR.can = (p) => perms.has(p);
@@ -141,6 +142,40 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     e.click(e.rows()[0]);
     eq(e.sent, [], "P4 ... and a click sends nothing");
     check(/Operators can click a spot to tune/.test(e.status()), "P4 the panel says who can tune: " + e.status());
+  }
+  // P6: the spot you are on stays at the top
+  {
+    const ans = { spots: SPOTS.slice(), sources: { pota: { ok: true }, wwff: { ok: true }, dx: { ok: true } }, now: NOW / 1000 };
+    const e = page({ answer: ans });
+    await settle(e);
+    e.body.scrollTop = 140;                                 // scrolled down the list to it
+    e.click(e.rows()[3]);                                   // N2CALL, 3.850 SSB, the 4th newest
+    let rows = e.rows();
+    eq(e.text(rows[0])[3], "N2CALL", "P6 the spot clicked goes to the top");
+    eq(e.body.scrollTop, 0, "P6 ... and the panel scrolls back up to show it");
+    check(rows[0].classList.contains("picked") && rows[0].getAttribute("aria-current") === "true", "P6 ... marked as the one tuned to");
+    eq(e.text(rows[0])[5], "Tuned", "P6 ... and says so");
+    eq(rows.slice(1).map((r) => e.text(r)[3]), ["N0CALL", "F0CALL/P", "JA0CALL", "W0CALL", "VK0CALL"], "P6 the rest stay newest first");
+    e.st = Object.assign({}, e.st, { freq: 3850000, mode_name: "LSB" });     // the radio got there
+    e.clock.advance(31000); await settle(e);
+    eq(e.text(e.rows()[0])[3], "N2CALL", "P6 still on top after a refresh");
+    e.click(e.src("pota"));
+    eq(e.text(e.rows()[0])[3], "N2CALL", "P6 shown even when its source is filtered out");
+    e.click(e.src("pota"));
+    ans.spots = SPOTS.filter((x) => x.call !== "N2CALL");   // the sources stop listing it
+    e.clock.advance(31000); await settle(e);
+    eq(e.text(e.rows()[0])[3], "N2CALL", "P6 still there when the sources drop it (the radio is still on it)");
+    e.st = Object.assign({}, e.st, { freq: 3860000 });       // tuned away, 10 kHz
+    e.clock.advance(2100); await settle(e);
+    eq(e.rows().map((r) => e.text(r)[3]), ["N0CALL", "F0CALL/P", "JA0CALL", "W0CALL", "VK0CALL"], "P6 tuned away: unpinned, the list as it is");
+    check(!e.rows().some((r) => r.classList.contains("picked")), "P6 ... no row marked");
+  }
+  {
+    const e = page();
+    await settle(e);
+    e.click(e.rows()[3]);                                   // the radio has not reported 3.850 yet
+    e.clock.advance(2100); await settle(e);
+    eq(e.text(e.rows()[0])[3], "N2CALL", "P6 right after a click, before the radio reports the new frequency: still pinned");
   }
   // P5: the filters
   {
