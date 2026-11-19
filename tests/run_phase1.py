@@ -92,6 +92,13 @@ def _discover() -> None:
 
 
 def main() -> int:
+    # A failure message can hold characters the console's code page lacks (a Windows console or a
+    # redirected log is cp1252): print them escaped instead of crashing the run and hiding the rest.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="TeleRig Phase 1 tests")
     ap.add_argument("--only", default="", help="comma-separated groups: " + ", ".join(harness.KNOWN_GROUPS))
     ap.add_argument("-k", default="", help="run only tests whose name contains this text")
