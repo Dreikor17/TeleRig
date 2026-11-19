@@ -73,6 +73,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **RX volume with headroom.** VOL is a dB scale from off to +24 dB with 0 dB (the audio exactly as
   the radio sends it, the old top of the slider) a little past the middle, shows its value, and a
   limiter keeps boosted peaks from clipping. Each browser keeps its own VOL.
+- **PWR in the TX tab.** The RF power slider moved from the RX tab to the TX group, above MIC.
 - **CW chat: a pause splits received text.** After 5 s with nothing new decoded, the next received
   characters start a new bubble, so each over reads as its own message.
 

@@ -362,3 +362,22 @@ def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"cw_chat_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"cw_chat_test.js output: {r.stdout}")
+
+
+@test("unit")
+def rf_power_slider_is_in_the_tx_tab(ctx):
+    """The PWR slider (RF power) lives in the Controls TX tab, in the TX group before MIC; the RX tab's
+    LEVELS group keeps AF / RF / SQL only."""
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    def panel(name):
+        m = re.search(r'<div class="panel[^"]*" data-p="' + name + r'">(.*?)</div><!-- /' + name + r' -->', html, re.S)
+        check(m is not None, f"index.html has the {name} panel")
+        return m.group(1) if m else ""
+    rx, tx = panel("rx"), panel("tx")
+    eq(html.count('id="rfpwr"'), 1, "one PWR slider")
+    check('id="rfpwr"' in tx and 'id="rfpwr"' not in rx, "PWR is in the TX tab, not the RX tab")
+    start = tx.find('id="txGrp"')
+    end = tx.find('<div class="grp"', start)                     # the next group (not its grp-title)
+    body = tx[start:end if end > 0 else len(tx)] if start >= 0 else ""
+    check(0 <= body.find('id="rfpwr"') < body.find('id="mic"'), "... in the TX group, before MIC")
+    eq(re.findall(r'<input type="range"[^>]*id="([a-z_]+)"', rx), ["af", "rf", "sql"], "the RX tab's sliders: AF, RF, SQL")
