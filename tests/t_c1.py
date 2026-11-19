@@ -299,3 +299,15 @@ def recorder_panel_in_node_vm(ctx):
                 "WebSocket", "fetch("):
         check(bad not in js, f"recorder.js never uses {bad}")
     check("A.bus()" in js and "createMediaStreamDestination" in js, "recorder.js records the RX bus")
+
+
+@test("unit")
+def rx_volume_db_scale_with_headroom_in_node_vm(ctx):
+    """app.js VOL: a dB scale with headroom (0 = off, 1..100 = -36 .. +24 dB, 60 = 0 dB = the audio as the
+    radio sends it, the old top), a limiter before the speakers, the dB readout, kept per browser (junk
+    ignored); the tools' RX bus stays before VOL. The real tr.js + app.js in a Node vm with a fake audio
+    context (tests/volume_test.js)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "volume_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"volume_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"volume_test.js output: {r.stdout}")

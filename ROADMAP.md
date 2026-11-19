@@ -50,6 +50,9 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   (Ogg or MP4 where the browser needs it), about half a megabyte a minute. Recordings stay in the
   browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
   saved before the Recorder existed gets it under Controls too.
+- **RX volume with headroom.** VOL is a dB scale from off to +24 dB with 0 dB (the audio exactly as
+  the radio sends it, the old top of the slider) a little past the middle, shows its value, and a
+  limiter keeps boosted peaks from clipping. Each browser keeps its own VOL.
 
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,

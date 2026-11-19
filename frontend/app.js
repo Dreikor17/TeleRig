@@ -2313,12 +2313,46 @@
   // ---- RX audio (Web Audio playback of 16-bit LE mono PCM) ----
   let audioCtx = null, audioGain = null, rxBus = null, playTime = 0, audioOn = false;
   let rsFifo = [], rsPos = 0;                       // continuous-resampler state (input samples + fractional read pos)
+  // VOL: a dB scale with headroom, because a radio's USB audio can arrive quiet (it is set for digital
+  // modes). 0 = off; 1..100 = -36 .. +24 dB; 60 = 0 dB, the audio exactly as the radio sends it (the old
+  // top of the slider). A limiter after the gain keeps boosted peaks from clipping. Each browser keeps
+  // its own VOL. The RX bus (the tools' and the recorder's tap) is BEFORE all of this.
+  const VOL_KEY = "telerig.vol";
+  const volDb = (v) => -36 + 60 * v / 100;
+  function volGain(v) { v = +v; return v > 0 ? Math.pow(10, volDb(v) / 20) : 0; }
+  function volLabel(v) {
+    v = +v;
+    if (!(v > 0)) return "off";
+    const d = Math.round(volDb(v));
+    return (d > 0 ? "+" : d < 0 ? "−" : "") + Math.abs(d) + " dB";
+  }
+  function showVol() {
+    const v = $("vol"); if (!v) return;
+    const t = volLabel(v.value), out = $("volVal");
+    if (out) out.textContent = t;
+    v.setAttribute("aria-valuetext", t);
+  }
+  (function restoreVol() {
+    const v = $("vol"); if (!v) return;
+    let s = null;
+    try { s = localStorage.getItem(VOL_KEY); } catch (_) {}
+    if (s !== null && s !== "" && isFinite(+s) && +s >= 0 && +s <= 100) v.value = String(Math.round(+s));
+    showVol();
+  })();
   function ensureAudioCtx() {
     if (!audioCtx) {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       audioGain = audioCtx.createGain();
-      audioGain.gain.value = (+$("vol").value || 80) / 100;
-      audioGain.connect(audioCtx.destination);
+      audioGain.gain.value = volGain($("vol").value);
+      let out = audioCtx.destination;
+      if (typeof audioCtx.createDynamicsCompressor === "function") {   // the limiter: only peaks near full scale
+        const lim = audioCtx.createDynamicsCompressor();
+        lim.threshold.value = -2; lim.knee.value = 2; lim.ratio.value = 20;
+        lim.attack.value = 0.003; lim.release.value = 0.12;
+        lim.connect(audioCtx.destination);
+        out = lim;
+      }
+      audioGain.connect(out);
       rxBus = audioCtx.createGain();               // pre-volume RX bus: tools (CW, AF) tap here
       rxBus.connect(audioGain);
     }
@@ -2582,7 +2616,11 @@
       else send({ action: "mic", on: false });
     }
   };
-  $("vol").oninput = (e) => { if (audioGain) audioGain.gain.value = (+e.target.value) / 100; };
+  $("vol").oninput = (e) => {
+    if (audioGain) audioGain.gain.value = volGain(e.target.value);
+    showVol();
+    try { localStorage.setItem(VOL_KEY, String(e.target.value)); } catch (_) {}
+  };
 
   // (Remote access — Tailscale Serve — lives in Admin → Remote now: admin.js, §5.4, G-20.)
 

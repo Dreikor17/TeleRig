@@ -699,7 +699,7 @@
       }
       case "audio": {
         const on = !!$("audioBtn") && $("audioBtn").classList.contains("active");
-        return on ? "RX on · VOL " + (($("vol") || {}).value || "") : "RX off";
+        return on ? "RX on · VOL " + (txt("volVal") || ($("vol") || {}).value || "") : "RX off";
       }
       case "controls": { const t = document.querySelector(".controls .tab.on"); return t ? t.textContent.trim() : ""; }
       case "cw": return $("cwDecodeBtn") && $("cwDecodeBtn").getAttribute("aria-pressed") === "true" ? "decoder on" : "decoder off";
