@@ -200,13 +200,16 @@ def c1_docs_tx_safety_contract_matches_f6(ctx):
     check("ANY client drop while keyed unkeys" not in d, "the pre-F6 rule is gone")
     for must in ("the TX owner's drop unkeys immediately", "a silent owner is unkeyed after 6 s",
                  "other clients' drops never unkey", "never unkeyed by a browser drop",
-                 "only for radios that report their", "Icom TX‑state limitation", "1C 00",
+                 "only for radios that report their", "**Reporting TX state.**", "1C 00",
+                 "a lost or stale read never keeps a carrier up", "IC‑728",
                  "120 s session clock", "`tx_route=True`", "`tx_tot=True`", "only an explicit STOP stops"):
         check(must in d, f"ADDING-A-RADIO.md says: {must}")
     p = _doc("backend/profiles.py").split('"""', 2)[1]
     check("RF power 0% on connect" not in p and "read (not forced)" in p, "profiles.py: power is read, not forced")
+    check("Icom TX‑state limitation" not in d and "does not read TX state" not in p,
+          "the Phase 1 Icom TX-state limitation is gone (the 1C 00 read)")
     for must in ("owner's drop unkeys at once", "after 6 s", "other clients' drops never", "120 s session clock",
-                 "does not read TX state", "tx_route"):
+                 "handlers read TX state", "Icom CI-V `1C 00`", "tx_route"):
         check(must in p, f"profiles.py docstring says: {must}")
     cw = _read("cwtool.js").split("*/", 1)[0]
     check("NO transmit; it never keys" not in cw and "CW TX:" in cw and "DOES key the radio" in cw,

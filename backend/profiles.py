@@ -14,9 +14,10 @@ bounded + stoppable CW send, unkey + restore on disconnect, RF power read (not f
 connect, and `tx_tot` / `tx_route` (plus `critical`) on its TX time-out and PTT-routing menu
 items. On top, the server's TX arbiter allows one TX owner: the owner's drop unkeys at once,
 a silent owner after 6 s, other clients' drops never; it keeps its own 120 s session clock;
-a front-panel key is never unkeyed by a browser drop -- only on radios that report TX (Yaesu
-CAT). The Icom CI-V handler does not read TX state (Phase 2: a 1C 00 read). The high-SWR
-cutoff + warning is required but not implemented in any handler yet. Not optional. <<<
+a front-panel key is never unkeyed by a browser drop -- only on radios that report TX: both
+handlers read TX state (Yaesu CAT `TX;`, Icom CI-V `1C 00`); the IC-728 has no CI-V TX command,
+so its front panel stays invisible. The high-SWR cutoff + warning is required but not
+implemented in any handler yet. Not optional. <<<
 """
 from __future__ import annotations
 

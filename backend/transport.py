@@ -212,6 +212,11 @@ class SimTransport(Transport):
                       0x44: 0, 0x45: 0, 0x46: 0, 0x58: 0}          # COMP, MON, VOX, TBW (M3)
         self.rit_on = 0; self.rit_freq = 0
         self.split = 0; self.duplex = 0; self.offset = 600000
+        # Simulated TX status, answered on the 1C 00 read like the real radio: `tx` follows what CI-V
+        # wrote (1C 00 01 / 1C 00 00), `front_tx` is a key from the radio itself (front panel, the
+        # mic's PTT), set only by tests. Nothing is ever keyed: these are numbers.
+        self.tx = 0
+        self.front_tx = False
         from . import menu_engine
         self._menu = {}            # (dn_hi, dn_lo) -> stored value bytes
         self._menu_index = {tuple(menu_engine.civ_datanum(it.num)): it
@@ -363,6 +368,11 @@ class SimTransport(Transport):
                     self.tuner = 1 if d[0] in (1, 2) else 0; self._ok()
                 else:
                     self._emit(0x1C, 0x01, bytes([getattr(self, "tuner", 0)]))
+            elif c == 0x1C and s == 0x00:                   # TX status: set (CI-V key) / read
+                if d:
+                    self.tx = 1 if d[0] == 0x01 else 0; self._ok()
+                else:
+                    self._emit(0x1C, 0x00, bytes([1 if (self.tx or self.front_tx) else 0]))
             elif c == 0x1B and s in (0x00, 0x01):           # FM repeater tone / TSQL frequency
                 if d:
                     self._tone_bcd = bytes(d); self._ok()

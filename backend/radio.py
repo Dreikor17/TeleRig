@@ -550,6 +550,12 @@ class Radio:
                 self.state["offset"] = civ.offset_from_bcd(raw); changed = True
         elif c == 0x1C and s == 0x01 and d:              # internal antenna tuner status (00/01/02)
             self.state["tuner"] = 1 if d[0] in (1, 2) else 0; changed = True
+        elif c == 0x1C and s == 0x00 and d and fr.from_addr != civ.DEFAULT_CTRL_ADDR:
+            # TX status (00 receive, 01 transmit) from the RADIO (not an echo of our own 1C 00 xx):
+            # status only, it keys nothing. A key TeleRig did not make shows here first.
+            tx = d[0] == 0x01
+            if tx != bool(self.state.get("ptt")):
+                self.state["ptt"] = tx; changed = True
         elif c == 0x1B and s == 0x00:                    # FM repeater tone frequency -> CTCSS index
             idx = civ.bcd_to_tone_index(d)
             if idx is not None:
@@ -605,6 +611,7 @@ class Radio:
             return
         panel_n = max(1, round(1.2 / dt))                # freq/mode/active-band cadence (~1.2 s)
         full_n = max(1, round(6.0 / dt))                 # full-panel re-sync (~6 s)
+        tx_n = max(1, round(0.3 / dt))                   # TX status (1C 00) ~3x/s, like the Yaesu TX; poll
         if _WINMM:
             try: _WINMM.timeBeginPeriod(1)               # accurate short sleeps on Windows
             except Exception: pass
@@ -613,11 +620,13 @@ class Radio:
             while not self._poll_stop.is_set():
                 # TX failsafe (EVERY iteration, never gated behind tick%N): never leave the radio
                 # able to transmit past the time-out — covers latched PTT and VOX (audio-keyed).
+                # The deadline exists only while the APP keyed (PTT or VOX), so it unkeys whatever
+                # the last 1C 00 read said: a stale or lost read must never keep the carrier up.
                 if self._ptt_deadline and time.monotonic() >= self._ptt_deadline:
-                    if self.state["ptt"]:
-                        self.set_ptt(False)
+                    self.set_ptt(False)
                     if self.state.get("vox"):
                         self.set_rx_func("vox", False)
+                    self._ptt_deadline = None
                 # CW-TX bounded auto-stop: the rig self-keys the message via BK-IN, so the
                 # PTT failsafe doesn't cover it — stop it once the message should be done.
                 if self._cw_deadline and time.monotonic() >= self._cw_deadline:
@@ -625,6 +634,11 @@ class Radio:
                 self._write(self._b(0x15, 0x02))         # S-meter (active band) — every tick
                 if self.state["meter"] != "S":           # selected TX meter for the big bar
                     self._write(self._b(0x15, civ.METER_SUBS[self.state["meter"]]))
+                if tick % tx_n == 0:
+                    # Is the radio transmitting, whoever keyed it (TeleRig, the front panel, the
+                    # mic's PTT)? Read only: the answer sets state["ptt"], and the TX arbiter makes
+                    # TX the app did not start a FRONT PANEL owner, so nobody keys over it.
+                    self._write(self._b(0x1C, 0x00))
                 if tick % panel_n == 0:                  # ~1.2s: catch panel changes
                     self._write(self._b(0x03))
                     self._write(self._b(0x04))

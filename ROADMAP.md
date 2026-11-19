@@ -51,6 +51,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   minute; a browser that can't load the encoder gets WebM/Opus instead. Recordings stay in the
   browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
   saved before the Recorder existed gets it under Controls too.
+- **Icom front-panel TX detection.** The Icom radios now report their own transmit state (CI-V
+  `1C 00`, read about 3 times a second), like the Yaesu radios always did: a hand-mic or
+  front-panel key is the FRONT PANEL owner, shown to everyone, and nobody can key over it (a
+  browser, a WSJT-X bridge program); it ends when the radio goes back to receive. The IC-728 has
+  no CI-V TX command, so its front panel stays invisible.
 - **RX volume with headroom.** VOL is a dB scale from off to +24 dB with 0 dB (the audio exactly as
   the radio sends it, the old top of the slider) a little past the middle, shows its value, and a
   limiter keeps boosted peaks from clipping. Each browser keeps its own VOL.
@@ -278,11 +283,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **Authentication** for safe remote use — *shipped (Phase 1)*: everyone signs in, with roles and
   a single TX owner (see Done). *Built-in HTTPS shipped* — serve TLS directly with
   `run.py --ssl-certfile/--ssl-keyfile` (or `TELERIG_SSL_CERT/_KEY`).
-- **Phase 2 follow-ups** to sign-in and TX ownership: front-panel TX detection on the Icom radios
-  (a `1C 00` read; until then a WSJT-X bridge program cannot see a hand-mic over at an Icom and
-  can key under it), the high-SWR cutoff, LAN radio credentials kept on the server (admin-only)
-  instead of in each browser, server-side session ids with a shorter admin session, stable host
-  audio device ids, and a per-radio serial-line (RTS/DTR) policy.
+- **Phase 2 follow-ups** to sign-in and TX ownership: the high-SWR cutoff, LAN radio credentials
+  kept on the server (admin-only) instead of in each browser, server-side session ids with a
+  shorter admin session, stable host audio device ids, and a per-radio serial-line (RTS/DTR)
+  policy.
 - **Remote power-on** from networked standby where the radio supports it.
 - Audio: selectable **codec / sample-rate**, lower-latency options.
 

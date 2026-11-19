@@ -34,10 +34,10 @@ canonical command a browser sends and goes through the same policy table and TX 
     lines closes it; setters are paced per peer address, keying is rate-limited for the whole
     bridge, so a reconnect loop cannot chatter the transmitter.
 
-One limit is the radio's, not the bridge's: a radio that does not REPORT its transmit state (the
-Icom CI-V handler does not read it yet) gives the arbiter no FRONT PANEL owner, so a hand-mic over
-at the radio is invisible and a bridge program can retune or key under it. On the Yaesu radios the
-front panel is an owner like any other.
+The radio's own transmit state matters too: both handlers report it (the Yaesu TX; poll, the Icom
+1C 00 read), so a hand-mic over at the radio is the FRONT PANEL owner and a bridge program's key or
+retune gets busy, like anyone else's. The IC-728 cannot report it (no CI-V TX command), so there a
+front-panel key stays invisible.
 
 Runs on the event loop only (asyncio streams). The pure protocol is backend/rigctl.py.
 """

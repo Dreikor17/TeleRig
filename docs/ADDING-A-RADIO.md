@@ -40,7 +40,7 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    - **other clients' drops never unkey** — a viewer closing a tab doesn't cut the operator off;
    - **a front‑panel or physical‑mic key is never unkeyed by a browser drop.** It shows as
      FRONT PANEL and only an explicit STOP stops it. This holds only for radios that report their
-     TX state (Yaesu CAT: the `TX;` poll) — see the Icom limitation below. TX that shows up to 5 s
+     TX state (Yaesu CAT: the `TX;` poll; Icom CI‑V: the `1C 00` read) — see the note below. TX that shows up to 5 s
      after a session ended is handed back to that session's browser only when the radio itself
      ended its PTT or CW (a misread poll, the CW break‑in hang); after a TUNE (its 20 s claim
      lapsed), a VOX session or a release it is FRONT PANEL;
@@ -54,13 +54,16 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    - **viewers can never key**: only operators and admins may claim TX, and every TX session,
      forced stop and critical menu write is recorded in `audit-tx.log`.
 
-   **Icom TX‑state limitation (Phase 1).** The Icom CI‑V handler does not read TX state:
-   `state.ptt` is set optimistically by `set_ptt` (`radio.py`), and the only `1C` read is
-   `1C 01` (tuner). On an Icom a front‑panel or hand‑mic key is therefore **invisible**: there
-   is no FRONT PANEL owner and no front‑panel `busy`, and releasing an app owner's `ptt` sends
-   `1C 00 00` even while someone holds the radio's own PTT. Reading `1C 00` in the Icom poll is a
-   Phase 2 item. A new handler must state which case it is: if it can report TX, put it in
-   `state.ptt`; if it can't, document the same limitation.
+   **Reporting TX state.** Both handlers poll the radio's own TX status about 3 times a second
+   and put it in `state.ptt` (status only; reading never keys): the Yaesu `TX;` (`TX1` CAT,
+   `TX2` the radio itself) and the Icom `1C 00` (`00` receive, `01` transmit; an echo of the
+   app's own `1C 00 xx`, from the controller address, is not an answer). So a front‑panel or
+   hand‑mic key becomes the FRONT PANEL owner on both, and nobody (a browser, a WSJT‑X bridge
+   program) can key over it. The handler's PTT failsafe unkeys at its deadline whatever the last
+   read said, so a lost or stale read never keeps a carrier up. The exception is the IC‑728: it
+   has no CI‑V TX command, so its front panel stays invisible (it is also transmit‑less in
+   TeleRig). A new handler must state which case it is: if it can report TX, put it in
+   `state.ptt`; if it can't, document the limitation.
 4. **Auto‑keying paths bound to the same failsafe.** Any mode that can key TX off audio
    (VOX) arms the same deadline, is a `vox` claim in the arbiter, and is dropped on
    disconnect.
