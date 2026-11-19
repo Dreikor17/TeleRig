@@ -431,3 +431,14 @@ def generated_tx_audio_path_in_node_vm(ctx):
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"tx_audio_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"tx_audio_test.js output: {r.stdout}")
+
+
+@test("unit")
+def every_page_has_its_tab_icon(ctx):
+    """Each page declares TeleRig's tab icon inline (the header's radio-tower mark as a data: SVG), so a
+    browser never asks for /favicon.ico (a 404 in the server log) and the sign-in page shows it too
+    (it can't load /static before sign-in)."""
+    for name in ("index.html", "login.html", "change-password.html"):
+        html = (FRONT / name).read_text(encoding="utf-8")
+        check(html.count('<link rel="icon" href="data:image/svg+xml,') == 1, f"{name} declares the inline tab icon")
+        check("favicon.ico" not in html, f"{name} doesn't point at /favicon.ico")
