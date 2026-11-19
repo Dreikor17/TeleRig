@@ -7,7 +7,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### WSJT-X bridge, PTT hotkey, full screen, Update now, Radio screen theme (unreleased)
+### WSJT-X bridge, PTT hotkey, full screen, Update now, Radio screen theme, Recorder (unreleased)
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
   TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
   and the browser share one radio, including an Icom on its LAN port. Off by default, this PC only
@@ -42,6 +42,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   a black spectrum with a white trace and a green tuned marker over a deep-blue rainbow waterfall, the
   link as a boxed label instead of a status dot, and a UTC clock. Exo 2 (SIL OFL) is bundled, so
   nothing loads from the internet. Each browser keeps its own choice.
+- **Recorder panel**, under Controls: records what you hear, the RX audio taken before the volume
+  control, so it works the same for every radio (LAN or a serial radio's USB audio). Record / Stop,
+  the running time and a level bar (live whenever RX audio is on, so the level can be checked
+  first), then each recording in a list with Download and Delete, named after the radio, frequency,
+  mode and UTC start (`TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.webm`). WebM/Opus at 64 kb/s
+  (Ogg or MP4 where the browser needs it), about half a megabyte a minute. Recordings stay in the
+  browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
+  saved before the Recorder existed gets it under Controls too.
 
 ### Phase 1 (v0.3.0) — modular panels, multi-user sign-in, one TX owner
 - **Modular panels.** The panel is a grid of cards — VFO, Transmit, Audio, Meter, Scope, Controls,
@@ -230,10 +238,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   deliberate opt-in for the accuracy). **Live streaming decode shipped (v0.2.15)** — a growing-buffer
   decoder that commits at settled word gaps and slides past them, so the live stream decodes with no
   fixed-window seam (after e04/web-deep-cw-decoder). *Follow-ups:* optional WebGPU backend.
-- **Audio recorder** — capture the RX audio (and optionally TX) to a file from the browser:
-  start/stop with an elapsed-time + level readout and download. `MediaRecorder` on the
-  pre-volume `rxBus` → WebM/Opus (or WAV), so it works for every transport (LAN PCM, USB
-  audio, AF). Foundation for QSO timestamping / a recording log later.
+- **Recorder, next steps** — the TX audio in the recording too, and QSO timestamps / a
+  recording log on top of the Recorder panel (Done above).
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. RTTY/FT8
   decode, a tuning/zero-beat aid, memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).

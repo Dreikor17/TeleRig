@@ -48,8 +48,8 @@ ICONS = [
     "key-round", "plug", "unplug", "globe", "history", "copy", "triangle-alert", "info", "octagon-x",
     "square", "eye", "eye-off", "ellipsis", "lock",
 ]
-# TeleRig's own icons (frontend/icons/): the WSJT-X bridge, full screen, pause / resume.
-OWN_ICONS = ["tr-bridge", "tr-fullscreen", "tr-fullscreen-exit", "tr-pause", "tr-play"]
+# TeleRig's own icons (frontend/icons/): the WSJT-X bridge, full screen, pause / resume, record.
+OWN_ICONS = ["tr-bridge", "tr-fullscreen", "tr-fullscreen-exit", "tr-pause", "tr-play", "tr-record"]
 # The sign-in / change-password pages get only these (inline, no /static).
 AUTH_ICONS = ["radio-tower", "log-in", "key-round", "triangle-alert", "info", "eye", "eye-off", "sun", "moon"]
 

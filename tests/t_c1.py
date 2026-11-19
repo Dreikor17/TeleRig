@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js"):
+              "device.js", "recorder.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -281,3 +281,21 @@ def band_and_mode_keys_lit_after_reload_in_node_vm(ctx):
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"radio_keys_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"radio_keys_test.js output: {r.stdout}")
+
+
+@test("unit")
+def recorder_panel_in_node_vm(ctx):
+    """recorder.js: records the PRE-volume RX bus with MediaRecorder (Opus, 64 kb/s), only while RX audio is
+    on; the level bar, the time, the list with downloads named after the radio / freq / mode / UTC start,
+    delete, the stop when RX audio goes off, the container fallbacks, the leave-page guard. The real
+    script in a Node vm with a fake audio graph and MediaRecorder (tests/recorder_test.js). Static: it
+    never sends a frame, never parses text as HTML and never touches the speakers' path."""
+    r = subprocess.run(["node", str(REPO / "tests" / "recorder_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"recorder_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"recorder_test.js output: {r.stdout}")
+    js = _strip_comments(_read("recorder.js"))
+    for bad in (".send(", "innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", "destination",
+                "WebSocket", "fetch("):
+        check(bad not in js, f"recorder.js never uses {bad}")
+    check("A.bus()" in js and "createMediaStreamDestination" in js, "recorder.js records the RX bus")

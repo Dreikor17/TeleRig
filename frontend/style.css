@@ -512,6 +512,22 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .audio-grp .sl-dev{grid-template-columns:58px 1fr;gap:6px}
 .sl-dev select{width:100%;min-width:0;font-size:11px;padding:3px 5px}
 
+/* ---- recorder (recorder.js): Record / Stop, the time, the RX level (the mic bar), the recordings ---- */
+.rec-row{display:grid;grid-template-columns:auto auto minmax(0,1fr);align-items:center;gap:8px}
+.rec-btn{flex:none;min-width:92px}
+.rec-time{min-width:42px;font:700 15px/1 var(--font-ui);color:var(--txt-dim);font-variant-numeric:tabular-nums}
+.rec-time.on{color:var(--warn-hi)}       /* amber while recording: red is for transmitting */
+.rec-hint{margin:6px 0 0;font-size:11px;line-height:1.35;color:var(--txt-dim)}
+.rec-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+.rec-item{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:6px;padding:5px 6px 5px 8px;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm)}
+.rec-txt{display:flex;flex-direction:column;gap:2px;min-width:0}
+.rec-name,.rec-meta{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.rec-name{font-size:12px;font-weight:700;color:var(--num)}
+.rec-meta{font-size:10.5px;color:var(--txt-dim)}
+a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decoration:none}
+.rec-item.saved .rec-save{color:var(--txt-dim)}
+
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
   min-width:76px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}

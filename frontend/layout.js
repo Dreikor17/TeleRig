@@ -63,7 +63,7 @@
   if (!window.GridStack) { fallback("GridStack did not load"); return; }
 
   // ---- the tile registry (§3.1), mirrored by layout_store.TILE_IDS ----
-  const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"];
+  const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder"];
   const TILES = {
     vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 64,  bodyPxAlt: 120 },
     // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
@@ -74,10 +74,12 @@
     scope:    { title: "Scope",    icon: "audio-waveform",     minW: 4, bodyPx: 200 },
     controls: { title: "Controls", icon: "sliders-horizontal", minW: 3, bodyPx: 240 },
     cw:       { title: "CW",       icon: "keyboard",           minW: 3, bodyPx: 160 },
+    // recorder bodyPx: the Record row (31) and the hint line (21), with room to start the list
+    recorder: { title: "Recorder", icon: "tr-record",          minW: 2, bodyPx: 80 },
   };
   const GATEABLE = new Set(["ptt", "meter"]);              // the only tiles a gate can park
   const PHONE_RESIZABLE = new Set(["scope", "cw"]);        // phone: user-sized (stored h, `s` handle)
-  const PHONE_FIT = new Set(["audio", "meter", "controls"]); // phone: height follows the content
+  const PHONE_FIT = new Set(["audio", "meter", "controls", "recorder"]); // phone: height follows the content
   const HEAD_ROWS = 2;                                     // collapsed slot, fixed (AR-58)
   const B = (boot.layout_bounds && boot.layout_bounds.desktop && boot.layout_bounds.phone) ? boot.layout_bounds
     : { desktop: { cols: 12, y_max: 199, h_max: 96, bottom_max: 200, dw_max: 11 },
@@ -86,14 +88,17 @@
   const SPLIT_DEFAULT = 0.38;
   const DEFAULT = {                                        // §3.6
     desktop: { column: 12, items: [
-      { id: "controls", x: 0, y: 0, w: 3, h: 24 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 },
+      { id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 },
       { id: "ptt", x: 7, y: 0, w: 2, h: 5 }, { id: "audio", x: 9, y: 0, w: 3, h: 5 },
       { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 },
-      { id: "cw", x: 9, y: 9, w: 3, h: 15, hidden: true }] },
+      { id: "cw", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "recorder", x: 0, y: 18, w: 3, h: 6 }] },
     phone: { column: 1, items: [
       { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 }, { id: "meter", y: 3 },
-      { id: "audio", y: 4 }, { id: "controls", y: 5 }, { id: "cw", y: 6, h: 10, hidden: true }] },
+      { id: "audio", y: 4 }, { id: "controls", y: 5 }, { id: "recorder", y: 6 }, { id: "cw", y: 7, h: 10, hidden: true }] },
   };
+  // the Recorder came after layouts were first saved: a saved layout without it gets it right under
+  // Controls (placeRecorder), the place the default gives it
+  const REC_ROWS = 6, CONTROLS_KEEP = 12;                  // desktop rows: the Recorder's; the least Controls keeps
   const CANCEL = "input,textarea,select,option,button,canvas,.scope,.scope-split,.tool-panel,.tile-body,[data-act]";
   const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const MODES = new Set(["float", "list"]);               // GridStack accepts any string silently (S10)
@@ -145,13 +150,30 @@
       o.room = { from: src.room.from, dw: clamp(src.room.dw, 1, B.desktop.dw_max) };
     return o;
   }
+  // A layout saved before the Recorder existed: the Recorder goes right under Controls and is shown. A
+  // full-height Controls gives up the Recorder's rows; a shorter (or collapsed) one keeps its height
+  // and the Recorder takes the rows under it (applyFull finds it a free spot if those are taken). On
+  // the phone it comes right after Controls. With Controls hidden it starts hidden, like any new tile.
+  function placeRecorder(d, seen) {
+    const c = seen.get("controls");
+    if (!c || c.hidden) return;
+    if (d === "desktop") {
+      if (!c.collapsed && c.h - REC_ROWS >= CONTROLS_KEEP) c.h -= REC_ROWS;
+      seen.set("recorder", canonItem(d, { id: "recorder", x: c.x, y: c.y + c.h, w: c.w, h: REC_ROWS }));
+    } else {
+      for (const it of seen.values()) if (it.y > c.y) it.y = Math.min(B.phone.rank_max, it.y + 1);
+      seen.set("recorder", canonItem(d, { id: "recorder", y: c.y + 1 }));
+    }
+  }
   // drop unknown / duplicate ids; a known id missing from a saved layout gets its DEFAULT item, hidden
+  // (the Recorder in a layout saved before it existed: placeRecorder)
   function normalize(d, data) {
     if (!data || typeof data !== "object" || !Array.isArray(data.items)) return null;
     const seen = new Map();
     for (const it of data.items) {
       if (it && typeof it === "object" && TILE_IDS.includes(it.id) && !seen.has(it.id)) seen.set(it.id, canonItem(d, it));
     }
+    if (!seen.has("recorder")) placeRecorder(d, seen);
     const items = TILE_IDS.map((id) => seen.get(id) ||
       Object.assign(canonItem(d, DEFAULT[d].items.find((i) => i.id === id)), { hidden: true }));
     return { column: d === "desktop" ? 12 : 1, items };
@@ -681,6 +703,7 @@
       }
       case "controls": { const t = document.querySelector(".controls .tab.on"); return t ? t.textContent.trim() : ""; }
       case "cw": return $("cwDecodeBtn") && $("cwDecodeBtn").getAttribute("aria-pressed") === "true" ? "decoder on" : "decoder off";
+      case "recorder": return (window.Recorder && typeof window.Recorder.summary === "function" && window.Recorder.summary()) || "";
       default: return "";
     }
   }

@@ -34,7 +34,7 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
     "exo2-latin-italic.woff2": "26a4dc84a13ae17366fcd188e354530db070234c038370df9ee47f1b0d611a7a",
     "OFL.txt": "7f95a8eeecc6904ffc81cd10cc8ebc7fcee72a67922924bf45f02dff03b88127",
 }
-TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw"]
+TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56)
 B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev"
@@ -143,7 +143,7 @@ def index_tiles_parking_and_script_order(ctx):
     check("hidden" in pa and pa.get("aria-hidden") == "true", "#tileParking hidden + aria-hidden")
     check(parking not in _ancestors(t, grid) and grid not in _ancestors(t, parking), "#tileParking is outside #grid")
     items = [k for k, n in enumerate(t.nodes) if "grid-stack-item" in _classes(n)]
-    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "seven tiles, registry order")
+    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "eight tiles, registry order")
     for k in items:
         tid = t.nodes[k][1]["data-tile"]
         eq(t.nodes[k][2], parking, f"{tid}: a direct child of #tileParking")
@@ -189,7 +189,7 @@ def index_tiles_parking_and_script_order(ctx):
         check(gone not in html, f"{gone} removed")
     srcs = re.findall(r'<script src="([^"]+)"', html)
     eq(srcs, ["/static/vendor/gridstack/gridstack-all.js?v=14.0.0", "/static/tr.js", "/static/waterfall.js",
-              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js",
+              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js", "/static/recorder.js",
               "/static/account.js", "/static/bridge.js", "/static/device.js", "/static/admin.js"], "script order")
     check(not re.search(r"<script>\s*/\*\s*tabbed control panels", html), "the inline tab switcher moved to layout.js")
     css = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)
@@ -218,8 +218,8 @@ def layout_js_registry_matches_the_server(ctx):
         items.append({"id": mm.group(1), "x": int(mm.group(2)), "y": int(mm.group(3)), "w": int(mm.group(4)),
                       "h": int(mm.group(5)), "hidden": bool(mm.group(6)), "collapsed": False})
     eq(sorted(i["id"] for i in items), sorted(TILE_IDS), "every tile in the desktop default")
-    want = {"controls": (0, 0, 3, 24), "vfo": (3, 0, 4, 5), "ptt": (7, 0, 2, 5), "audio": (9, 0, 3, 5),
-            "meter": (3, 5, 9, 4), "scope": (3, 9, 9, 15), "cw": (9, 9, 3, 15)}
+    want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 4, 5), "ptt": (7, 0, 2, 5), "audio": (9, 0, 3, 5),
+            "meter": (3, 5, 9, 4), "scope": (3, 9, 9, 15), "cw": (9, 9, 3, 15), "recorder": (0, 18, 3, 6)}
     for i in items:
         eq((i["x"], i["y"], i["w"], i["h"]), want[i["id"]], f"§3.6 {i['id']}")
     eq([i["id"] for i in items if i["hidden"]], ["cw"], "only CW starts hidden")
@@ -236,7 +236,7 @@ def layout_js_registry_matches_the_server(ctx):
     pm = re.search(r"phone: \{ column: 1, items: \[(.*?)\] \},", src, re.S)
     check(pm, "DEFAULT.phone in layout.js")
     ranks = re.findall(r'\{ id: "(\w+)", y: (\d+)', pm.group(1))
-    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "meter", "audio", "controls", "cw"],
+    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "cw"],
        "§3.6 phone ranks")
     # the bounds layout.js falls back to are the server's table (it normally reads boot.layout_bounds)
     fb = re.search(r"desktop: \{ cols: (\d+), y_max: (\d+), h_max: (\d+), bottom_max: (\d+), dw_max: (\d+) \}", src)
@@ -248,6 +248,18 @@ def layout_js_registry_matches_the_server(ctx):
         check(banned not in src, f"layout.js never uses {banned} (§3.4)")
     check("alwaysShowResizeHandle: true" in src, "visible resize handles in arrange mode (S0 note 1)")
     check("setAnimation(anim(), true)" in src, "deferred animation restore (S0 note 2)")
+
+
+@test("unit")
+def recorder_tile_goes_under_controls_in_node_vm(ctx):
+    """layout.js: the Recorder sits under Controls in the default, and a layout saved before it existed
+    gets it there too (a full-height Controls gives up its 6 rows; a short one keeps its height; the
+    phone puts it right after Controls; hidden with Controls hidden; a removed Recorder stays removed).
+    The real tr.js + layout.js in a Node vm with a stand-in GridStack (tests/layout_recorder_test.js)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "layout_recorder_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"layout_recorder_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"layout_recorder_test.js output: {r.stdout}")
 
 
 @test("unit")
@@ -283,9 +295,11 @@ def scripts_tile_mode_and_cwdiag(ctx):
     m = re.search(r"^ASSETS = \((.*?)\)\s*$", srv, re.M | re.S)
     check(m, "server.py ASSETS")
     eq(re.findall(r'"([^"]+)"', m.group(1)), ["style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js",
-                                               "app.js", "cwtool.js", "account.js", "bridge.js", "device.js", "admin.js"],
+                                               "app.js", "cwtool.js", "recorder.js", "account.js", "bridge.js", "device.js",
+                                               "admin.js"],
        "ASSETS (cache-busted, §3.15)")
-    for f in ("layout.js", "app.js", "cwtool.js", "tr.js", "waterfall.js", "account.js", "bridge.js", "device.js", "admin.js"):
+    for f in ("layout.js", "app.js", "cwtool.js", "recorder.js", "tr.js", "waterfall.js", "account.js", "bridge.js", "device.js",
+              "admin.js"):
         r = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(r.returncode, 0, f"node --check {f}: {r.stderr}")
 

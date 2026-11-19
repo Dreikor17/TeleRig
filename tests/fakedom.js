@@ -2,7 +2,7 @@
  * no socket). Enough of the DOM for tr.js, account.js, admin.js, app.js and waterfall.js: a node tree
  * with text nodes, attributes (id / class / data-* / hidden / disabled), classList, dataset, events with
  * bubbling, focus, and querySelector(All) for simple selectors (tag, #id, .class, [attr], [attr="v"],
- * :not(...), descendant and child combinators, comma lists). Used by tests/c1_ui_test.js.
+ * :not(...), :scope, descendant and child combinators, comma lists). Used by tests/c1_ui_test.js.
  *
  * makeEnv() -> { ctx, doc, clock, load(file), flush(), body } — ctx is the vm global (ctx.window === ctx).
  */
@@ -186,7 +186,15 @@ class Element extends Node {
   after(...xs) { const p = this.parentNode; if (!p) return; const next = p.childNodes[p.childNodes.indexOf(this) + 1] || null; for (const x of xs) p.insertBefore(this._wrap(x), next); }
   before(...xs) { const p = this.parentNode; if (!p) return; for (const x of xs) p.insertBefore(this._wrap(x), this); }
   _all() { const out = []; const walk = (n) => { for (const c of n.childNodes) if (c instanceof Element) { out.push(c); walk(c); } }; walk(this); return out; }
-  querySelectorAll(sel) { const chains = parseSelector(sel); return this._all().filter((el) => chains.some((ch) => matchChain(el, ch))); }
+  querySelectorAll(sel) {
+    // :scope = this element (layout.js: el.querySelector(":scope > .tile > .tile-head")): mark it for the query
+    if (String(sel).indexOf(":scope") >= 0 && this instanceof Element) {
+      this.setAttribute("data-fakedom-scope", "");
+      try { return this.querySelectorAll(String(sel).replace(/:scope/g, "[data-fakedom-scope]")); }
+      finally { this.removeAttribute("data-fakedom-scope"); }
+    }
+    const chains = parseSelector(sel); return this._all().filter((el) => chains.some((ch) => matchChain(el, ch)));
+  }
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
   matches(sel) { return parseSelector(sel).some((ch) => matchChain(this, ch)); }
   closest(sel) { for (let e = this; e instanceof Element; e = e.parentNode) if (e.matches(sel)) return e; return null; }

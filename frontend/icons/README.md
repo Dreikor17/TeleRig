@@ -9,3 +9,4 @@ These few icons were drawn for TeleRig (24x24, 2 px round strokes, to sit next t
 | `tr-bridge.svg` | the WSJT-X bridge button (two devices joined by wires) |
 | `tr-fullscreen.svg` / `tr-fullscreen-exit.svg` | full screen on / off |
 | `tr-pause.svg` / `tr-play.svg` | pause / resume transmit over the bridge |
+| `tr-record.svg` | the Recorder panel and its Record button (a ring around a dot) |
