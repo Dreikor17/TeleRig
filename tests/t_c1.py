@@ -292,7 +292,9 @@ def recorder_panel_in_node_vm(ctx):
     radio's 16 kHz, 48 kb/s, dropouts filled with silence), WebM/Opus via MediaRecorder on the pre-volume RX
     bus only without the encoder; only while RX audio is on; the level bar, the time, the list with
     downloads named after the radio / freq / mode / UTC start, delete, the stop when RX audio goes off,
-    the leave-page guard. The real script in a Node vm with a fake LAME, PCM tap, audio graph and
+    the leave-page guard; "Also save a lossless WAV" (kept per browser, locked while recording): the same
+    PCM sample for sample in a 16-bit mono WAV with the MP3's dropout silence, a second download, the
+    guard until both are saved. The real script in a Node vm with a fake LAME, PCM tap, audio graph and
     MediaRecorder (tests/recorder_test.js). Static: it never sends a frame, never parses text as HTML and
     never touches the speakers' path."""
     r = subprocess.run(["node", str(REPO / "tests" / "recorder_test.js")], capture_output=True, text=True,
@@ -305,6 +307,9 @@ def recorder_panel_in_node_vm(ctx):
         check(bad not in js, f"recorder.js never uses {bad}")
     check("A.tapPcm(" in js and "lamejs.Mp3Encoder(1, rate, MP3_KBPS)" in js, "recorder.js encodes the radio's PCM to MP3")
     check("A.bus()" in js and "createMediaStreamDestination" in js, "recorder.js falls back to recording the RX bus")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    check(re.search(r'<label class="rec-opt"[^>]*><input type="checkbox" id="recWav"> Also save a lossless WAV</label>', html),
+          "the Recorder has the lossless WAV box")
 
 
 @test("unit")

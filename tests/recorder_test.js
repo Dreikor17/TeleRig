@@ -10,6 +10,13 @@
  *      and flushes; the file is an .mp3 holding every byte LAME gave, named like the others.
  *  M2. A dropout of over 1.5 s becomes silence in the MP3 (the file keeps time); jitter does not.
  *  M3. RX off while recording an MP3: it stops and is kept. No audio at all: nothing to keep, says so.
+ *  W1. "Also save a lossless WAV": off by default, kept per browser, locked while recording, unavailable
+ *      without the PCM tap.
+ *  W2. On: a second tap on the same PCM; Stop gives two downloads named alike (MP3, WAV); the WAV is a
+ *      16-bit mono PCM file at the radio's 16 kHz holding every sample as it came, extremes included.
+ *  W3. A dropout: the WAV gets exactly the MP3's silence, so the two files line up.
+ *  W4. Leaving asks until both files are downloaded; Delete frees both. The fallback recorder gets the
+ *      WAV copy too.
  *  The MediaRecorder cases below are the fallback, used only when the encoder is missing:
  *  R1. RX audio off: Record is disabled and the panel says why; no audio node is touched.
  *  R2. RX on: the level bar follows the RX bus (an analyser on the PRE-volume bus). Record starts a
@@ -35,7 +42,7 @@ const START = Date.UTC(2026, 10, 18, 21, 6, 30);        // 2026-11-18 21:06:30 U
 
 function pageEnv(opts) {
   opts = opts || {};
-  const e = makeEnv();
+  const e = makeEnv({ localStorage: opts.localStorage || {} });
   e.clock.now = START;
   const winL = {};
   e.ctx.addEventListener = (t, fn) => { (winL[t] = winL[t] || []).push(fn); };
@@ -88,8 +95,8 @@ function pageEnv(opts) {
   // the MP3 path: app.js's PCM tap and a fake LAME (it counts what it is given and returns 1 byte per 8 samples)
   e.taps = new Set();
   e.enc = [];
+  if (opts.mp3 || opts.tap) e.ctx.RadioAudio.tapPcm = (fn) => { e.taps.add(fn); return () => { e.taps.delete(fn); }; };
   if (opts.mp3) {
-    e.ctx.RadioAudio.tapPcm = (fn) => { e.taps.add(fn); return () => { e.taps.delete(fn); }; };
     e.ctx.lamejs = { Mp3Encoder: function (ch, rate, kbps) {
       const me = { args: [ch, rate, kbps], samples: 0, zeros: 0, bytesOut: 0, flushed: false };
       e.enc.push(me);
@@ -102,6 +109,7 @@ function pageEnv(opts) {
     } };
   }
   e.pcm = (n, rate, amp) => { const pcm = new Int16Array(n).fill(amp); for (const fn of [...e.taps]) fn(pcm, rate); };
+  e.pcmArr = (pcm, rate) => { for (const fn of [...e.taps]) fn(pcm, rate); };
   const urls = { made: [], revoked: [] };
   class FakeURL extends URL {}
   FakeURL.createObjectURL = (b) => { const u = "blob:telerig/" + (urls.made.length + 1); urls.made.push([u, b]); return u; };
@@ -113,6 +121,7 @@ function pageEnv(opts) {
   e.el("span", { id: "recBtnLbl" }, btn).textContent = "Record";
   e.el("span", { id: "recTime" });
   const bar = e.el("div", { class: "mic-bar" }); e.el("div", { id: "recLevel", class: "mic-bar-fill" }, bar);
+  const opt = e.el("label", { class: "rec-opt" }); e.el("input", { id: "recWav", type: "checkbox" }, opt);
   e.el("p", { id: "recHint" });
   e.el("ul", { id: "recList" });
   e.load("recorder.js");
@@ -176,6 +185,103 @@ function pageEnv(opts) {
   e.click(e.btn); e.adv(10);
   const meta = e.items()[0].querySelector(".rec-meta").textContent;
   check(/ · 0:01 · /.test(meta), "M4 1 s of audio over 10 s of clock: the entry says 0:01: " + meta);
+}
+
+// W1-W4: the lossless WAV copy
+const bytesOf = (blob) => {                               // a fake Blob's bytes, nested Blobs included
+  const out = [];
+  (function walk(p) { if (p && p.parts) p.parts.forEach(walk); else for (let i = 0; i < p.length; i++) out.push(p[i] & 255); })(blob);
+  return Uint8Array.from(out);
+};
+function parseWav(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const tag = (o) => String.fromCharCode(u8[o], u8[o + 1], u8[o + 2], u8[o + 3]);
+  const head = [tag(0), dv.getUint32(4, true), tag(8), tag(12), dv.getUint32(16, true), dv.getUint16(20, true),
+                dv.getUint16(22, true), dv.getUint32(24, true), dv.getUint32(28, true), dv.getUint16(32, true),
+                dv.getUint16(34, true), tag(36), dv.getUint32(40, true)];
+  const samples = [];
+  for (let o = 44; o + 1 < u8.length; o += 2) samples.push(dv.getInt16(o, true));
+  return { head, samples };
+}
+{
+  const e = pageEnv({ mp3: true });
+  const chk = e.$("recWav");
+  e.A.rx = true; e.adv(200);
+  eq([chk.checked, chk.disabled], [false, false], "W1 the WAV box: off by default, available with the PCM tap");
+  chk.checked = true; chk.dispatchEvent(new e.Event("change", { bubbles: true }));
+  eq(e.ctx.localStorage.getItem("telerig.rec.wav"), "1", "W1 the choice is kept in this browser");
+  e.click(e.btn);
+  check(chk.disabled, "W1 locked while recording");
+  eq(e.taps.size, 2, "W2 two taps on the radio's PCM: the MP3 and the WAV");
+  check(/with a WAV copy/.test(e.$("recHint").textContent), "W2 the panel says so: " + e.$("recHint").textContent);
+  const fed = [];
+  let x = 7;
+  for (let i = 0; i < 100; i++) {                                               // 2 s of varied audio
+    e.adv(20);
+    const pcm = new Int16Array(320);
+    for (let k = 0; k < 320; k++) { x = (x * 1103515245 + 12345) & 0x7fffffff; pcm[k] = ((x >> 8) % 65536) - 32768; }
+    if (i === 0) { pcm[0] = -32768; pcm[1] = 32767; pcm[2] = -1; pcm[3] = 0; pcm[4] = 1; }
+    for (const v of pcm) fed.push(v);
+    e.pcmArr(pcm, 16000);
+  }
+  e.adv(3000);                                                                  // a 3 s dropout
+  e.pcmArr(new Int16Array(320).fill(-1234), 16000);                             // (5.000 s so far)
+  e.pcmArr(new Int16Array(77).fill(4321), 16000);                               // a last part-second
+  e.click(e.btn); e.adv(10);
+  check(!chk.disabled, "W1 unlocked after Stop");
+  eq(e.taps.size, 0, "W2 Stop takes both taps off");
+  const li = e.items()[0], links = li.querySelectorAll("a.rec-save");
+  eq(links.map((a) => [a.textContent, a.getAttribute("download") || a.download]),
+     [["MP3", "TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.mp3"], ["WAV", "TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.wav"]],
+     "W2 two downloads, the MP3 and the WAV, named alike");
+  const made = e.urls.made.filter(([, b]) => b.type === "audio/wav");
+  eq(made.length, 1, "W2 one WAV file");
+  const w = parseWav(bytesOf(made[0][1])), zeros = e.enc[0].zeros, n = fed.length + zeros + 320 + 77;
+  eq(w.head, ["RIFF", 36 + 2 * n, "WAVE", "fmt ", 16, 1, 1, 16000, 32000, 2, 16, "data", 2 * n],
+     "W2 the header: RIFF/WAVE, PCM, mono, the radio's 16 kHz, 16-bit, the data's length");
+  eq(w.samples.length, n, "W3 as many samples as the MP3 got: the audio, the dropout's silence, the last chunks");
+  check(zeros > 47500 && w.samples.slice(fed.length, fed.length + zeros).every((v) => v === 0), "W3 the dropout is the MP3's silence, to the sample: " + zeros);
+  let same = 0;
+  for (let i = 0; i < fed.length; i++) if (w.samples[i] === fed[i]) same++;
+  eq(same, fed.length, "W2 every sample as it came, the extremes included");
+  check(w.samples.slice(-397, -77).every((v) => v === -1234) && w.samples.slice(-77).every((v) => v === 4321),
+        "W2 ... the last chunks too, the part-second at the end included");
+  check(/ · WAV \d+(\.\d)? (KB|MB)$/.test(li.querySelector(".rec-meta").textContent), "W2 the entry gives the WAV's size too: " + li.querySelector(".rec-meta").textContent);
+  check(e.leave(), "W4 neither file downloaded: leaving asks");
+  e.click(links[0]);
+  check(e.leave(), "W4 the MP3 downloaded, not the WAV: leaving still asks");
+  check(/until you download/.test(e.$("recHint").textContent), "W4 ... and the panel says so: " + e.$("recHint").textContent);
+  e.click(links[1]);
+  check(!e.leave() && li.classList.contains("saved"), "W4 both downloaded: nothing to lose");
+  const urls = e.urls.made.map(([u]) => u);
+  e.click(li.querySelector("button.rec-del"));
+  eq(e.urls.revoked.slice().sort(), urls.slice().sort(), "W4 Delete frees both files");
+  // the choice holds for the next recording; unticked, one file again
+  e.click(e.btn); e.adv(20); e.pcm(320, 16000, 500); e.click(e.btn); e.adv(10);
+  eq(e.items()[0].querySelectorAll("a.rec-save").length, 2, "W1 ticked stays ticked: the next recording has its WAV too");
+  chk.checked = false; chk.dispatchEvent(new e.Event("change", { bubbles: true }));
+  e.click(e.btn); eq(e.taps.size, 1, "W1 unticked: the MP3 tap only"); e.adv(20); e.pcm(320, 16000, 500); e.click(e.btn); e.adv(10);
+  eq(e.items()[0].querySelectorAll("a.rec-save").map((a) => a.textContent), ["Download"], "W1 ... and one download");
+  eq(e.ctx.localStorage.getItem("telerig.rec.wav"), "0", "W1 ... kept as off");
+  eq(e.A.sent, [], "W nothing was sent to the server");
+}
+{
+  const e = pageEnv({ mp3: true, localStorage: { "telerig.rec.wav": "1" } });
+  eq(e.$("recWav").checked, true, "W1 a browser that ticked it before starts ticked");
+}
+{
+  const e = pageEnv();                                    // the fallback, and no PCM tap
+  e.A.rx = true; e.adv(200);
+  check(e.$("recWav").disabled && e.$("recWav").closest(".rec-opt").classList.contains("na"), "W1 no PCM tap: the box is unavailable");
+}
+{
+  const e = pageEnv({ tap: true, localStorage: { "telerig.rec.wav": "1" } });   // no encoder, but the tap
+  e.A.rx = true; e.adv(200);
+  e.click(e.btn);
+  eq([e.made.length, e.taps.size], [1, 1], "W4 the fallback recorder, and the WAV's tap");
+  for (let i = 0; i < 50; i++) { e.adv(20); e.pcm(320, 16000, 700); }
+  e.click(e.btn); e.adv(10);
+  eq(e.items()[0].querySelectorAll("a.rec-save").map((a) => a.textContent), ["WEBM", "WAV"], "W4 ... gives a WebM and its WAV");
 }
 
 // R1-R4, R7, R8: one session

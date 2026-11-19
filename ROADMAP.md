@@ -48,9 +48,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   first), then each recording in a list with Download and Delete, named after the radio, frequency,
   mode and UTC start (`TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.mp3`). MP3 at 48 kb/s, made
   from the radio's own 16 kHz audio by LAME (lamejs, bundled, LGPL), about a third of a megabyte a
-  minute; a browser that can't load the encoder gets WebM/Opus instead. Recordings stay in the
-  browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
-  saved before the Recorder existed gets it under Controls too.
+  minute; a browser that can't load the encoder gets WebM/Opus instead. "Also save a lossless WAV"
+  (kept per browser) adds a WAV of the same audio, sample for sample as the radio sent it, 16-bit
+  mono, about 2 MB a minute: the copy to decode from later. Recordings stay in the browser tab
+  until downloaded, and leaving the page with a file not downloaded asks first. A layout saved
+  before the Recorder existed gets it under Controls too.
 - **Spots panel** (Add panel > Spots): POTA and WWFF activators and DX cluster spots (HamQTH.com),
   newest first, with source, mode and "this band" filters each browser keeps. Click a spot to tune:
   the frequency, then the mode in the radio's own names (SSB by band, CW, data, FM); a spot off the

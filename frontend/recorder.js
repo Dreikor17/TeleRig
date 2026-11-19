@@ -7,12 +7,15 @@
  *   of over GAP_S seconds is filled with silence, so the file keeps time with the clock.
  *   Only if the encoder is missing: MediaRecorder on the pre-volume RX bus (RadioAudio.bus()) -> WebM/
  *   Opus (Ogg/Opus where WebM is missing, MP4 on Safari) at 64 kb/s.
+ *   WAV, with "Also save a lossless WAV" ticked (kept per browser): the same PCM written as it came,
+ *   sample for sample, 16-bit mono at the radio's own rate (about 2 MB a minute at 16 kHz), with the
+ *   same dropout silence as the MP3, so the two files line up. The copy to decode later from.
  *   A level bar (an AnalyserNode on the RX bus) runs whenever RX audio is on, so the level can be
  *   checked before recording.
  *
  * Recordings stay in this tab as Blob URLs until downloaded or deleted; leaving the page with one
- * running or not downloaded asks first. Nothing is sent to the server and nothing here can transmit:
- * the only audio this panel touches is its own taps.
+ * running, or with a file of one not downloaded, asks first. Nothing is sent to the server and nothing
+ * here can transmit: the only audio this panel touches is its own taps.
  *
  * window.Recorder = { summary() }   the collapsed panel's one-line summary (layout.js)
  */
@@ -20,7 +23,7 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const btn = $("recBtn"), lbl = $("recBtnLbl"), timeEl = $("recTime"), fill = $("recLevel"),
-        hint = $("recHint"), list = $("recList");
+        hint = $("recHint"), list = $("recList"), wavChk = $("recWav");
   if (!btn || !list) return;
 
   const TYPES = [["audio/webm;codecs=opus", "webm"], ["audio/ogg;codecs=opus", "ogg"],
@@ -28,20 +31,33 @@
   const BITRATE = 64000;                 // Opus at 64 kb/s: plenty for SSB, CW and FM voice
   const SLICE_MS = 1000;                 // a chunk a second: the size readout moves, memory stays chunked
   const MP3_KBPS = 48;                   // MP3 at 48 kb/s: valid at 8 to 48 kHz; clean voice and CW at 16 kHz
-  const GAP_S = 1.5;                     // a dropout longer than this becomes silence in the MP3
+  const GAP_S = 1.5;                     // a dropout longer than this becomes silence in the MP3 (and the WAV)
   const TICK_MS = 100;
   const SVG_NS = "http://www.w3.org/2000/svg";
+  const WAV_KEY = "telerig.rec.wav";     // "1": also save a lossless WAV (this browser's choice)
 
   let rec = null;                        // the running recorder (Mp3Recorder, or a MediaRecorder)
   let tap = null;                        // {bus, dest} while recording
+  let wav = null, wavBlob = null;        // the WAV copy while recording; its file between Stop and the list
+  let wavLost = false;                   // the WAV copy failed (the main file is still kept)
   let meter = null;                      // {bus, an, buf} while RX audio is on
   let chunks = [], bytes = 0, startedAt = 0, info = null;
   let failed = "", note = "", wasOn = false;   // the last error / stop reason: shown until RX is turned on again
-  const items = [];                      // {url, file, title, meta, saved, li}
+  const items = [];                      // {url, file, title, meta, saved, li, wav: {url, file, saved} | null}
+  const done = (it) => it.saved && (!it.wav || it.wav.saved);   // every file of it downloaded
 
   const say = (m) => { try { TR.srLive(m); } catch (_) {} };
   const audio = () => window.RadioAudio || null;
   const rxOn = () => { const A = audio(); try { return !!(A && A.on()); } catch (_) { return false; } };
+  // the WAV copy needs app.js's PCM tap (there on every path, the MediaRecorder fallback included)
+  const pcmOk = () => { const A = audio(); return !!(A && typeof A.tapPcm === "function"); };
+  if (wavChk) {
+    try { wavChk.checked = localStorage.getItem(WAV_KEY) === "1"; } catch (_) {}
+    wavChk.addEventListener("change", () => {
+      try { localStorage.setItem(WAV_KEY, wavChk.checked ? "1" : "0"); } catch (_) {}
+      render();
+    });
+  }
 
   function pickType() {
     const MR = window.MediaRecorder;
@@ -173,11 +189,65 @@
     };
   }
 
+  // ---- the lossless copy: the same PCM as the MP3, as it came, 16-bit little-endian mono at the rate of
+  // the first chunk (a later rate is resampled to it, as in the MP3), dropouts over GAP_S filled with the
+  // same silence as the MP3. Held as a Blob a second; stop() returns the file, header first.
+  function WavRecorder(A) {
+    let rate = 0, t0 = 0, written = 0, untap = null, buf = null, n = 0;
+    const parts = [];
+    this.failed = false;
+    const fresh = () => { buf = new DataView(new ArrayBuffer(rate * 2)); n = 0; };
+    const full = () => { if (n * 2 === buf.byteLength) { parts.push(new Blob([new Uint8Array(buf.buffer)])); buf = null; } };
+    function put(pcm) {
+      for (let i = 0; i < pcm.length; i++) {
+        if (!buf) fresh();
+        buf.setInt16(n * 2, pcm[i], true);
+        n++; full();
+      }
+    }
+    function silence(k) {                                 // a new buffer is zeros already: just move on
+      while (k > 0) {
+        if (!buf) fresh();
+        const step = Math.min(k, buf.byteLength / 2 - n);
+        n += step; k -= step; full();
+      }
+    }
+    const onPcm = (pcm, r) => {
+      if (!untap || this.failed) return;
+      try {
+        if (!rate) { rate = r; t0 = Date.now() - pcm.length * 1000 / rate; }
+        const data = r === rate ? pcm : resample(pcm, r, rate);
+        const gap = Math.round((Date.now() - t0) * rate / 1000) - written - data.length;
+        if (gap > rate * GAP_S) { silence(gap); written += gap; }
+        put(data);
+        written += data.length;
+      } catch (_) { this.failed = true; }
+    };
+    this.start = () => { untap = A.tapPcm(onPcm); };
+    this.stop = () => {
+      if (untap) { untap(); untap = null; }
+      if (this.failed || !written) return null;
+      if (buf && n) parts.push(new Blob([new Uint8Array(buf.buffer, 0, n * 2)]));
+      buf = null;
+      return new Blob([wavHeader(rate, written)].concat(parts), { type: "audio/wav" });
+    };
+  }
+  function wavHeader(rate, samples) {                     // RIFF / WAVE, one PCM "fmt " chunk, then "data"
+    const h = new DataView(new ArrayBuffer(44)), size = samples * 2;
+    const tag = (at, s) => { for (let i = 0; i < 4; i++) h.setUint8(at + i, s.charCodeAt(i)); };
+    tag(0, "RIFF"); h.setUint32(4, 36 + size, true); tag(8, "WAVE");
+    tag(12, "fmt "); h.setUint32(16, 16, true); h.setUint16(20, 1, true); h.setUint16(22, 1, true);   // PCM, mono
+    h.setUint32(24, rate, true); h.setUint32(28, rate * 2, true); h.setUint16(32, 2, true); h.setUint16(34, 16, true);
+    tag(36, "data"); h.setUint32(40, size, true);
+    return new Uint8Array(h.buffer);
+  }
+
   // ---- recording ----
   function start() {
     if (rec) return;
     const A = audio(), mp3 = mp3Ok(), t = mp3 ? ["audio/mpeg", "mp3"] : pickType();
     if (!t || !rxOn() || !A) { render(); return; }
+    const withWav = !!(wavChk && wavChk.checked) && pcmOk();
     try { A.ensure(); } catch (_) {}
     let r, bus = null, dest = null;
     if (mp3) {
@@ -213,12 +283,25 @@
       rec = null; if (tap) { try { tap.bus.disconnect(tap.dest); } catch (_) {} } tap = null;
       failed = "The recording could not start: " + ((e && e.message) || e) + "."; render(); return;
     }
-    say("Recording started");
+    wav = null; wavBlob = null; wavLost = false;
+    if (withWav) {                                        // the lossless copy, from the same PCM
+      wav = new WavRecorder(A);
+      try { wav.start(); } catch (_) { wav = null; wavLost = true; }
+    }
+    say(wav ? "Recording started, with a WAV copy" : "Recording started");
     render();
+  }
+  function endWav() {                                     // the WAV stops with the main file, to the chunk
+    if (!wav) return;
+    const w = wav;
+    wav = null;
+    wavBlob = w.stop();
+    if (!wavBlob && w.failed) wavLost = true;
   }
   function stop(why) {
     if (!rec) return;
     if (why) note = why;
+    endWav();
     const r = rec;
     if (r.state === "inactive") { finish(r); return; }
     try { r.stop(); } catch (_) { finish(r); }       // the stop event delivers the last chunk, then finish()
@@ -226,14 +309,21 @@
   function finish(r) {
     if (rec !== r) return;
     rec = null;
+    endWav();
+    const w = wavBlob;
+    wavBlob = null;
     if (tap) { try { tap.bus.disconnect(tap.dest); } catch (_) {} tap = null; }
     const ms = r && typeof r.durationMs === "function" ? r.durationMs() : Date.now() - startedAt;
     const mime = (r && r.mimeType) || "audio/webm";
     if (!bytes) { note = note || "Nothing was recorded."; render(); return; }
     const blob = new Blob(chunks, { type: mime });
     chunks = [];
-    const it = { url: URL.createObjectURL(blob), file: info.file + "." + extFor(mime), title: info.title,
-                 meta: info.when + " · " + fmtDur(ms) + " · " + fmtSize(blob.size || bytes), saved: false, li: null };
+    const ext = extFor(mime);
+    const it = { url: URL.createObjectURL(blob), file: info.file + "." + ext, ext, title: info.title,
+                 meta: info.when + " · " + fmtDur(ms) + " · " + fmtSize(blob.size || bytes) + (w ? " · WAV " + fmtSize(w.size) : ""),
+                 saved: false, li: null,
+                 wav: w ? { url: URL.createObjectURL(w), file: info.file + ".wav", saved: false } : null };
+    if (wavLost) note = "The WAV copy could not be written. The " + ext.toUpperCase() + " is kept.";
     items.unshift(it);
     list.insertBefore(row(it), list.firstChild);
     say("Recording stopped, " + fmtDur(ms));
@@ -245,10 +335,16 @@
     const name = document.createElement("span"); name.className = "rec-name"; name.textContent = it.title;
     const meta = document.createElement("span"); meta.className = "rec-meta"; meta.textContent = it.meta;
     const txt = document.createElement("span"); txt.className = "rec-txt"; txt.append(name, meta);
-    const a = document.createElement("a");
-    a.className = "key rec-save"; a.href = it.url; a.download = it.file; a.textContent = "Download";
-    a.title = it.file;
-    a.addEventListener("click", () => { it.saved = true; li.classList.add("saved"); render(); });
+    // one file: "Download"; with the WAV copy: a link for each, named by its format
+    const link = (f, label) => {
+      const a = document.createElement("a");
+      a.className = "key rec-save"; a.href = f.url; a.download = f.file; a.textContent = label; a.title = f.file;
+      if (label !== "Download") a.setAttribute("aria-label", "Download the " + label + " of " + it.title);
+      a.addEventListener("click", () => { f.saved = true; a.classList.add("saved"); li.classList.toggle("saved", done(it)); render(); });
+      return a;
+    };
+    const links = it.wav ? [link(it, (it.ext || "audio").toUpperCase()), link(it.wav, "WAV")] : [link(it, "Download")];
+    if (it.wav) li.classList.add("has-wav");
     const del = document.createElement("button");
     del.type = "button"; del.className = "tile-btn rec-del";
     del.setAttribute("aria-label", "Delete the recording " + it.title + ", " + it.meta);
@@ -259,7 +355,7 @@
     svg.appendChild(use);
     del.appendChild(svg);
     del.addEventListener("click", () => remove(it));
-    li.append(txt, a, del);
+    li.append(txt, ...links, del);
     it.li = li;
     return li;
   }
@@ -268,6 +364,7 @@
     if (i < 0) return;
     items.splice(i, 1);
     try { URL.revokeObjectURL(it.url); } catch (_) {}
+    if (it.wav) { try { URL.revokeObjectURL(it.wav.url); } catch (_) {} }
     if (it.li && it.li.parentNode) it.li.parentNode.removeChild(it.li);
     render();
   }
@@ -284,14 +381,20 @@
     if (timeEl) { timeEl.textContent = fmtDur(rec ? Date.now() - startedAt : 0); timeEl.classList.toggle("on", !!rec); }
     let h;
     if (!t) h = "This browser can't record audio.";
-    else if (rec) h = "Recording. Stop to keep the file.";
+    else if (rec) h = wav ? "Recording, with a WAV copy. Stop to keep the files." : "Recording. Stop to keep the file.";
     else if (failed) h = failed;
     else if (note) h = note;
     else if (!on) h = "Turn on RX in the Audio panel to record.";
-    else if (items.some((i) => !i.saved)) h = "Recordings stay in this tab until you download them.";
+    else if (items.some((i) => !done(i))) h = "Recordings stay in this tab until you download them.";
     else h = "Records the radio's receive audio. The volume slider doesn't change it.";
     if (hint && hint.textContent !== h) hint.textContent = h;
     list.hidden = !items.length;
+    if (wavChk) {                                         // chosen before Record; needs the PCM tap
+      const can = !!t && pcmOk();
+      wavChk.disabled = !!rec || !can;
+      const opt = wavChk.closest ? wavChk.closest(".rec-opt") : null;
+      if (opt) opt.classList.toggle("na", !can);
+    }
   }
   function tick() {
     const on = rxOn();
@@ -305,7 +408,7 @@
 
   btn.addEventListener("click", () => { if (rec) stop(); else start(); });
   window.addEventListener("beforeunload", (e) => {
-    if (!rec && !items.some((i) => !i.saved)) return;
+    if (!rec && !items.some((i) => !done(i))) return;
     e.preventDefault();
     e.returnValue = "";                  // the browser asks before the recordings are lost
   });
