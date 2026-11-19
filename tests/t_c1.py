@@ -365,6 +365,19 @@ def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
 
 
 @test("unit")
+def af_asks_before_the_radio_speaker_goes_up_in_node_vm(ctx):
+    """AF is the radio's own speaker (in the room with the radio): it starts at 0 on every connect
+    (backend/af_zero_test.py), and raising it from 0 asks first: nothing is sent while dragging;
+    "Keep it at 0" puts it back and sends nothing; "Turn it up" sends the value released at, then AF
+    moves freely until it is back at 0; AF already up at the radio, or any other level, never asks.
+    The real tr.js + app.js in a Node vm (tests/af_warn_test.js)."""
+    r = subprocess.run(["node", str(REPO / "tests" / "af_warn_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"af_warn_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"af_warn_test.js output: {r.stdout}")
+
+
+@test("unit")
 def rf_power_slider_is_in_the_tx_tab(ctx):
     """The PWR slider (RF power) lives in the Controls TX tab, in the TX group before MIC; the RX tab's
     LEVELS group keeps AF / RF / SQL only."""

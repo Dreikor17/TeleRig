@@ -88,17 +88,23 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    **idle** arbiter (nobody on the air) and an explicit confirmation, and is audited.
 8. **High‑SWR cutoff + warning.** While keyed, read the SWR meter; warn in the UI and
    auto‑unkey above the threshold to protect the PA. Reads + a protective un‑key only.
-9. **Power read — not forced — on connect.** The app **reads and displays** the radio's
-   current RF power (and AF/RF/SQL) on connect so the panel mirrors the rig; it does **not**
-   zero power. (Earlier builds forced 0 % on connect — removed by request so the operator's
-   real settings show. Transmit stays guarded by operator‑only keying, the 120 s PTT
-   failsafe, the hardware TOT, and unkey‑on‑disconnect.)
+9. **Power read — not forced — on connect; AF to 0.** The app **reads and displays** the
+   radio's current RF power (and RF/SQL) on connect so the panel mirrors the rig; it does
+   **not** zero power. (Earlier builds forced 0 % on connect — removed by request so the
+   operator's real settings show. Transmit stays guarded by operator‑only keying, the 120 s PTT
+   failsafe, the hardware TOT, and unkey‑on‑disconnect.) **AF is the one level it sets:** AF
+   is the volume of the radio's own speaker, in the room with the radio, so the handler sets
+   it to 0 on every connect, before the levels are read back (Icom `14 01 0000`, Yaesu
+   `AG0000;`), and the page asks before anyone turns it up from 0. The operator listens to
+   the RX audio in the browser, which comes from the radio's USB/LAN audio output. On a new
+   radio, check that this output has its own level and does not follow AF: if it does, AF at
+   0 would mute the browser too, so leave AF alone for that radio.
 10. **Unkey + restore on disconnect.** Never leave the radio keyed; restore any borrowed
     state (e.g. the MOD source on the Icom LAN path).
 
 Items 1–7 and 10 ship today. Item 8 (high‑SWR cutoff) is **not implemented in any handler
 yet** — it stays a requirement for new radios and an open item for the existing ones. Item 9 is
-read‑and‑display (power is no longer forced to 0). The profile fields make every safety feature
+read‑and‑display for power (no longer forced to 0), with AF set to 0. The profile fields make every safety feature
 inherit‑by‑filling for future radios.
 
 ## Completeness — expose *every* setting the radio has

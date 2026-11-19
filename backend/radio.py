@@ -350,6 +350,10 @@ class Radio:
                     0x44, 0x45, 0x46, 0x58,              # preamp + RX-DSP + (M3) COMP/MON/VOX/TBW
                     0x32, 0x42, 0x43, 0x47, 0x56):       # APF / FM tone / TSQL / break-in / filter shape
             self._write(self._b(0x16, sub))
+        # AF is the volume of the radio's OWN speaker (in the room with the radio): it starts at 0 on
+        # every connect, before the levels are read back. The operator listens to the RX audio here; the
+        # page asks before anyone turns the radio's speaker up (app.js).
+        self.set_level(0x01, 0)
         for sub in (0x01, 0x02, 0x03, 0x0A, 0x06, 0x12, 0x07, 0x08, 0x0D,
                     0x0B, 0x0E, 0x15, 0x16,              # AF/RF/SQL/PWR + RX-DSP + (M3) MIC/COMP/MON/VOX
                     0x09, 0x0C):                         # CW pitch / keyer speed

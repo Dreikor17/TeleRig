@@ -135,6 +135,10 @@ class YaesuRadio:
         # has), so the UI knows when to show ATAS tuning and how to draw CW on the AF scope.
         ex = tuple(c for c in (getattr(self.profile, a, "") for a, _ in self._EX_STATE) if c)
         self._panel_cmds = self._SETTINGS + ex
+        # AF (the radio's own speaker, in the room with the radio) starts at 0 on every connect, before
+        # the panel is read back (as in radio.py; the page asks before turning it up)
+        self._send("AG0000;")
+        self.state["af"] = 0
         for cmd in ("ID;", "IF;", "FA;", "MD0;", "SM0;") + self._panel_cmds:
             self._send(cmd)
         if getattr(self.profile, "tot_cat", ""):            # safety: hardware TX time-out backstop

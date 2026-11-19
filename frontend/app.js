@@ -13,6 +13,7 @@
   let ws = null, state = {}, step = 25000;
   let blanked = false;                            // after a radio change: VFO zeroed + waterfall cleared until reconnect
   let radios = [], currentRadio = null;          // radio profiles from /api/radios
+  let afOk = false, afAsking = false, afSeen = 0; // the AF (radio speaker) warning: see the level sliders
   const LEVELS = ["af", "rf", "sql", "rfpwr", "nb_level", "nr_level", "pbt1", "pbt2", "mnotch_pos",
                   "mic", "comp_level", "vox_gain", "mon_level", "cw_pitch", "keyer_speed"];
 
@@ -546,9 +547,14 @@
     syncExtPanel(s);
     syncIcomCw(s);
 
+    // the radio's AF back at 0 (a new connect sets it, or it was turned down anywhere): the next raise
+    // from 0 asks again, even in a browser that already said "Turn it up"
+    if (s.af === 0 && afSeen > 0) afOk = false;
+    if (s.af != null) afSeen = s.af;
     // level sliders (don't fight an active drag) + value readouts
     for (const t of LEVELS) {
       const el = $(t);
+      if (t === "af" && afAsking) continue;            // the operator is deciding: leave AF as they set it
       if (el && document.activeElement !== el && s[t] != null) { el.value = s[t]; setFill(el); }
       if (s[t] != null) $(t + "Val").textContent = fmtLevel(t, s[t]);
     }
@@ -906,13 +912,38 @@
   function queueTune(delta) { tuneAcc += delta; scheduleFlush(); }
   function flushTune() { if (tuneAcc) { const d = tuneAcc; tuneAcc = 0; send({ action: "tune", delta: d }); } }
 
+  // AF is the volume of the radio's OWN speaker, in the room with the radio (the server sets it to 0 on
+  // every connect; what the operator hears here is the RX audio and VOL). Taking it off 0 asks first:
+  // nothing is sent while the slider is dragged up from 0, and on release the operator confirms or the
+  // slider goes back to 0. Once it is up (confirmed, or turned up at the radio) moving it does not ask.
+  const afHeld = (v) => v > 0 && !afOk && !((state.af || 0) > 0);
+  function afBack() { const el = $("af"); el.value = "0"; $("afVal").textContent = fmtLevel("af", 0); setFill(el); }
   for (const t of LEVELS) {
     const el = $(t);
     el.addEventListener("input", () => {
       $(t + "Val").textContent = fmtLevel(t, +el.value);
+      if (t === "af" && afHeld(+el.value)) return;
       sendSoon("lvl:" + t, { action: "set_level", target: t, value: +el.value });
     });
-    el.addEventListener("change", () => sendNow("lvl:" + t, { action: "set_level", target: t, value: +el.value }));
+    el.addEventListener("change", async () => {
+      let v = +el.value;
+      if (t === "af") {
+        if (afHeld(v)) {
+          if (afAsking) return;                           // already asking (a second release while it is open)
+          afAsking = true;
+          let ok = false;
+          try {
+            ok = await TR.confirm("Turn up the speaker on the radio itself? AF is the volume of the radio's own " +
+              "speaker, in the room with the radio. What you hear here is the RX audio and VOL.", { ok: "Turn it up", cancel: "Keep it at 0" });
+          } finally { afAsking = false; }
+          if (!ok) { afBack(); return; }
+          afOk = true;
+          el.value = String(v); setFill(el); $("afVal").textContent = fmtLevel("af", v);   // as released, whatever came in meanwhile
+        }
+        if (v === 0) afOk = false;                        // back at 0: the next raise asks again
+      }
+      sendNow("lvl:" + t, { action: "set_level", target: t, value: v });
+    });
   }
   // every slider (incl. VOL): the visual fill, and the wheel only when the slider is focused AND
   // hovered (§3.17); leaving it with no button pressed blurs it, so the next wheel scrolls the page.
