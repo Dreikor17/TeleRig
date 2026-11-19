@@ -46,8 +46,9 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   control, so it works the same for every radio (LAN or a serial radio's USB audio). Record / Stop,
   the running time and a level bar (live whenever RX audio is on, so the level can be checked
   first), then each recording in a list with Download and Delete, named after the radio, frequency,
-  mode and UTC start (`TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.webm`). WebM/Opus at 64 kb/s
-  (Ogg or MP4 where the browser needs it), about half a megabyte a minute. Recordings stay in the
+  mode and UTC start (`TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.mp3`). MP3 at 48 kb/s, made
+  from the radio's own 16 kHz audio by LAME (lamejs, bundled, LGPL), about a third of a megabyte a
+  minute; a browser that can't load the encoder gets WebM/Opus instead. Recordings stay in the
   browser tab until downloaded, and leaving the page with one not downloaded asks first. A layout
   saved before the Recorder existed gets it under Controls too.
 - **RX volume with headroom.** VOL is a dB scale from off to +24 dB with 0 dB (the audio exactly as

@@ -5,6 +5,12 @@
  *
  *     node tests/recorder_test.js       -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
+ *  M1. MP3, the normal path (a fake LAME): Record taps the radio's PCM (RadioAudio.tapPcm), no
+ *      MediaRecorder; LAME gets mono, the radio's 16 kHz, 48 kb/s and every sample; Stop removes the tap
+ *      and flushes; the file is an .mp3 holding every byte LAME gave, named like the others.
+ *  M2. A dropout of over 1.5 s becomes silence in the MP3 (the file keeps time); jitter does not.
+ *  M3. RX off while recording an MP3: it stops and is kept. No audio at all: nothing to keep, says so.
+ *  The MediaRecorder cases below are the fallback, used only when the encoder is missing:
  *  R1. RX audio off: Record is disabled and the panel says why; no audio node is touched.
  *  R2. RX on: the level bar follows the RX bus (an analyser on the PRE-volume bus). Record starts a
  *      MediaRecorder on a stream destination fed by that bus (Opus, 64 kb/s, a chunk a second); the
@@ -77,7 +83,25 @@ function pageEnv(opts) {
     };
     e.ctx.MediaRecorder = MR;
   }
-  e.ctx.Blob = function (parts, o) { this.parts = parts; this.type = (o && o.type) || ""; this.size = parts.reduce((s, p) => s + (p.size || 0), 0); };
+  e.ctx.Blob = function (parts, o) { this.parts = parts; this.type = (o && o.type) || "";
+    this.size = parts.reduce((s, p) => s + (p.size !== undefined ? p.size : p.length || 0), 0); };
+  // the MP3 path: app.js's PCM tap and a fake LAME (it counts what it is given and returns 1 byte per 8 samples)
+  e.taps = new Set();
+  e.enc = [];
+  if (opts.mp3) {
+    e.ctx.RadioAudio.tapPcm = (fn) => { e.taps.add(fn); return () => { e.taps.delete(fn); }; };
+    e.ctx.lamejs = { Mp3Encoder: function (ch, rate, kbps) {
+      const me = { args: [ch, rate, kbps], samples: 0, zeros: 0, bytesOut: 0, flushed: false };
+      e.enc.push(me);
+      this.encodeBuffer = (pcm) => {
+        const silent = pcm.every((v) => v === 0);
+        if (silent) me.zeros += pcm.length; else me.samples += pcm.length;
+        const out = new Int8Array(Math.floor(pcm.length / 8)); me.bytesOut += out.length; return out;
+      };
+      this.flush = () => { me.flushed = true; me.bytesOut += 100; return new Int8Array(100); };
+    } };
+  }
+  e.pcm = (n, rate, amp) => { const pcm = new Int16Array(n).fill(amp); for (const fn of [...e.taps]) fn(pcm, rate); };
   const urls = { made: [], revoked: [] };
   class FakeURL extends URL {}
   FakeURL.createObjectURL = (b) => { const u = "blob:telerig/" + (urls.made.length + 1); urls.made.push([u, b]); return u; };
@@ -97,6 +121,61 @@ function pageEnv(opts) {
   e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
   e.items = () => e.$("recList").querySelectorAll("li.rec-item");
   return e;
+}
+
+// M1-M3: MP3 through LAME from the radio's PCM (the normal path whenever the encoder loads)
+{
+  const e = pageEnv({ mp3: true });
+  e.A.rx = true; e.A.level = 0.25;
+  e.adv(200);
+  check(!e.btn.disabled, "M1 Record is enabled with RX on and the encoder there");
+  e.click(e.btn);
+  eq([e.made.length, e.log.filter((l) => /stream/.test(l))], [0, []], "M1 no MediaRecorder and no stream tap");
+  eq(e.taps.size, 1, "M1 it taps the radio's PCM");
+  for (let i = 0; i < 100; i++) { e.adv(20); e.pcm(320, 16000, 1200); }        // 2 s in 20 ms chunks
+  eq(e.enc.length, 1, "M1 one encoder");
+  eq(e.enc[0].args, [1, 16000, 48], "M1 LAME: mono, the radio's own 16 kHz, 48 kb/s");
+  eq([e.enc[0].samples, e.enc[0].zeros], [32000, 0], "M1 every sample encoded, no padding while audio flows");
+  e.adv(60); e.pcm(320, 16000, 1200);                                           // 40 ms late: jitter
+  eq(e.enc[0].zeros, 0, "M2 a little jitter adds no silence");
+  e.adv(3000); e.pcm(320, 16000, 1200);                                         // a 3 s dropout
+  check(e.enc[0].zeros > 47500 && e.enc[0].zeros < 49000, "M2 a 3 s dropout becomes ~3 s of silence (the file keeps time with the clock): " + e.enc[0].zeros);
+  check(/^REC 0:0[45]$/.test(e.ctx.Recorder.summary()), "M1 the summary while recording: " + e.ctx.Recorder.summary());
+  e.click(e.btn); e.adv(10);
+  eq([e.taps.size, e.enc[0].flushed], [0, true], "M1 Stop removes the tap and flushes LAME");
+  const li = e.items();
+  eq(li.length, 1, "M1 one recording in the list");
+  const a = li[0].querySelector("a.rec-save");
+  eq(a.getAttribute("download") || a.download, "TeleRig_FT-991A_14.074MHz_USB_20261118-210630Z.mp3",
+     "M1 an .mp3 named after the radio, frequency, mode and UTC start");
+  const blob = e.urls.made[0][1];
+  eq([blob.type, blob.size], ["audio/mpeg", e.enc[0].bytesOut], "M1 the file holds every MP3 byte, the flush too");
+  check(/^21:06Z · 0:05 · /.test(li[0].querySelector(".rec-meta").textContent),
+        "M1 the entry gives the audio's own length (5.06 s with the filled dropout): " + li[0].querySelector(".rec-meta").textContent);
+  e.pcm(320, 16000, 1200);
+  eq(e.enc[0].samples, 32640, "M1 nothing more is encoded after Stop");
+  eq(e.A.sent, [], "M1 nothing was sent to the server");
+  // M3: RX off while recording an MP3 keeps it; a recording with no audio at all keeps nothing
+  e.click(e.btn); e.adv(20); e.pcm(320, 16000, 900); e.adv(500); e.pcm(320, 16000, 900);
+  e.A.rx = false; e.adv(250);
+  eq([e.items().length, e.taps.size], [2, 0], "M3 RX off stops the MP3 and keeps it");
+  check(/RX audio was turned off/.test(e.$("recHint").textContent), "M3 the panel says why: " + e.$("recHint").textContent);
+  e.A.rx = true; e.adv(200);
+  e.click(e.btn); e.adv(2000); e.click(e.btn); e.adv(10);
+  eq([e.items().length, e.taps.size], [2, 0], "M3 no audio arrived: nothing is added");
+  check(/Nothing was recorded/.test(e.$("recHint").textContent), "M3 ... and the panel says so: " + e.$("recHint").textContent);
+}
+
+// M4: the entry gives the audio's own length, not the time between the clicks
+{
+  const e = pageEnv({ mp3: true });
+  e.A.rx = true; e.adv(200);
+  e.click(e.btn);
+  for (let i = 0; i < 50; i++) { e.adv(20); e.pcm(320, 16000, 1000); }       // 1 s of audio
+  e.adv(9000);                                                                // then nothing for 9 s
+  e.click(e.btn); e.adv(10);
+  const meta = e.items()[0].querySelector(".rec-meta").textContent;
+  check(/ · 0:01 · /.test(meta), "M4 1 s of audio over 10 s of clock: the entry says 0:01: " + meta);
 }
 
 // R1-R4, R7, R8: one session

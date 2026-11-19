@@ -2364,8 +2364,13 @@
   // minimal audio API for overlay tools (e.g. the CW decoder/coder in cwtool.js)
   // on(): is RX audio actually running? (the RX audio button is active for both serial + LAN paths).
   // Tools use this for status instead of guessing from the instantaneous audio level.
+  // tapPcm(fn): fn(pcm Int16Array, rate) for every chunk of the radio's audio as it arrives, before any
+  // resampling or the volume (the Recorder's MP3); returns the function that removes the tap. The
+  // Int16Array is a view of the frame: use it at once, don't keep it.
+  const pcmTaps = new Set();
   window.RadioAudio = { ensure: ensureAudioCtx, ctx: () => audioCtx, bus: () => rxBus, state: () => state,
-    on: () => !!($("audioBtn") && $("audioBtn").classList.contains("active")) };
+    on: () => !!($("audioBtn") && $("audioBtn").classList.contains("active")),
+    tapPcm: (fn) => { pcmTaps.add(fn); return () => { pcmTaps.delete(fn); }; } };
   // control channel for overlay tools (CW TX): send a WS command + read live state
   window.RadioControl = { send: (o) => send(o), state: () => state, radios: () => radios.slice() };
   function playAudio(buf) {
@@ -2373,6 +2378,7 @@
     const rate = new DataView(buf).getUint16(2, true) || 16000;
     const pcm = new Int16Array(buf, 4);            // header is 4 bytes
     const n = pcm.length; if (!n) return;
+    for (const fn of pcmTaps) { try { fn(pcm, rate); } catch (_) {} }
     for (let i = 0; i < n; i++) rsFifo.push(pcm[i] / 32768);   // queue this chunk's samples
     // Resample source-rate -> context-rate with a fractional read position that carries
     // ACROSS chunks, so consecutive scheduled buffers join seamlessly (no per-chunk

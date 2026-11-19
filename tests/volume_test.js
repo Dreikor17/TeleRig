@@ -9,6 +9,9 @@
  *  V2. The graph: RX bus -> VOL -> limiter -> speakers. The tools' tap (RadioAudio.bus()) is before VOL.
  *  V3. Moving VOL sets the gain at once, shows the dB and is kept by this browser; a kept VOL comes
  *      back on the next load (and is the gain when RX audio starts). Junk kept values are ignored.
+ *  P1. RadioAudio.tapPcm (the Recorder's MP3): a tap gets every audio frame's own samples and rate,
+ *      before any resampling or VOL; removing it stops it; nothing while RX audio is off; a tap that
+ *      throws neither stops the others nor the playback.
  */
 "use strict";
 const { pageEnv } = require("./pttenv");
@@ -31,6 +34,10 @@ function env(kept) {
       return c;
     };
     this.resume = () => {};
+    this.played = 0;
+    this.createBuffer = (ch, len, rate) => ({ duration: len / rate, getChannelData: () => ({ set() {} }) });
+    this.createBufferSource = () => { const n = node("source"); n.start = () => { this.played++; }; return n; };
+    FakeCtx.last = this;
   }
   const e = pageEnv(0, {
     localStorage: kept === undefined ? {} : { "telerig.vol": kept },
@@ -43,11 +50,19 @@ function env(kept) {
     },
   });
   e.made = made;
+  e.played = () => (FakeCtx.last ? FakeCtx.last.played : 0);
   e.vol = e.doc.getElementById("vol");
   e.label = () => e.doc.getElementById("volVal").textContent;
   e.rxOn = () => e.doc.getElementById("audioBtn").onclick();
   e.move = (v) => { e.vol.value = String(v); e.vol.oninput({ target: e.vol }); };
   e.kept = () => e.ctx.localStorage.getItem("telerig.vol");
+  // one RX audio frame as the server sends it: 'A', 0, rate (LE), then int16 mono samples
+  e.audio = (samples, rate) => {
+    const buf = new ArrayBuffer(4 + 2 * samples.length), dv = new DataView(buf);
+    dv.setUint8(0, 0x41); dv.setUint16(2, rate, true);
+    samples.forEach((v, i) => dv.setInt16(4 + 2 * i, v, true));
+    e.sock.onmessage({ data: buf });
+  };
   return e;
 }
 
@@ -86,6 +101,27 @@ function env(kept) {
 for (const junk of ["abc", "150", "-5", ""]) {
   const e = env(junk);
   eq([e.vol.value, e.label()], ["60", "0 dB"], `V3 a kept ${JSON.stringify(junk)} is ignored`);
+}
+
+// P1: the PCM tap
+{
+  const e = env();
+  e.rxOn();
+  const got = [], other = [];
+  const untap = e.ctx.RadioAudio.tapPcm((pcm, rate) => got.push([Array.from(pcm), rate]));
+  e.ctx.RadioAudio.tapPcm(() => { throw new Error("a broken tap"); });
+  e.ctx.RadioAudio.tapPcm((pcm) => other.push(pcm.length));
+  e.move(100);                                              // VOL +24 dB: the tap still sees the raw samples
+  e.audio([1, -2, 300, -32768, 32767], 16000);
+  eq(got, [[[1, -2, 300, -32768, 32767], 16000]], "P1 a tap gets the frame's own samples and rate, before VOL");
+  eq(other, [5], "P1 a tap that throws doesn't stop the others");
+  eq(e.played(), 1, "P1 ... nor the playback (the frame was scheduled to play)");
+  untap();
+  e.audio([5, 6], 16000);
+  eq(got.length, 1, "P1 a removed tap gets nothing more");
+  e.doc.getElementById("audioBtn").onclick();              // RX off
+  e.audio([7, 8], 16000);
+  eq(other, [5, 2], "P1 nothing reaches a tap while RX audio is off");
 }
 
 console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);

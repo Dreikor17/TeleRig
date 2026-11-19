@@ -118,6 +118,26 @@ def exo2_vendored_byte_for_byte(ctx):
     check("fonts.googleapis" not in css and "fonts.gstatic" not in css, "no font is loaded from the internet")
 
 
+LAMEJS_SHA256 = "15d285e2587b3bdbfd18a68de6ce07cc074f7480a82c3815da2dc1c348ec6df4"   # lamejs@1.2.1 lame.min.js
+
+
+@test("unit")
+def lamejs_vendored_byte_for_byte(ctx):
+    """The Recorder's MP3 encoder: lamejs 1.2.1 lame.min.js exactly as npm publishes it (LAME asks for it
+    unmodified, as a separate file), kept as bytes by .gitattributes, credited in NOTICE and in the
+    Recorder panel with a link to LAME's site, loaded from /static (never from the internet)."""
+    lame = FRONT / "vendor" / "lamejs" / "lame.min.js"
+    eq(_sha(lame), LAMEJS_SHA256, "vendor/lamejs/lame.min.js sha256 (lamejs@1.2.1, unmodified)")
+    attrs = (REPO / ".gitattributes").read_text(encoding="utf-8")
+    check(re.search(r"^frontend/vendor/lamejs/\*\* -text$", attrs, re.M), ".gitattributes keeps the encoder bytes as-is")
+    notice = (REPO / "NOTICE").read_text(encoding="utf-8")
+    check("lamejs" in notice and "frontend/vendor/lamejs/lame.min.js" in notice and "LGPL-3.0" in notice
+          and "lame.sourceforge.io" in notice, "NOTICE lamejs / LAME entry")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    check(re.search(r'class="rec-credit">[^<]*<a href="https://lame\.sourceforge\.io"', html), "the Recorder credits LAME with a link")
+    check("cdn.jsdelivr" not in html and "unpkg" not in html, "nothing loads from a CDN")
+
+
 @test("unit")
 def gridstack_vendored_byte_for_byte(ctx):
     for name, want in GS_SHA256.items():
@@ -189,7 +209,8 @@ def index_tiles_parking_and_script_order(ctx):
         check(gone not in html, f"{gone} removed")
     srcs = re.findall(r'<script src="([^"]+)"', html)
     eq(srcs, ["/static/vendor/gridstack/gridstack-all.js?v=14.0.0", "/static/tr.js", "/static/waterfall.js",
-              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js", "/static/recorder.js",
+              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js",
+              "/static/vendor/lamejs/lame.min.js?v=1.2.1", "/static/recorder.js",
               "/static/account.js", "/static/bridge.js", "/static/device.js", "/static/admin.js"], "script order")
     check(not re.search(r"<script>\s*/\*\s*tabbed control panels", html), "the inline tab switcher moved to layout.js")
     css = re.findall(r'<link rel="stylesheet" href="([^"]+)"', html)

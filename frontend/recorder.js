@@ -1,14 +1,18 @@
-/* TeleRig Recorder (the Recorder panel): records what you hear, the radio's RX audio, from the
- * pre-volume RX bus app.js plays every transport into (window.RadioAudio.bus(): LAN PCM and a serial
- * radio's host audio alike), so the volume slider never changes the file.
+/* TeleRig Recorder (the Recorder panel): records what you hear, the radio's RX audio, before the volume
+ * control, so the VOL slider never changes the file and every transport records the same way (LAN PCM
+ * and a serial radio's host audio alike).
  *
- *   MediaRecorder on a MediaStreamAudioDestinationNode -> WebM/Opus (Ogg/Opus where WebM is missing,
- *   MP4 on Safari) at 64 kb/s, about half a megabyte a minute. A level bar (an AnalyserNode on the same
- *   bus) runs whenever RX audio is on, so the level can be checked before recording.
+ *   MP3: the radio's own PCM as it arrives (window.RadioAudio.tapPcm: 16 kHz mono int16) through LAME
+ *   (lamejs, frontend/vendor/lamejs, LGPL) at 48 kb/s, about a third of a megabyte a minute. A dropout
+ *   of over GAP_S seconds is filled with silence, so the file keeps time with the clock.
+ *   Only if the encoder is missing: MediaRecorder on the pre-volume RX bus (RadioAudio.bus()) -> WebM/
+ *   Opus (Ogg/Opus where WebM is missing, MP4 on Safari) at 64 kb/s.
+ *   A level bar (an AnalyserNode on the RX bus) runs whenever RX audio is on, so the level can be
+ *   checked before recording.
  *
  * Recordings stay in this tab as Blob URLs until downloaded or deleted; leaving the page with one
  * running or not downloaded asks first. Nothing is sent to the server and nothing here can transmit:
- * the only audio nodes touched are this panel's own taps on the RX bus.
+ * the only audio this panel touches is its own taps.
  *
  * window.Recorder = { summary() }   the collapsed panel's one-line summary (layout.js)
  */
@@ -23,10 +27,12 @@
                  ["audio/webm", "webm"], ["audio/mp4", "m4a"]];
   const BITRATE = 64000;                 // Opus at 64 kb/s: plenty for SSB, CW and FM voice
   const SLICE_MS = 1000;                 // a chunk a second: the size readout moves, memory stays chunked
+  const MP3_KBPS = 48;                   // MP3 at 48 kb/s: valid at 8 to 48 kHz; clean voice and CW at 16 kHz
+  const GAP_S = 1.5;                     // a dropout longer than this becomes silence in the MP3
   const TICK_MS = 100;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
-  let rec = null;                        // the running MediaRecorder
+  let rec = null;                        // the running recorder (Mp3Recorder, or a MediaRecorder)
   let tap = null;                        // {bus, dest} while recording
   let meter = null;                      // {bus, an, buf} while RX audio is on
   let chunks = [], bytes = 0, startedAt = 0, info = null;
@@ -45,8 +51,14 @@
     }
     return ["", ""];                     // the browser's own choice; the extension follows rec.mimeType
   }
+  // MP3 needs the encoder (lame.min.js) and app.js's PCM tap
+  function mp3Ok() {
+    const A = audio();
+    return !!(window.lamejs && typeof window.lamejs.Mp3Encoder === "function" && A && typeof A.tapPcm === "function");
+  }
   function extFor(mime) {
     const m = String(mime || "").toLowerCase();
+    if (m.indexOf("mpeg") >= 0 || m.indexOf("mp3") >= 0) return "mp3";
     if (m.indexOf("ogg") >= 0) return "ogg";
     if (m.indexOf("mp4") >= 0 || m.indexOf("aac") >= 0) return "m4a";
     if (m.indexOf("wav") >= 0) return "wav";
@@ -114,26 +126,78 @@
     return Math.min(100, Math.round(Math.sqrt(Math.min(1, peak)) * 100));   // perceptual, like the mic bar
   }
 
+  // ---- the MP3 recorder: the radio's PCM through LAME. The few MediaRecorder members this file uses
+  // (state, mimeType, start, stop, ondataavailable / onstop / onerror), so both paths share the rest.
+  function resample(pcm, from, to) {                      // linear; only if the radio's rate ever changes
+    const n = Math.max(1, Math.round(pcm.length * to / from)), out = new Int16Array(n), k = from / to;
+    for (let i = 0; i < n; i++) {
+      const x = i * k, i0 = Math.min(pcm.length - 1, Math.floor(x)), i1 = Math.min(pcm.length - 1, i0 + 1);
+      out[i] = Math.round(pcm[i0] + (pcm[i1] - pcm[i0]) * (x - i0));
+    }
+    return out;
+  }
+  function Mp3Recorder(A) {
+    const self = this;
+    let enc = null, rate = 0, t0 = 0, written = 0, untap = null;
+    this.state = "inactive";
+    this.mimeType = "audio/mpeg";
+    this.ondataavailable = null; this.onstop = null; this.onerror = null;
+    const emit = (mp3) => {
+      if (mp3 && mp3.length && self.ondataavailable) self.ondataavailable({ data: new Blob([mp3], { type: "audio/mpeg" }) });
+    };
+    function onPcm(pcm, r) {
+      if (self.state !== "recording") return;
+      try {
+        if (!enc) {                                       // the first chunk sets the rate and the clock
+          rate = r;
+          enc = new window.lamejs.Mp3Encoder(1, rate, MP3_KBPS);
+          t0 = Date.now() - pcm.length * 1000 / rate;
+        }
+        const data = r === rate ? pcm : resample(pcm, r, rate);
+        const gap = Math.round((Date.now() - t0) * rate / 1000) - written - data.length;
+        if (gap > rate * GAP_S) { emit(enc.encodeBuffer(new Int16Array(gap))); written += gap; }
+        emit(enc.encodeBuffer(data));
+        written += data.length;
+      } catch (e) {
+        if (self.onerror) self.onerror({ error: e });
+      }
+    }
+    this.start = () => { untap = A.tapPcm(onPcm); self.state = "recording"; };
+    this.durationMs = () => (rate ? written * 1000 / rate : 0);   // the audio in the file, not the clock
+    this.stop = () => {
+      if (self.state === "inactive") throw new Error("not recording");
+      self.state = "inactive";
+      if (untap) { untap(); untap = null; }
+      try { if (enc) emit(enc.flush()); } catch (_) {}
+      setTimeout(() => { if (self.onstop) self.onstop(); }, 0);
+    };
+  }
+
   // ---- recording ----
   function start() {
     if (rec) return;
-    const t = pickType(), A = audio();
+    const A = audio(), mp3 = mp3Ok(), t = mp3 ? ["audio/mpeg", "mp3"] : pickType();
     if (!t || !rxOn() || !A) { render(); return; }
     try { A.ensure(); } catch (_) {}
-    const ctx = A.ctx(), bus = A.bus();
-    if (!ctx || !bus || typeof ctx.createMediaStreamDestination !== "function") {
-      failed = "This browser can't record audio."; render(); return;
-    }
-    const dest = ctx.createMediaStreamDestination();
-    bus.connect(dest);
-    let r;
-    try {
-      const opts = { audioBitsPerSecond: BITRATE };
-      if (t[0]) opts.mimeType = t[0];
-      r = new MediaRecorder(dest.stream, opts);
-    } catch (e) {
-      try { bus.disconnect(dest); } catch (_) {}
-      failed = "The recording could not start: " + ((e && e.message) || e) + "."; render(); return;
+    let r, bus = null, dest = null;
+    if (mp3) {
+      r = new Mp3Recorder(A);
+    } else {                                              // no encoder: the browser's own recorder
+      const ctx = A.ctx();
+      bus = A.bus();
+      if (!ctx || !bus || typeof ctx.createMediaStreamDestination !== "function") {
+        failed = "This browser can't record audio."; render(); return;
+      }
+      dest = ctx.createMediaStreamDestination();
+      bus.connect(dest);
+      try {
+        const opts = { audioBitsPerSecond: BITRATE };
+        if (t[0]) opts.mimeType = t[0];
+        r = new MediaRecorder(dest.stream, opts);
+      } catch (e) {
+        try { bus.disconnect(dest); } catch (_) {}
+        failed = "The recording could not start: " + ((e && e.message) || e) + "."; render(); return;
+      }
     }
     chunks = []; bytes = 0; failed = ""; note = "";
     r.ondataavailable = (ev) => { if (ev.data && ev.data.size) { chunks.push(ev.data); bytes += ev.data.size; } };
@@ -143,10 +207,10 @@
       failed = "The recording stopped with an error: " + ((e && (e.message || e.name)) || "unknown") + ".";
       stop();
     };
-    rec = r; tap = { bus, dest }; info = snapshot(); startedAt = Date.now();
+    rec = r; tap = dest ? { bus, dest } : null; info = snapshot(); startedAt = Date.now();
     try { r.start(SLICE_MS); }
     catch (e) {
-      rec = null; try { bus.disconnect(dest); } catch (_) {} tap = null;
+      rec = null; if (tap) { try { tap.bus.disconnect(tap.dest); } catch (_) {} } tap = null;
       failed = "The recording could not start: " + ((e && e.message) || e) + "."; render(); return;
     }
     say("Recording started");
@@ -163,7 +227,7 @@
     if (rec !== r) return;
     rec = null;
     if (tap) { try { tap.bus.disconnect(tap.dest); } catch (_) {} tap = null; }
-    const ms = Date.now() - startedAt;
+    const ms = r && typeof r.durationMs === "function" ? r.durationMs() : Date.now() - startedAt;
     const mime = (r && r.mimeType) || "audio/webm";
     if (!bytes) { note = note || "Nothing was recorded."; render(); return; }
     const blob = new Blob(chunks, { type: mime });
@@ -210,7 +274,7 @@
 
   // ---- the panel ----
   function render() {
-    const t = pickType(), on = rxOn();
+    const t = mp3Ok() || pickType(), on = rxOn();
     btn.disabled = !rec && (!t || !on);
     btn.classList.toggle("on", !!rec);
     btn.setAttribute("aria-pressed", rec ? "true" : "false");

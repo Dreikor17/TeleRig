@@ -42,5 +42,12 @@ Bundled / third-party components
     Copyright 2013 The Exo 2 Project Authors (https://github.com/googlefonts/Exo-2.0).
     Licensed under the SIL Open Font License 1.1 (frontend/vendor/exo2/OFL.txt).
 
+- LAME, through lamejs  -  frontend/vendor/lamejs/lame.min.js  (lamejs 1.2.1)
+    The Recorder panel's MP3 encoder. lamejs (https://github.com/zhuker/lamejs) is a
+    JavaScript port of the LAME MP3 encoder (https://lame.sourceforge.io), vendored
+    UNMODIFIED, byte-for-byte as the lamejs@1.2.1 npm package publishes it, and loaded as
+    a separate file. Licensed LGPL-3.0 (https://www.gnu.org/licenses/lgpl-3.0.html); the
+    Recorder panel credits LAME with a link to its site, as LAME asks.
+
 The Icom CI-V / RS-BA1 LAN and Yaesu CAT implementations are clean-room work informed
 by public open-source projects (wfview, kappanhang, Hamlib); no code was copied.

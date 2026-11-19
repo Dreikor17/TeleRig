@@ -527,6 +527,8 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .rec-meta{font-size:10.5px;color:var(--txt-dim)}
 a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decoration:none}
 .rec-item.saved .rec-save{color:var(--txt-dim)}
+.rec-credit{margin:8px 0 0;font-size:9.5px;color:var(--txt-faint)}
+.rec-credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;

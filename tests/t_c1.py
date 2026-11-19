@@ -285,11 +285,13 @@ def band_and_mode_keys_lit_after_reload_in_node_vm(ctx):
 
 @test("unit")
 def recorder_panel_in_node_vm(ctx):
-    """recorder.js: records the PRE-volume RX bus with MediaRecorder (Opus, 64 kb/s), only while RX audio is
-    on; the level bar, the time, the list with downloads named after the radio / freq / mode / UTC start,
-    delete, the stop when RX audio goes off, the container fallbacks, the leave-page guard. The real
-    script in a Node vm with a fake audio graph and MediaRecorder (tests/recorder_test.js). Static: it
-    never sends a frame, never parses text as HTML and never touches the speakers' path."""
+    """recorder.js: MP3 through LAME from the radio's own PCM (RadioAudio.tapPcm, before VOL: mono, the
+    radio's 16 kHz, 48 kb/s, dropouts filled with silence), WebM/Opus via MediaRecorder on the pre-volume RX
+    bus only without the encoder; only while RX audio is on; the level bar, the time, the list with
+    downloads named after the radio / freq / mode / UTC start, delete, the stop when RX audio goes off,
+    the leave-page guard. The real script in a Node vm with a fake LAME, PCM tap, audio graph and
+    MediaRecorder (tests/recorder_test.js). Static: it never sends a frame, never parses text as HTML and
+    never touches the speakers' path."""
     r = subprocess.run(["node", str(REPO / "tests" / "recorder_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"recorder_test.js: {r.stdout}{r.stderr}")
@@ -298,15 +300,16 @@ def recorder_panel_in_node_vm(ctx):
     for bad in (".send(", "innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", "destination",
                 "WebSocket", "fetch("):
         check(bad not in js, f"recorder.js never uses {bad}")
-    check("A.bus()" in js and "createMediaStreamDestination" in js, "recorder.js records the RX bus")
+    check("A.tapPcm(" in js and "lamejs.Mp3Encoder(1, rate, MP3_KBPS)" in js, "recorder.js encodes the radio's PCM to MP3")
+    check("A.bus()" in js and "createMediaStreamDestination" in js, "recorder.js falls back to recording the RX bus")
 
 
 @test("unit")
 def rx_volume_db_scale_with_headroom_in_node_vm(ctx):
     """app.js VOL: a dB scale with headroom (0 = off, 1..100 = -36 .. +24 dB, 60 = 0 dB = the audio as the
     radio sends it, the old top), a limiter before the speakers, the dB readout, kept per browser (junk
-    ignored); the tools' RX bus stays before VOL. The real tr.js + app.js in a Node vm with a fake audio
-    context (tests/volume_test.js)."""
+    ignored); the tools' RX bus stays before VOL; RadioAudio.tapPcm hands the Recorder each frame's own
+    samples. The real tr.js + app.js in a Node vm with a fake audio context (tests/volume_test.js)."""
     r = subprocess.run(["node", str(REPO / "tests" / "volume_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"volume_test.js: {r.stdout}{r.stderr}")
