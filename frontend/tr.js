@@ -593,7 +593,7 @@
   TR.fallbackLayout = function () {
     const parking = $("tileParking");
     if (!parking || document.body.classList.contains("tr-nogrid")) return;
-    const ORDER = ["vfo", "ptt", "scope", "meter", "audio", "controls", "cw"];
+    const ORDER = ["vfo", "ptt", "scope", "meter", "audio", "controls", "sstv"];   // sstv = the Modem window (CW)
     const tiles = [...document.querySelectorAll("#grid > .grid-stack-item, #tileParking > .grid-stack-item")];
     tiles.sort((a, b) => ORDER.indexOf(a.dataset.tile) - ORDER.indexOf(b.dataset.tile));
     for (const el of tiles) {

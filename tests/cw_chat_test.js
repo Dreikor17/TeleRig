@@ -9,6 +9,13 @@
  *  W2. new text after a pause of 5 s or more (the signal still there, nothing decoded) is a new bubble,
  *      from its live preview on; a shorter pause is not
  *  W3. Clear empties the chat and forgets the pause
+ *  W4. in the Modem window (the panel is its CW pane): committed text is news for the CW key, a live
+ *      preview alone is not
+ *  W5. CwPanel.summary(): the latest text heard, the decoder on / off, this page's CW on the air;
+ *      CwPanel.busy(): only this page's own CW message on the air
+ *  W6. the scope's CW button: the window shown and on CW, the decoder started (a running one keeps its
+ *      chat); with CW in view it toggles the decoder; while SSTV sends a picture nothing changes. The
+ *      window collapsed: the decoder keeps listening; the window removed: it stops
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -21,12 +28,13 @@ const SR = 3200, HOP = 48;                                   // == cwtool.js SR 
 
 async function page() {
   const e = makeEnv();
-  const tile = e.el("div", { class: "grid-stack-item", "data-tile": "cw" });
+  const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" });   // the Modem window; the panel is its CW pane
   e.el("div", { id: "cwTool" }, tile);
-  for (const id of ["cwToolBtn", "cwDecodeBtn", "cwClose", "cwClear", "cwPlay", "cwSend", "cwTx"]) e.el("button", { id, type: "button" }, tile);
+  for (const id of ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwSend", "cwTx"]) e.el("button", { id, type: "button" }, tile);
   for (const id of ["cwHead", "cwHint", "cwOut", "cwStatus", "cwTxHint", "cwTxRow"]) e.el("div", { id }, tile);
   e.load("tr.js");
-  e.ctx.RadioControl = { send: () => { throw new Error("nothing is sent here"); }, state: () => ({ connected: true, mode_name: "CW" }) };
+  e.st = { connected: true, mode_name: "CW" };
+  e.ctx.RadioControl = { send: () => { throw new Error("nothing is sent here"); }, state: () => e.st };
   e.ctx.RadioTx = { owner: () => null, nextSeq: () => 1 };
   e.ctx.Worker = function () { e.worker = this; this.posted = []; this.postMessage = (m) => this.posted.push(m); };
   e.ctx.AudioWorkletNode = function () { e.node = this; this.port = {}; this.connect = () => {}; this.disconnect = () => {}; };
@@ -64,6 +72,9 @@ async function page() {
     const html = e.doc.getElementById("cwOut").innerHTML || "";
     return [...html.matchAll(/<div class="cw-msg rx">(.*?)<\/div><\/div>/g)].map((m) => m[1].replace(/<[^>]+>/g, ""));
   };
+  e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
+  e.dec = e.doc.getElementById("cwDecodeBtn");
+  e.decOn = () => e.dec.getAttribute("aria-pressed") === "true" && e.dec.classList.contains("on");
   return e;
 }
 
@@ -98,6 +109,67 @@ async function page() {
     for (let i = 0; i < 6; i++) e.sec("QRZ");                 // the same text for 6 s (no new characters)
     e.say("QRZ");
     eq(e.bubbles(), ["CQ QRZ"], "W2 text committed 6 s after it showed stays in the bubble it showed in");
+  }
+  // W4: news for the window's CW key
+  {
+    const e = await page();
+    const news = [];
+    e.doc.addEventListener("tr:digital", (ev) => news.push(ev.detail && ev.detail.mode));
+    e.sec(); e.sec("CQ");
+    eq(news, [], "W4 a live preview alone: no news");
+    e.say("CQ CQ");
+    check(news.length > 0 && news.every((m) => m === "cw"), "W4 committed text: news for CW's key: " + JSON.stringify(news));
+  }
+  // W5: the collapsed window's summary; busy = this page's own CW message on the air
+  {
+    const e = await page();
+    const P = e.ctx.CwPanel;
+    eq([P.summary(), P.busy()], ["CW decoder on", false], "W5 the decoder on, nothing heard yet; not busy");
+    e.sec(); e.say("CQ CQ DE N0CALL");
+    eq(P.summary(), "CW CQ CQ DE N0CALL", "W5 the latest text heard");
+    e.say("N0CALL K");
+    eq([e.bubbles(), P.summary()], [["CQ CQ DE N0CALL N0CALL K"], "CW DE N0CALL N0CALL K"], "W5 ... its last 18 characters");
+    e.click(e.dec);
+    eq([P.summary(), e.decOn()], ["CW decoder off", false], "W5 Decode off: says so");
+    e.st = Object.assign({}, e.st, { cw_tx: true });
+    e.ctx.TR.isTxOwner = () => false;
+    eq([P.busy(), P.summary()], [false, "CW decoder off"], "W5 someone else's CW on the air: not this page's");
+    e.ctx.TR.isTxOwner = () => true;
+    eq([P.busy(), P.summary()], [true, "CW on the air"], "W5 this page's CW message on the air: busy (the window stays on CW)");
+  }
+  // W6: the scope's CW button and the window (stand-ins for RadioLayout and DigitalPanel)
+  {
+    const e = await page();                                  // page() turned the decoder on
+    const calls = [];
+    let vis = false, mode = "ft8", lock = false;
+    e.ctx.RadioLayout = { visible: (id) => (calls.push(["visible", id]), vis), showTile: (id) => (calls.push(["showTile", id]), vis = true) };
+    e.ctx.DigitalPanel = { mode: () => mode, show: (m) => { calls.push(["show", m]); if (lock) return false; mode = m; return true; } };
+    const scopeBtn = e.doc.getElementById("cwToolBtn");
+    e.click(e.dec);
+    check(!e.decOn(), "W6 (Decode off to start with)");
+    e.click(scopeBtn);
+    eq(calls, [["visible", "sstv"], ["showTile", "sstv"], ["show", "cw"]], "W6 the scope's CW button: the window shown, on CW");
+    check(e.decOn() && scopeBtn.classList.contains("active"), "W6 ... and the decoder started, Decode lit");
+    calls.length = 0;
+    e.click(scopeBtn);
+    eq([calls, e.decOn()], [[["visible", "sstv"]], false], "W6 CW in view: the button toggles the decoder");
+    e.click(e.dec);
+    e.sec(); e.say("CQ");
+    mode = "rtty";
+    e.click(scopeBtn);
+    eq([mode, e.decOn(), e.bubbles()], ["cw", true, ["CQ"]], "W6 another mode shown, the decoder running: CW in view, its chat kept");
+    e.click(e.dec);
+    mode = "sstv"; lock = true;
+    e.click(scopeBtn);
+    eq([mode, e.decOn()], ["sstv", false], "W6 SSTV sending a picture: the window stays on it, no decoder started");
+    lock = false; mode = "cw";
+    e.click(e.dec);
+    e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: { id: "sstv", visible: true, collapsed: true } }));
+    check(e.decOn(), "W6 the window collapsed: the decoder keeps listening");
+    e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: { id: "spots", visible: false } }));
+    check(e.decOn(), "W6 another panel removed: no matter");
+    e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: { id: "sstv", visible: false } }));
+    check(!e.decOn(), "W6 the window removed: the decoder stops");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

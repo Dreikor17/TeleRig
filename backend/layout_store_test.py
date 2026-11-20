@@ -54,7 +54,8 @@ def field_of(fn, *a):
 C("BOUNDS is the spec's single table", L.BOUNDS,
   {"desktop": {"cols": 12, "y_max": 199, "h_max": 96, "bottom_max": 200, "dw_max": 11},
    "phone": {"rank_max": 15, "h_max": 60}, "split": [0.15, 0.85]})
-C("TILE_IDS (== layout.js TILES)", L.TILE_IDS, ("vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv"))
+C("PANEL_IDS (== layout.js TILE_IDS)", L.PANEL_IDS, ("vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv"))
+C("TILE_IDS = the panels + the retired cw (a stored layout's CW panel stays valid)", L.TILE_IDS, L.PANEL_IDS + ("cw",))
 C("BOUNDS is JSON (bootstrap)", json.loads(json.dumps(L.BOUNDS)), L.BOUNDS)
 
 # ---- desktop: valid input passes through unchanged -------------------------------------------------

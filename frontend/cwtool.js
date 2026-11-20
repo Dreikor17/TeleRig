@@ -1,4 +1,10 @@
-/* CW decoder / coder — an overlay tool that pops up over the waterfall.
+/* CW decoder / coder — the CW mode of the Modem window (the "sstv" tile, digital.js); outside a tile, the
+ * old overlay tool that popped up over the waterfall.
+ *
+ * In the window: the decoder runs while its Decode key is on and the window is on the grid, whichever
+ * mode is shown (collapsed too, like the window's other modes); new text puts a dot on the CW key. The
+ * scope's CW button brings CW into view and starts the decoder. While this tab sends a CW message the
+ * window stays on CW, its STOP in view (CwPanel.busy()).
  *
  * Decoder: a NEURAL decoder (DeepCW). It taps the pre-volume RX bus
  * (RadioAudio.bus()), resamples to 3200 Hz, and re-runs the ONNX model in
@@ -15,6 +21,8 @@
  * deadline and its TOT. The same button stops it: one tap for this tab's own CW (cw_stop), two taps
  * for someone else's (tx_stop, F18). A tap on it while it is or just was a STOP control never starts
  * a transmission (below). Viewers never see it (data-tx, role channel).
+ *
+ * window.CwPanel = { busy(), summary() } (digital.js: the send lock; the collapsed window's summary)
  *
  * SPDX-License-Identifier: AGPL-3.0-only
  * The decode path links the AGPL-3.0 DeepCW model (github.com/e04/deepcw-engine),
@@ -42,10 +50,13 @@
   const panel = $("cwTool"), btn = $("cwToolBtn"), head = $("cwHead");
   if (!panel || !btn) return;
   let open = false;
-  // Tile mode (§3.18): the panel lives in the CW tile. Its visibility belongs to RadioLayout; `open`
-  // only means "the decoder runs". Outside a tile it is the old floating panel.
+  // Tile mode (§3.18): the panel is the Modem window's CW pane. Its visibility belongs to RadioLayout
+  // and the window's mode keys; `open` only means "the decoder runs". Outside a tile it is the old
+  // floating panel.
   const inTile = !!panel.closest(".grid-stack-item, #tileParking");
+  const WIN = "sstv";                              // the Modem window's tile id (kept from the SSTV panel)
   const Lay = () => window.RadioLayout || null;
+  const Dig = () => window.DigitalPanel || null;
 
   // ---- show / hide ----
   function setOpen(v) {
@@ -53,29 +64,25 @@
     if (inTile) panel.hidden = false; else panel.hidden = !open;
     btn.classList.toggle("active", open);
     const db = $("cwDecodeBtn");
-    if (db) db.setAttribute("aria-pressed", open ? "true" : "false");
+    if (db) { db.setAttribute("aria-pressed", open ? "true" : "false"); db.classList.toggle("on", open); }
     if (open) startDecoder(); else stopDecoder();
   }
-  // the scope's CW button: a hidden (or collapsed) CW tile is shown first (persisted, make-room),
-  // then the decoder starts; when the tile is already showing it toggles the decoder
+  // the scope's CW button: CW brought into view first (a hidden or collapsed window shown, persisted,
+  // make-room; then its CW mode), and the decoder started if it isn't running; with CW already in view
+  // it toggles the decoder. While this page sends an SSTV picture the window stays on it.
   btn.addEventListener("click", () => {
-    const L = Lay();
-    if (inTile && L && typeof L.visible === "function" && !L.visible("cw")) {
-      if (L.showTile("cw") !== false) setOpen(true);
-      return;
-    }
-    setOpen(!open);
+    const L = Lay(), D = Dig();
+    if (!inTile || !L || typeof L.visible !== "function") { setOpen(!open); return; }
+    if (L.visible(WIN) && (!D || D.mode() === "cw")) { setOpen(!open); return; }
+    if (L.showTile(WIN) === false) return;
+    if (D && D.show("cw") === false) return;
+    if (!open) setOpen(true);
   });
   if ($("cwDecodeBtn")) $("cwDecodeBtn").addEventListener("click", () => setOpen(!open));
-  $("cwClose").addEventListener("click", () => {
-    setOpen(false);
-    const L = Lay();
-    if (inTile && L && typeof L.hideTile === "function") L.hideTile("cw");   // persisted, gives the columns back
-  });
-  // the tile left the grid or was collapsed: stop the decoder
+  // the window left the grid: stop the decoder (collapsed, it keeps listening like the window's other modes)
   document.addEventListener("tr:tile", (e) => {
     const d = e.detail || {};
-    if (d.id === "cw" && (d.visible === false || d.collapsed === true) && open) setOpen(false);
+    if (d.id === WIN && d.visible === false && open) setOpen(false);
   });
 
   // ---- drag the panel by its header (floating mode only) ----
@@ -201,6 +208,7 @@
     const m = messages[messages.length - 1];
     m.text += (m.text ? " " : "") + seg;
     if (m.text.length > 500) m.text = m.text.slice(-480);
+    try { document.dispatchEvent(new CustomEvent("tr:digital", { detail: { mode: "cw" } })); } catch (_) {}   // digital.js: a dot on CW's key
   }
   function addTx(text) {                                  // a transmitted message = its own blue bubble
     const t = String(text || "").toUpperCase().trim();
@@ -509,6 +517,22 @@
   }
   setInterval(syncTx, 400);
   syncTx();
+
+  // the Modem window (digital.js): busy() = this tab's own CW message is on the air (the window stays on
+  // CW, its STOP in view); summary() = the collapsed window's line while CW is its mode
+  const sendingCw = () => !!((RC() && RC().state()) || {}).cw_tx && mineTx();
+  window.CwPanel = {
+    busy: sendingCw,
+    summary: () => {
+      if (sendingCw()) return "CW on the air";
+      if (!open) return "CW decoder off";
+      for (let i = messages.length - 1; i >= 0; i--) {
+        const m = messages[i];
+        if (m.dir === "rx" && m.text) return "CW " + m.text.replace(/\s+/g, " ").trim().slice(-18).trim();
+      }
+      return "CW decoder on";
+    },
+  };
 
   // diagnostic: window.__cwdiag() -> live decode internals (peak / dominant Hz / raw text)
   window.__cwdiag = function () {

@@ -275,7 +275,7 @@
           <span class="sep"></span>
         </span>
         <button class="sc-btn" id="bandPlanBtn" title="Overlay the ARRL band plan (VHF/UHF) or FCC license-class sub-bands (HF)">BAND PLAN</button>
-        <button class="sc-btn" id="cwToolBtn" title="Open the CW panel (decoder / keyer)">CW</button>
+        <button class="sc-btn" id="cwToolBtn" title="CW in the Modem window: show it and start the decoder">CW</button>
         <span class="bandlegend" id="bandLegend" hidden></span>
         <span class="sep"></span>
         <span class="hint" id="scopeHint">Click a freq digit to tune (scroll it too) · tap / drag the waterfall</span>
@@ -538,63 +538,13 @@
     </div>
     <div class="grp">
       <div class="grp-title">SCOPE TOOLS</div>
-      <div class="setup-note">On the scope toolbar: <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands, and <b>CW</b> opens the CW panel (decoder / keyer).</div>
+      <div class="setup-note">On the scope toolbar: <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands, and <b>CW</b> shows CW in the Modem window (decoder / keyer).</div>
     </div>
     <div id="menuRoot" class="menu-root" hidden></div>
     </div><!-- /setup -->
 
     </div><!-- /sbody -->
   </section>
-    </div></div>
-  </section>
-</div>
-
-<div class="grid-stack-item" gs-id="cw" data-tile="cw">
-  <section class="grid-stack-item-content tile" aria-labelledby="th-cw">
-    <header class="tile-head">
-      <svg class="tile-icon" aria-hidden="true"><use href="#i-keyboard"/></svg>
-      <h2 class="tile-title" id="th-cw">CW</h2>
-      <span class="tile-summary" aria-hidden="true"></span>
-      <div class="tile-actions">
-        <span class="tp-meta cw-status" id="cwStatus">neural</span>
-        <button type="button" class="tile-btn tile-txt" id="cwDecodeBtn" aria-pressed="false" title="Decoder on/off">DEC</button>
-        <button type="button" class="tile-btn cw-close" id="cwClose" aria-label="Close the CW panel" title="Close the CW panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
-        <button type="button" class="tile-btn tile-up" aria-label="Move CW up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
-        <button type="button" class="tile-btn tile-down" aria-label="Move CW down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
-        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse CW" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
-        <button type="button" class="tile-btn tile-remove" aria-label="Remove CW panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
-      </div>
-    </header>
-    <div class="tile-body tile-cw"><div class="tile-fit">
-      <!-- CW decoder / coder. Its visibility belongs to RadioLayout (no hidden attribute, AR-27). -->
-      <div class="tool-panel" id="cwTool">
-        <div class="tp-head" id="cwHead">
-          <span class="tp-title">CW</span>
-        </div>
-        <div class="tp-body">
-          <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
-          <div class="cw-row">
-            <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
-            <button class="key sm" id="cwClear">Clear</button>
-          </div>
-          <div class="cw-row">
-            <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
-            <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
-            <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
-          </div>
-          <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
-            <span class="cw-txhint" id="cwTxHint"></span>
-          </div>
-          <div class="cw-row">
-            <span class="cw-lbl">WPM</span>
-            <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" title="CW speed (words per minute)">
-            <span class="cw-lbl">Tone</span>
-            <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" title="Sidetone pitch">
-          </div>
-          <div class="cw-credit">neural decode: <a href="https://github.com/e04/deepcw-engine" target="_blank" rel="noopener">DeepCW</a> (AGPL-3.0) ·
-            <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">source</a></div>
-        </div>
-      </div>
     </div></div>
   </section>
 </div>
@@ -660,25 +610,62 @@
   <section class="grid-stack-item-content tile" aria-labelledby="th-sstv">
     <header class="tile-head">
       <svg class="tile-icon" aria-hidden="true"><use href="#i-tr-sstv"/></svg>
-      <h2 class="tile-title" id="th-sstv">DIGITAL</h2>
+      <h2 class="tile-title" id="th-sstv">MODEM</h2>
       <span class="tile-summary" aria-hidden="true"></span>
       <div class="tile-actions">
-        <button type="button" class="tile-btn tile-up" aria-label="Move Digital up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
-        <button type="button" class="tile-btn tile-down" aria-label="Move Digital down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
-        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Digital" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
-        <button type="button" class="tile-btn tile-remove" aria-label="Remove Digital panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+        <button type="button" class="tile-btn tile-up" aria-label="Move Modem up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Modem down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Modem" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Modem panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </header>
-    <!-- digital.js: the digital modes window (its tile id stays "sstv"): one mode shown, all of them listening.
-         SSTV: sstv.js decodes pictures (Receive); sstv-tx.js sends one, operator-triggered, on the PTT rules (Send).
-         RTTY: rtty.js. FT8: ft8.js, its decoder ft8-decode.js in a worker. RTTY and FT8 decode only. -->
+    <!-- digital.js: the Modem window (its tile id stays "sstv", so saved layouts keep it): one mode shown, all of
+         them listening. CW: cwtool.js (the neural decoder, the sidetone, CW TX on the PTT rules). RTTY: rtty.js.
+         FT8: ft8.js, its decoder ft8-decode.js in a worker. RTTY and FT8 decode only. SSTV: sstv.js decodes
+         pictures (Receive); sstv-tx.js sends one, operator-triggered, on the PTT rules (Send). -->
     <div class="tile-body tile-sstv tile-digital"><div class="tile-fit">
-      <div class="dm-modes" role="tablist" aria-label="Digital mode">
-        <button type="button" class="dm-mode on" id="dmSstv" role="tab" aria-selected="true" aria-controls="dmPaneSstv">SSTV</button>
+      <div class="dm-modes" role="tablist" aria-label="Mode">
+        <button type="button" class="dm-mode on" id="dmCw" role="tab" aria-selected="true" aria-controls="dmPaneCw">CW</button>
         <button type="button" class="dm-mode" id="dmRtty" role="tab" aria-selected="false" aria-controls="dmPaneRtty" tabindex="-1">RTTY</button>
         <button type="button" class="dm-mode" id="dmFt8" role="tab" aria-selected="false" aria-controls="dmPaneFt8" tabindex="-1">FT8</button>
+        <button type="button" class="dm-mode" id="dmSstv" role="tab" aria-selected="false" aria-controls="dmPaneSstv" tabindex="-1">SSTV</button>
       </div>
-      <div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv">
+      <div id="dmPaneCw" role="tabpanel" aria-labelledby="dmCw">
+        <!-- the CW decoder / coder (cwtool.js), shown by the mode keys: no hidden attribute on #cwTool (AR-27) -->
+        <div class="tool-panel" id="cwTool">
+          <div class="tp-head" id="cwHead">
+            <span class="tp-title">CW</span>
+          </div>
+          <div class="tp-body">
+            <div class="dm-bar cw-bar">
+              <button type="button" class="key sm tog" id="cwDecodeBtn" aria-pressed="false" title="The neural CW decoder on or off">Decode</button>
+              <span class="cw-status" id="cwStatus">neural</span>
+            </div>
+            <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
+            <div class="cw-row">
+              <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
+              <button class="key sm" id="cwClear">Clear</button>
+            </div>
+            <div class="cw-row">
+              <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
+              <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
+              <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
+            </div>
+            <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
+              <span class="cw-txhint" id="cwTxHint"></span>
+            </div>
+            <div class="cw-row">
+              <span class="cw-lbl">WPM</span>
+              <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" title="CW speed (words per minute)">
+              <span class="cw-lbl">Tone</span>
+              <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" title="Sidetone pitch">
+            </div>
+            <div class="cw-credit">neural decode: <a href="https://github.com/e04/deepcw-engine" target="_blank" rel="noopener">DeepCW</a> (AGPL-3.0) ·
+              <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">source</a></div>
+          </div>
+        </div>
+      </div>
+      <div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv" hidden>
       <div class="sstv-tabs" role="tablist" aria-label="SSTV">
         <button type="button" class="sstv-tab on" id="sstvTabRx" role="tab" aria-selected="true" aria-controls="sstvRx">Receive</button>
         <button type="button" class="sstv-tab" id="sstvTabTx" role="tab" aria-selected="false" aria-controls="sstvTx" data-tx>Send</button>

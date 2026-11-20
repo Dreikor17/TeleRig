@@ -34,10 +34,10 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
     "exo2-latin-italic.woff2": "26a4dc84a13ae17366fcd188e354530db070234c038370df9ee47f1b0d611a7a",
     "OFL.txt": "7f95a8eeecc6904ffc81cd10cc8ebc7fcee72a67922924bf45f02dff03b88127",
 }
-TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv"]
+TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
-# gone as well (AR-56)
-B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev"
+# gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
+B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose"
 # The page Phase 1 started from: v0.2.25. The audit used to read `dev`, which was that page until the
 # v0.3.0 release moved dev to v0.3.0 itself; pinned so the Phase 1 audit keeps its meaning.
 PHASE1_BASE_REF = "1d6ea32"
@@ -163,7 +163,7 @@ def index_tiles_parking_and_script_order(ctx):
     check("hidden" in pa and pa.get("aria-hidden") == "true", "#tileParking hidden + aria-hidden")
     check(parking not in _ancestors(t, grid) and grid not in _ancestors(t, parking), "#tileParking is outside #grid")
     items = [k for k, n in enumerate(t.nodes) if "grid-stack-item" in _classes(n)]
-    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "ten tiles, registry order")
+    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "nine tiles, registry order")
     for k in items:
         tid = t.nodes[k][1]["data-tile"]
         eq(t.nodes[k][2], parking, f"{tid}: a direct child of #tileParking")
@@ -190,8 +190,10 @@ def index_tiles_parking_and_script_order(ctx):
     eq(t.nodes[hover][2], t.nodes[tip][2], "#hoverFreq is a sibling of #bandTip")
     check(hover > tip, "#hoverFreq follows #bandTip")
     check("hidden" not in t.nodes[_by_id(t, "cwTool")][1], "#cwTool carries no hidden attribute (AR-27)")
-    for i in ("cwStatus", "cwClose", "cwDecodeBtn", "audioAvail"):
-        check(any("tile-actions" in _classes(t.nodes[a]) for a in _ancestors(t, _by_id(t, i))), f"#{i} in .tile-actions")
+    check(any("tile-actions" in _classes(t.nodes[a]) for a in _ancestors(t, _by_id(t, "audioAvail"))), "#audioAvail in .tile-actions")
+    cw_pane = _by_id(t, "dmPaneCw")
+    for i in ("cwTool", "cwStatus", "cwDecodeBtn", "cwTx"):
+        check(cw_pane in _ancestors(t, _by_id(t, i)), f"#{i} in the Modem window's CW pane")
     eq(t.nodes[_by_id(t, "cwDecodeBtn")][1].get("aria-pressed"), "false", "#cwDecodeBtn aria-pressed")
     check(t.nodes[_by_id(t, "meterBlock")][1].get("class") == "meter", "#meterBlock is the .meter")
     for i, attr in (("meterSel", "data-gate"), ("scopeOnlyCtl", "data-gate"), ("pttBtn", "data-tx"),
@@ -230,8 +232,9 @@ def layout_js_registry_matches_the_server(ctx):
     if str(REPO) not in sys.path:
         sys.path.insert(0, str(REPO))
     from backend import layout_store
-    eq(_js_array(src, "TILE_IDS"), list(layout_store.TILE_IDS), "layout.js TILE_IDS == layout_store.TILE_IDS")
-    eq(TILE_IDS, list(layout_store.TILE_IDS), "registry order")
+    eq(_js_array(src, "TILE_IDS"), list(layout_store.PANEL_IDS), "layout.js TILE_IDS == layout_store.PANEL_IDS")
+    eq(TILE_IDS, list(layout_store.PANEL_IDS), "registry order")
+    eq(list(layout_store.TILE_IDS), TILE_IDS + ["cw"], "the server also accepts the retired cw (folded by layout.js)")
     # the §3.6 desktop default: stored unchanged by the server and filling exactly 24 rows, no overlap
     m = re.search(r"desktop: \{ column: 12, items: \[(.*?)\] \},", src, re.S)
     check(m, "DEFAULT.desktop in layout.js")
@@ -241,11 +244,11 @@ def layout_js_registry_matches_the_server(ctx):
                       "h": int(mm.group(5)), "hidden": bool(mm.group(6)), "collapsed": False})
     eq(sorted(i["id"] for i in items), sorted(TILE_IDS), "every tile in the desktop default")
     want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 4, 5), "ptt": (7, 0, 2, 5), "audio": (9, 0, 3, 5),
-            "meter": (3, 5, 9, 4), "scope": (3, 9, 9, 15), "cw": (9, 9, 3, 15), "recorder": (0, 18, 3, 6),
+            "meter": (3, 5, 9, 4), "scope": (3, 9, 9, 15), "recorder": (0, 18, 3, 6),
             "spots": (9, 9, 3, 15), "sstv": (9, 9, 3, 15)}
     for i in items:
         eq((i["x"], i["y"], i["w"], i["h"]), want[i["id"]], f"§3.6 {i['id']}")
-    eq([i["id"] for i in items if i["hidden"]], ["cw", "spots", "sstv"], "only CW, Spots and SSTV start hidden")
+    eq([i["id"] for i in items if i["hidden"]], ["spots", "sstv"], "only Spots and the Modem window start hidden")
     stored = layout_store.validate("desktop", {"column": 12, "items": items})
     eq(stored["items"], items, "the server stores the default unchanged (no clamping)")
     vis = [i for i in items if not i["hidden"]]
@@ -259,7 +262,7 @@ def layout_js_registry_matches_the_server(ctx):
     pm = re.search(r"phone: \{ column: 1, items: \[(.*?)\] \},", src, re.S)
     check(pm, "DEFAULT.phone in layout.js")
     ranks = re.findall(r'\{ id: "(\w+)", y: (\d+)', pm.group(1))
-    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "cw", "spots", "sstv"],
+    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "spots", "sstv"],
        "§3.6 phone ranks")
     # the bounds layout.js falls back to are the server's table (it normally reads boot.layout_bounds)
     fb = re.search(r"desktop: \{ cols: (\d+), y_max: (\d+), h_max: (\d+), bottom_max: (\d+), dw_max: (\d+) \}", src)

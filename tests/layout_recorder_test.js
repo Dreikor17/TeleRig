@@ -1,5 +1,6 @@
-/* Where the Recorder panel goes, tested on the REAL tr.js + layout.js in a Node vm on tests/fakedom.js
- * with a stand-in GridStack that records every placement (no browser, no server, no radio).
+/* Layouts saved by an older TeleRig, tested on the REAL tr.js + layout.js in a Node vm on tests/fakedom.js
+ * with a stand-in GridStack that records every placement (no browser, no server, no radio): where the
+ * Recorder panel goes, and where a CW panel goes now that CW is a mode of the Modem window.
  * Run by tests/t_layout_ui.py (unit):
  *
  *     node tests/layout_recorder_test.js   -> exit 0 and "ALL PASS", or exit 1 naming each failure
@@ -7,12 +8,21 @@
  *  L1. no saved layout: the default has the Recorder under Controls (desktop 0/18 3x6, Controls 3x18;
  *      phone right after Controls).
  *  L2. a desktop layout saved before the Recorder existed: it arrives under Controls, shown, and a
- *      full-height Controls gives up the rows it takes; every other tile stays where it was.
+ *      full-height Controls gives up the rows it takes; every other tile stays where it was (that
+ *      layout's CW panel: the Modem window in its place, F1).
  *  L3. a short Controls keeps its height: the Recorder goes in the rows under it.
  *  L4. Controls hidden: the Recorder starts hidden too (like any tile new to a layout).
  *  L5. a phone layout saved before the Recorder: it comes right after Controls, the tiles after it
  *      move down one place.
  *  L6. a layout that has the Recorder (here: removed by the user) keeps it as it is.
+ *  F1. a desktop layout with the CW panel showing and the Modem window not: the window takes the CW
+ *      panel's place and size and the columns it borrowed (closing the window gives them back to the
+ *      Scope); nothing else moves; nothing is saved until the user changes the layout, and then no CW
+ *      panel is in it.
+ *  F2. the Modem window showing too: the CW panel goes, its borrowed columns back to the Scope, as
+ *      closing it did; the window stays where it is.
+ *  F3. ... the Scope's side not free for them: the CW panel's place is left empty, nothing moves.
+ *  F4. a CW panel the user had closed: nothing changes, the window stays closed.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -21,7 +31,7 @@ let failures = 0, checks = 0;
 function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL " + msg); } }
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
-const IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv"];
+const IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv"];   // the page's panels
 const OLD_DESKTOP = [
   { id: "controls", x: 0, y: 0, w: 3, h: 24 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 }, { id: "ptt", x: 7, y: 0, w: 2, h: 5 },
   { id: "audio", x: 9, y: 0, w: 3, h: 5 }, { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 6, h: 15 },
@@ -44,7 +54,7 @@ function boot(layout, desktop) {
     setAnimation() {}, getGridItems() { return this.items.slice(); }, on() {}, setStatic() {}, destroy() {},
   };
   e.ctx.GridStack = { init: (opts, el) => new Grid(el, opts) };
-  e.ctx.fetch = (url, init) => { put.push([String(url), init && init.method]); return new Promise(() => {}); };
+  e.ctx.fetch = (url, init) => { put.push([String(url), init && init.method, init && init.body]); return new Promise(() => {}); };
   const wrap = e.el("div", { id: "gridWrap" });
   e.el("div", { id: "grid", class: "grid-stack tr-grid" }, wrap);
   const park = e.el("div", { id: "tileParking", hidden: true });
@@ -74,9 +84,9 @@ function boot(layout, desktop) {
 {
   const d = boot(null, true);
   eq([d.at("controls"), d.at("recorder")], [[0, 0, 3, 18], [0, 18, 3, 6]], "L1 desktop default: the Recorder under Controls");
-  eq(d.at("cw"), null, "L1 desktop default: CW still starts hidden");
+  eq(d.at("sstv"), null, "L1 desktop default: the Modem window still starts hidden");
   const p = boot(null, false);
-  check(p.at("recorder") !== null && p.at("recorder") > p.at("controls") && (p.at("cw") === null),
+  check(p.at("recorder") !== null && p.at("recorder") > p.at("controls") && (p.at("sstv") === null),
         "L1 phone default: the Recorder right after Controls: " + JSON.stringify([p.at("controls"), p.at("recorder")]));
   const order = IDS.filter((id) => p.at(id) !== null).sort((a, b) => p.at(a) - p.at(b));
   eq(order, ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder"], "L1 phone default order");
@@ -85,8 +95,10 @@ function boot(layout, desktop) {
 {
   const d = boot({ rev: 4, desktop: { column: 12, items: OLD_DESKTOP } }, true);
   eq([d.at("controls"), d.at("recorder")], [[0, 0, 3, 18], [0, 18, 3, 6]], "L2 the Recorder arrives under a full-height Controls");
-  for (const it of OLD_DESKTOP.filter((i) => i.id !== "controls"))
-    eq(d.at(it.id), [it.x, it.y, it.w, it.h], "L2 " + it.id + " stays where it was");
+  for (const it of OLD_DESKTOP.filter((i) => i.id !== "controls")) {
+    const id = it.id === "cw" ? "sstv" : it.id;                // the CW panel's place: the Modem window's (F1)
+    eq(d.at(id), [it.x, it.y, it.w, it.h], "L2 " + it.id + " stays where it was" + (id !== it.id ? " (as the Modem window)" : ""));
+  }
   eq(d.put.filter((p) => /layout/.test(p[0])), [], "L2 nothing is saved until the user changes the layout");
 }
 // L3: a short Controls keeps its height
@@ -105,13 +117,57 @@ function boot(layout, desktop) {
 {
   const p = boot({ rev: 4, phone: { column: 1, items: OLD_PHONE } }, false);
   const order = IDS.filter((id) => p.at(id) !== null).sort((a, b) => p.at(a) - p.at(b));
-  eq(order, ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "cw"], "L5 phone: right after Controls, CW moves down one");
+  eq(order, ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "sstv"],
+     "L5 phone: right after Controls; the CW panel's place, the Modem window's now, moves down one");
 }
 // L6: the user removed the Recorder: it stays removed
 {
   const items = OLD_DESKTOP.concat([{ id: "recorder", x: 0, y: 18, w: 3, h: 6, hidden: true }]);
   const d = boot({ rev: 5, desktop: { column: 12, items } }, true);
   eq([d.at("controls"), d.at("recorder")], [[0, 0, 3, 24], null], "L6 a removed Recorder stays removed, Controls keeps its rows");
+}
+
+// F1-F4: a layout saved while CW had a panel of its own (now a mode of the Modem window, "sstv")
+const TOP = [{ id: "vfo", x: 3, y: 0, w: 4, h: 5 }, { id: "ptt", x: 7, y: 0, w: 2, h: 5 }, { id: "audio", x: 9, y: 0, w: 3, h: 5 },
+  { id: "meter", x: 3, y: 5, w: 9, h: 4 }];
+const LEFT = [{ id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "recorder", x: 0, y: 18, w: 3, h: 6 }];
+const CW = { id: "cw", x: 9, y: 9, w: 3, h: 15, room: { from: "scope", dw: 3 } };   // shown: 3 columns from the Scope
+const stays = (d, items, tag) => { for (const it of items) eq(d.at(it.id), [it.x, it.y, it.w, it.h], tag + " " + it.id + " stays where it was"); };
+{
+  const items = LEFT.concat(TOP, [{ id: "scope", x: 3, y: 9, w: 6, h: 15 }, CW,
+    { id: "spots", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "sstv", x: 9, y: 9, w: 3, h: 15, hidden: true }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq(d.at("sstv"), [9, 9, 3, 15], "F1 the Modem window takes the CW panel's place and size");
+  stays(d, LEFT.concat(TOP, [{ id: "scope", x: 3, y: 9, w: 6, h: 15 }]), "F1");
+  eq(d.at("spots"), null, "F1 Spots stays closed");
+  eq(d.put.filter((p) => /layout/.test(p[0])), [], "F1 nothing is saved until the user changes the layout");
+  check(d.ctx.RadioLayout.hideTile("sstv") === true, "F1 the window closes");
+  eq(d.at("scope"), [3, 9, 9, 15], "F1 ... and gives the columns the CW panel borrowed back to the Scope");
+  d.clock.advance(400);
+  const saved = d.put.filter((p) => /layout/.test(p[0]) && p[1] === "PUT").map((p) => JSON.parse(p[2]));
+  eq(saved.map((s) => [s.device, s.data.items.some((i) => i.id === "cw"), (s.data.items.find((i) => i.id === "sstv") || {}).hidden]),
+     [["desktop", false, true]], "F1 the next save: no CW panel in it, the window closed");
+}
+{
+  const win = { id: "sstv", x: 0, y: 0, w: 3, h: 24 };
+  const items = [win, { id: "controls", x: 0, y: 0, w: 3, h: 18, hidden: true }, { id: "recorder", x: 0, y: 18, w: 3, h: 6, hidden: true }]
+    .concat(TOP, [{ id: "scope", x: 3, y: 9, w: 6, h: 15 }, CW]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq(d.at("scope"), [3, 9, 9, 15], "F2 the Modem window showing too: the CW panel goes, its columns back to the Scope");
+  stays(d, [win].concat(TOP), "F2");
+}
+{
+  const win = { id: "sstv", x: 0, y: 0, w: 3, h: 24 }, spots = { id: "spots", x: 9, y: 18, w: 3, h: 6 };
+  const items = [win, { id: "controls", x: 0, y: 0, w: 3, h: 18, hidden: true }, { id: "recorder", x: 0, y: 18, w: 3, h: 6, hidden: true }]
+    .concat(TOP, [{ id: "scope", x: 3, y: 9, w: 6, h: 15 }, Object.assign({}, CW, { h: 9 }), spots]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  stays(d, [win, spots, { id: "scope", x: 3, y: 9, w: 6, h: 15 }].concat(TOP), "F3 Spots beside the Scope: the CW panel's place stays empty;");
+}
+{
+  const items = LEFT.concat(TOP, [{ id: "scope", x: 3, y: 9, w: 9, h: 15 }, { id: "cw", x: 9, y: 9, w: 3, h: 15, hidden: true }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq(d.at("sstv"), null, "F4 a CW panel the user had closed: the Modem window stays closed");
+  stays(d, LEFT.concat(TOP, [{ id: "scope", x: 3, y: 9, w: 9, h: 15 }]), "F4");
 }
 
 console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);

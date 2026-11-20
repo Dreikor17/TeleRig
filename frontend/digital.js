@@ -1,47 +1,54 @@
-/* TeleRig digital modes window (the "sstv" tile, titled Digital; its id stays "sstv" so saved layouts keep
- * it): SSTV (sstv.js receive, sstv-tx.js send), RTTY (rtty.js) and FT8 (ft8.js, ft8-decode.js). One mode is
- * shown at a time, but every decoder listens while the window is on the grid, so switching never loses
- * a picture, a line of text or a slot; a mode that has news while hidden gets a dot on its key.
+/* TeleRig Modem window (the "sstv" tile, titled Modem; its id stays "sstv" so saved layouts keep it): CW
+ * (cwtool.js: the neural decoder, the sidetone, CW TX), RTTY (rtty.js), FT8 (ft8.js, ft8-decode.js) and SSTV
+ * (sstv.js receive, sstv-tx.js send). One mode is shown at a time, but every decoder listens while the
+ * window is on the grid (CW's while its Decode key is on), so switching never loses a picture, a line of
+ * text or a slot; a mode that has news while hidden gets a dot on its key.
  *
  * The audio strip above RTTY and FT8: a small waterfall of the radio's audio from 0 to 3 kHz (the 16 kHz
  * PCM tap, a 1024-point FFT), with the mode's own markers (RTTY: mark and space; FT8: the last slot's
  * messages). A click, or the arrow keys on the focused strip, tells the mode where: RTTY tunes there.
  *
- * While SSTV is sending a picture the other modes can't be shown: the picture's STOP stays in view.
- * Receive only here; SSTV's Send tab is sstv-tx.js's own, on the PTT rules.
+ * While this page sends (an SSTV picture, a CW message) the window stays on that mode and the others
+ * can't be shown: its STOP stays in view. RTTY and FT8 receive only; SSTV's Send tab is sstv-tx.js's own
+ * and CW's TX cwtool.js's, both on the PTT rules.
  *
- * window.DigitalPanel = { mode(), show(id), summary() }
+ * window.DigitalPanel = { mode(), show(id), feed(pcm, rate), summary() }
  */
 (function () {
   "use strict";
   if (typeof document === "undefined") return;
   const $ = (id) => document.getElementById(id);
-  const MODES = ["sstv", "rtty", "ft8"];
-  const keys = { sstv: $("dmSstv"), rtty: $("dmRtty"), ft8: $("dmFt8") };
-  const panes = { sstv: $("dmPaneSstv"), rtty: $("dmPaneRtty"), ft8: $("dmPaneFt8") };
+  const MODES = ["cw", "rtty", "ft8", "sstv"];             // the keys' order; the first is the default
+  const keys = { cw: $("dmCw"), rtty: $("dmRtty"), ft8: $("dmFt8"), sstv: $("dmSstv") };
+  const panes = { cw: $("dmPaneCw"), rtty: $("dmPaneRtty"), ft8: $("dmPaneFt8"), sstv: $("dmPaneSstv") };
   if (MODES.some((m) => !keys[m] || !panes[m])) return;
   const tile = panes.sstv.closest(".grid-stack-item");
   const KEY = "telerig.digital.mode";
   const ls = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) {} return null; };
-  const sending = () => { try { return !!(window.SstvTx && window.SstvTx.busy && window.SstvTx.busy()); } catch (_) { return false; } };
-  let cur = MODES.includes(ls(KEY)) ? ls(KEY) : "sstv";
+  // a transmission from this page: the mode sending it (its STOP), or null
+  const busy = (o) => { try { return !!(o && typeof o.busy === "function" && o.busy()); } catch (_) { return false; } };
+  const sending = () => (busy(window.SstvTx) ? "sstv" : busy(window.CwPanel) ? "cw" : null);
+  const WAIT = { sstv: "A picture is being sent: STOP it first", cw: "CW is being sent: STOP it first" };
+  let cur = MODES.includes(ls(KEY)) ? ls(KEY) : MODES[0];
 
   function render() {
     const lock = sending();
+    if (lock) cur = lock;                                  // the mode sending stays in view
     for (const m of MODES) {
       const on = m === cur, k = keys[m];
       k.classList.toggle("on", on);
       k.setAttribute("aria-selected", on ? "true" : "false");
       k.tabIndex = on ? 0 : -1;
       if (on) k.classList.remove("news");
-      const off = lock && !on;
+      const off = !!lock && !on;
       k.disabled = off;
-      k.title = off ? "A picture is being sent: STOP it first" : "";
+      k.title = off ? WAIT[lock] : "";
       panes[m].hidden = !on;
     }
   }
   function show(m) {
-    if (!MODES.includes(m) || (m !== cur && sending())) return false;
+    const lock = sending();
+    if (!MODES.includes(m) || (lock && m !== lock)) return false;
     cur = m; ls(KEY, m); render();
     for (const s of strips) s.paint(true);
     return true;
@@ -56,7 +63,7 @@
       if (show(n)) keys[n].focus();
     });
   }
-  // a mode with news while another is shown: a dot on its key (sstv.js, rtty.js, ft8.js send tr:digital)
+  // a mode with news while another is shown: a dot on its key (cwtool.js, rtty.js, ft8.js, sstv.js send tr:digital)
   document.addEventListener("tr:digital", (e) => {
     const m = e && e.detail && e.detail.mode;
     if (MODES.includes(m) && m !== cur) keys[m].classList.add("news");
@@ -196,12 +203,13 @@
   })();
 
   render();
-  setInterval(() => { render(); for (const s of strips) s.paint(); }, 1000);   // the SSTV send lock; markers moved
+  setInterval(() => { render(); for (const s of strips) s.paint(); }, 1000);   // the send lock; markers moved
   window.DigitalPanel = {
     mode: () => cur,
     show,
-    // audio handed over directly (int16 mono, its rate) as if the radio sent it, to every mode and the
-    // strip: a check of the window, as SstvPanel.feed. It only decodes.
+    // audio handed over directly (int16 mono, its rate) as if the radio sent it, to RTTY, FT8, SSTV and the
+    // strip (CW listens on the audio graph, not this tap): a check of the window, as SstvPanel.feed. It only
+    // decodes.
     feed: (pcm, r) => {
       if (!pcm || !pcm.length || !(r > 0)) return;
       feed(pcm, r);
@@ -209,6 +217,7 @@
     },
     summary: () => {
       const s = (o) => { try { return (o && typeof o.summary === "function" && o.summary()) || ""; } catch (_) { return ""; } };
+      if (cur === "cw") return s(window.CwPanel);
       if (cur === "rtty") return s(window.RttyPanel);
       if (cur === "ft8") return s(window.Ft8Panel);
       return s(window.SstvTx) || s(window.SstvPanel);

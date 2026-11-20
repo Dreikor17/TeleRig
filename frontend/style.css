@@ -586,10 +586,10 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .sstv-note{margin:6px 0 0;font-size:10px;line-height:1.35;color:var(--txt-faint)}
 .grid-stack-item.sstv-on-air .tile{border-color:var(--tx-solid);box-shadow:0 0 0 1px var(--tx-solid)}   /* this panel is keying the radio */
 
-/* ---- the digital modes window (digital.js): the mode keys; RTTY (rtty.js) and FT8 (ft8.js) on an instrument
-   screen under the audio strip, which grows with the panel ---- */
+/* ---- the Modem window (digital.js): the mode keys; CW (cwtool.js) in its own panel; RTTY (rtty.js) and FT8
+   (ft8.js) on an instrument screen under the audio strip, which grows with the panel ---- */
 .tile-digital>.tile-fit{display:flex;flex-direction:column;min-height:100%}
-.dm-modes{display:grid;grid-template-columns:repeat(3,1fr);flex:none;margin:0 0 8px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
+.dm-modes{display:grid;grid-template-columns:repeat(4,1fr);flex:none;margin:0 0 8px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
 .dm-mode{appearance:none;position:relative;background:var(--key);border:0;border-left:1px solid var(--border);padding:6px 0 5px;
   font:700 11px/1 var(--font-ui);letter-spacing:.06em;color:var(--txt-dim);cursor:pointer}
 .dm-mode:first-child{border-left:0}
@@ -598,7 +598,12 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .dm-mode[disabled]{opacity:.45;cursor:not-allowed}
 .dm-mode:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .dm-mode.news::after{content:"";position:absolute;top:4px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--warn)}  /* news while hidden */
-#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+#dmPaneCw:not([hidden]),#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+/* CW: the CW panel (cwtool.js) fills its pane, its chat growing with the window */
+#dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}
+#dmPaneCw .tp-body{padding:0}
+.dm-bar.cw-bar{margin-top:0}
+.cw-bar .cw-status{font-size:11px}
 .dm-strip{display:block;flex:none;width:100%;height:44px;background:var(--scope-bg);border:1px solid var(--tft-border);
   border-radius:var(--r-sm);cursor:crosshair}
 .dm-strip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -1110,10 +1115,8 @@ body[data-device=phone] .tile-btn{width:34px;height:34px}
 body.arranging .tile-remove{display:grid;color:var(--danger-hi)}
 .tile-up,.tile-down{display:none}                               /* phone arrange only (▲ ▼) */
 body[data-device=phone].arranging .tile-up,body[data-device=phone].arranging .tile-down{display:grid}
-body.arranging .cw-close{display:none}                          /* arrange mode has its own × */
 .tile-actions .lan-only{font-size:9px;color:var(--accent-hi);letter-spacing:0;white-space:nowrap}
 .tile-actions .lan-only:empty{display:none}
-.tile-actions .cw-status{max-width:12ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tile-body{flex:1 1 auto;min-height:0;overflow:auto;padding:8px;position:relative}
 body[data-device=desktop] .tile-body{overscroll-behavior:contain}
 body[data-device=phone] .tile-body{overscroll-behavior:auto}   /* no scroll trap on phone (AR-37) */
@@ -1230,9 +1233,7 @@ body[data-device=desktop] .tile-audio{container-type:size}
 }
 /* controls: the tab bar sits flush at the top of the scrolling body */
 .tile-controls{padding-top:0}
-/* CW tool as a tile (§3.18): the old floating panel becomes the tile body */
-.tile-cw{padding:0}
-.tile-cw>.tile-fit{height:100%}
+/* the CW tool in a tile (§3.18; the Modem window's CW pane): the old floating panel lies flat in it */
 .tile .tool-panel{position:static;inset:auto;width:auto;height:100%;max-width:none;min-width:0;min-height:0;border:0;box-shadow:none;background:none;border-radius:0}
 .tile .tool-panel .tp-head,.tile .tool-panel .tp-resize{display:none}
 /* compact Controls — these lived only inside the deleted >= 900 px console block; kept at every width,
@@ -1296,7 +1297,6 @@ body.tr-nogrid .tile-vfo{height:150px}
 body.tr-nogrid .tile-vfo:has(#bands.dual){height:200px}
 body.tr-nogrid .tile-ptt{height:110px}
 body.tr-nogrid .tile-ptt:has(#atasTune:not([hidden])){height:150px}
-body.tr-nogrid .tile-cw{height:340px}
 body.tr-nogrid .tile-audio{container-type:normal}
 body.tr-nogrid .tile-remove,body.tr-nogrid .tile-collapse,body.tr-nogrid .tile-up,body.tr-nogrid .tile-down{display:none}
 body.tr-nogrid .ui-resizable-handle{display:none!important}

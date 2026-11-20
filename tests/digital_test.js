@@ -1,13 +1,15 @@
-/* The digital modes window (frontend/digital.js) and its FT8 tab (frontend/ft8.js), the REAL scripts on
+/* The Modem window (frontend/digital.js) and its FT8 tab (frontend/ft8.js), the REAL scripts on
  * tests/fakedom.js with a fake clock; the REAL decoder (ft8-decode.js) for one slot end to end. No browser, no
  * server, no socket, no radio. Run by tests/t_c1.py:
  *
  *     node tests/digital_test.js        -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
- *  D1. the mode keys: SSTV first, one pane shown, a click or the arrow keys switch, the choice kept
+ *  D1. the mode keys: CW, RTTY, FT8, SSTV; CW first, one pane shown, a click or the arrow keys switch,
+ *      the choice kept (a choice kept from before CW joined comes back too)
  *  D2. a hidden mode with news gets a dot; showing it clears the dot
- *  D3. while SSTV is sending a picture the other modes can't be shown (its STOP stays in view)
- *  D4. the collapsed window's summary is the shown mode's; DigitalPanel.feed reaches every mode
+ *  D3. while SSTV sends a picture, or CW a message, the window stays on that mode and the others can't be
+ *      shown (its STOP stays in view)
+ *  D4. the collapsed window's summary is the shown mode's; DigitalPanel.feed reaches RTTY, FT8 and SSTV
  *  T1. FT8 slots: one decode per 15 s UTC slot, once all of it has arrived, 15 s of samples from the slot's
  *      start (the arrival clock), in a worker loaded from the page's own script
  *  T2. the list: a header per slot, rows by frequency (dB, DT, Hz, message), CQs marked, text never markup;
@@ -33,8 +35,9 @@ function page(opts) {
   const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, grid);
   const modes = e.el("div", { class: "dm-modes" }, tile);
   e.keys = {};
-  for (const [m, id] of [["sstv", "dmSstv"], ["rtty", "dmRtty"], ["ft8", "dmFt8"]]) e.keys[m] = e.el("button", { id, type: "button" }, modes);
-  e.panes = { sstv: e.el("div", { id: "dmPaneSstv" }, tile), rtty: e.el("div", { id: "dmPaneRtty" }, tile), ft8: e.el("div", { id: "dmPaneFt8" }, tile) };
+  for (const [m, id] of [["cw", "dmCw"], ["rtty", "dmRtty"], ["ft8", "dmFt8"], ["sstv", "dmSstv"]]) e.keys[m] = e.el("button", { id, type: "button" }, modes);
+  e.panes = { cw: e.el("div", { id: "dmPaneCw" }, tile), rtty: e.el("div", { id: "dmPaneRtty" }, tile), ft8: e.el("div", { id: "dmPaneFt8" }, tile),
+              sstv: e.el("div", { id: "dmPaneSstv" }, tile) };
   e.ft8Strip = e.el("canvas", { id: "ft8Strip" }, e.panes.ft8);
   e.cq = e.el("input", { id: "ft8CqOnly", type: "checkbox" }, e.panes.ft8);
   e.clear = e.el("button", { id: "ft8Clear", type: "button" }, e.panes.ft8);
@@ -58,6 +61,7 @@ function page(opts) {
       e.ctx[name] = { summary: () => name + " summary", feed: (p, r) => e.fed.push([name, p.length, r]) };
     }
     e.ctx.SstvTx = { summary: () => (e.txSummary || ""), busy: () => !!e.sending };
+    e.ctx.CwPanel = { summary: () => "CwPanel summary", busy: () => !!e.cwSending };   // cwtool.js (no PCM feed)
   } else e.load("ft8.js");
   e.load("digital.js");
   e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
@@ -81,39 +85,59 @@ const shown = (e) => Object.keys(e.panes).filter((m) => !e.panes[m].hidden);
 // ---- D1: the mode keys ----
 {
   const e = page({ stubs: true });
-  eq(shown(e), ["sstv"], "D1 SSTV first, the only pane shown");
-  eq(["sstv", "rtty", "ft8"].map((m) => [e.keys[m].getAttribute("aria-selected"), e.keys[m].tabIndex]), [["true", 0], ["false", -1], ["false", -1]],
-     "D1 the tablist: SSTV selected, the others out of the tab order");
+  eq(shown(e), ["cw"], "D1 CW first, the only pane shown");
+  eq(["cw", "rtty", "ft8", "sstv"].map((m) => [e.keys[m].getAttribute("aria-selected"), e.keys[m].tabIndex]),
+     [["true", 0], ["false", -1], ["false", -1], ["false", -1]], "D1 the tablist: CW selected, the others out of the tab order");
   e.click(e.keys.ft8);
   eq([shown(e), e.ctx.localStorage.getItem("telerig.digital.mode"), e.ctx.DigitalPanel.mode()], [["ft8"], "ft8", "ft8"], "D1 a click shows FT8, kept");
   e.key(e.keys.ft8, "ArrowRight");
-  eq(shown(e), ["sstv"], "D1 ArrowRight from FT8 wraps to SSTV");
-  e.key(e.keys.sstv, "ArrowLeft");
-  eq(shown(e), ["ft8"], "D1 ArrowLeft wraps back to FT8");
+  eq(shown(e), ["sstv"], "D1 ArrowRight from FT8: SSTV");
+  e.key(e.keys.sstv, "ArrowRight");
+  eq(shown(e), ["cw"], "D1 ArrowRight from SSTV wraps to CW");
+  e.key(e.keys.cw, "ArrowLeft");
+  eq(shown(e), ["sstv"], "D1 ArrowLeft wraps back to SSTV");
   const f = page({ stubs: true, localStorage: { "telerig.digital.mode": "rtty" } });
   eq(shown(f), ["rtty"], "D1 the kept mode comes back");
+  const s = page({ stubs: true, localStorage: { "telerig.digital.mode": "sstv" } });
+  eq(shown(s), ["sstv"], "D1 a mode kept from before CW joined comes back");
   const g = page({ stubs: true, localStorage: { "telerig.digital.mode": "<img>" } });
-  eq(shown(g), ["sstv"], "D1 a kept value that isn't a mode: SSTV");
+  eq(shown(g), ["cw"], "D1 a kept value that isn't a mode: CW");
 }
 
 // ---- D2, D3, D4 ----
 {
   const e = page({ stubs: true });
   e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:digital", { detail: { mode: "ft8" } }));
-  check(e.keys.ft8.classList.contains("news") && !e.keys.sstv.classList.contains("news"), "D2 FT8 has news while SSTV is shown: a dot on FT8");
-  e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:digital", { detail: { mode: "sstv" } }));
-  check(!e.keys.sstv.classList.contains("news"), "D2 news for the mode shown: no dot");
+  check(e.keys.ft8.classList.contains("news") && !e.keys.cw.classList.contains("news"), "D2 FT8 has news while CW is shown: a dot on FT8");
+  e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:digital", { detail: { mode: "cw" } }));
+  check(!e.keys.cw.classList.contains("news"), "D2 news for the mode shown: no dot");
   e.click(e.keys.ft8);
   check(!e.keys.ft8.classList.contains("news"), "D2 showing FT8 clears its dot");
   e.click(e.keys.sstv);
   e.sending = true;
   e.clock.advance(1000);
-  check(e.keys.rtty.disabled && e.keys.ft8.disabled && !e.keys.sstv.disabled, "D3 a picture going out: RTTY and FT8 can't be chosen");
-  check(/STOP it first/.test(e.keys.rtty.title), "D3 ... and say why: " + e.keys.rtty.title);
-  eq([e.ctx.DigitalPanel.show("rtty"), shown(e)], [false, ["sstv"]], "D3 ... show() refuses too");
+  check(e.keys.cw.disabled && e.keys.rtty.disabled && e.keys.ft8.disabled && !e.keys.sstv.disabled, "D3 a picture going out: CW, RTTY and FT8 can't be chosen");
+  check(/picture is being sent: STOP it first/.test(e.keys.rtty.title), "D3 ... and say why: " + e.keys.rtty.title);
+  eq([e.ctx.DigitalPanel.show("rtty"), e.ctx.DigitalPanel.show("cw"), shown(e)], [false, false, ["sstv"]], "D3 ... show() refuses too");
   e.sending = false;
   e.clock.advance(1000);
-  check(!e.keys.rtty.disabled && !e.keys.ft8.disabled, "D3 the picture done: every mode again");
+  check(!e.keys.cw.disabled && !e.keys.rtty.disabled && !e.keys.ft8.disabled, "D3 the picture done: every mode again");
+  e.click(e.keys.cw);
+  e.cwSending = true;
+  e.clock.advance(1000);
+  check(e.keys.rtty.disabled && e.keys.ft8.disabled && e.keys.sstv.disabled && !e.keys.cw.disabled, "D3 a CW message going out: the others can't be chosen");
+  check(/CW is being sent: STOP it first/.test(e.keys.sstv.title), "D3 ... and say why: " + e.keys.sstv.title);
+  eq([e.ctx.DigitalPanel.show("ft8"), shown(e)], [false, ["cw"]], "D3 ... show() refuses too");
+  e.cwSending = false;
+  e.clock.advance(1000);
+  e.click(e.keys.ft8);
+  e.cwSending = true;                                      // this page's CW on the air while FT8 is shown (a race)
+  e.clock.advance(1000);
+  eq([shown(e), e.ctx.DigitalPanel.mode()], [["cw"], "cw"], "D3 the mode sending comes into view, its STOP with it");
+  e.cwSending = false;
+  e.clock.advance(1000);
+  check(!e.keys.rtty.disabled && !e.keys.ft8.disabled && !e.keys.sstv.disabled, "D3 the message done: every mode again");
+  e.click(e.keys.sstv);
   e.txSummary = "TX Robot 36 0:12";
   eq(e.ctx.DigitalPanel.summary(), "TX Robot 36 0:12", "D4 SSTV shown: the picture going out");
   e.txSummary = "";
@@ -122,8 +146,11 @@ const shown = (e) => Object.keys(e.panes).filter((m) => !e.panes[m].hidden);
   eq(e.ctx.DigitalPanel.summary(), "RttyPanel summary", "D4 RTTY shown: RTTY's");
   e.click(e.keys.ft8);
   eq(e.ctx.DigitalPanel.summary(), "Ft8Panel summary", "D4 FT8 shown: FT8's");
+  e.click(e.keys.cw);
+  eq(e.ctx.DigitalPanel.summary(), "CwPanel summary", "D4 CW shown: CW's");
   e.ctx.DigitalPanel.feed(new Int16Array(320), 16000);
-  eq(e.fed, [["SstvPanel", 320, 16000], ["RttyPanel", 320, 16000], ["Ft8Panel", 320, 16000]], "D4 DigitalPanel.feed reaches every mode");
+  eq(e.fed, [["SstvPanel", 320, 16000], ["RttyPanel", 320, 16000], ["Ft8Panel", 320, 16000]],
+     "D4 DigitalPanel.feed reaches RTTY, FT8 and SSTV (CW listens on the audio graph)");
   e.ctx.DigitalPanel.feed(new Int16Array(0), 16000);
   eq(e.fed.length, 3, "D4 an empty frame: nothing");
 }

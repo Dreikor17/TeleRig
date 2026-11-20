@@ -5,7 +5,7 @@ canonical user name (ADMIN -> 41444d494e). Callsigns may contain "/" and NTFS ig
 name itself is never used as a file name.
 
     {"v":1, "gs":"14.0.0", "rev":7, "updated":"...",
-     "desktop":{"column":12, "items":[{"id":"cw","x":9,"y":9,"w":3,"h":15,"hidden":false,
+     "desktop":{"column":12, "items":[{"id":"sstv","x":9,"y":9,"w":3,"h":15,"hidden":false,
                                        "collapsed":false,"room":{"from":"scope","dw":3}}, ...]},
      "phone":{"column":1, "items":[{"id":"vfo","x":0,"y":0,"w":1,"h":5,"hidden":false,"collapsed":false}, ...]},
      "scope_split":{"desktop":0.38, "phone":0.42}}
@@ -33,7 +33,13 @@ from typing import Any, Optional
 
 from .store import JsonStore, StoreCorrupt, StoreMissing, console
 
-TILE_IDS = ("vfo", "ptt", "audio", "meter", "scope", "controls", "cw", "recorder", "spots", "sstv")   # == layout.js TILES (§3.1)
+PANEL_IDS = ("vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv")   # == layout.js TILE_IDS (§3.1)
+# Ids a stored layout may still hold for a panel that is gone: "cw" had a panel of its own until CW became a
+# mode of the Modem window (the "sstv" tile). They stay valid, so those layouts (and the columns such a panel
+# lent or borrowed) still load and an older page still open can still save; layout.js folds a "cw" panel
+# into the Modem window and leaves it out of its next save.
+RETIRED_IDS = ("cw",)
+TILE_IDS = PANEL_IDS + RETIRED_IDS
 DEVICES = ("desktop", "phone")
 COLUMNS = {"desktop": 12, "phone": 1}
 BOUNDS = {"desktop": {"cols": 12, "y_max": 199, "h_max": 96, "bottom_max": 200, "dw_max": 11},

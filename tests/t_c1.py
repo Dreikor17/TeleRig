@@ -424,8 +424,9 @@ def sstv_transmit_in_node_vm(ctx):
 
 @test("unit")
 def digital_modes_window_in_node_vm(ctx):
-    """The digital modes window (digital.js; the tile id stays "sstv"): one mode shown, every decoder
-    listening, a dot for news in a hidden mode, no other mode while SSTV sends a picture; RTTY (rtty.js:
+    """The Modem window (digital.js; the tile id stays "sstv"): CW, RTTY, FT8 and SSTV, one mode shown, every
+    decoder listening, a dot for news in a hidden mode, no other mode while a picture or a CW message goes
+    out; CW is the CW panel moved in (cwtool.js: tests/cw_chat_test.js), the CW tile gone; RTTY (rtty.js:
     tests/rtty_test.js) and FT8 (ft8-decode.js against a real recording and WSJT-X's own decodes of it:
     tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). Static: RTTY and
     FT8 decode only (no radio action, no socket, no fetch) and never parse text as HTML; the decoder carries
@@ -445,11 +446,16 @@ def digital_modes_window_in_node_vm(ctx):
     notice = (REPO / "tests" / "data" / "ft8" / "NOTICE")
     check(notice.is_file() and "Kārlis Goba" in notice.read_text(encoding="utf-8"), "tests/data/ft8/NOTICE names the recording's source")
     html = (FRONT / "index.html").read_text(encoding="utf-8")
-    for must in ('id="dmSstv"', 'id="dmRtty"', 'id="dmFt8"', '<div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv">',
+    for must in ('id="dmCw"', 'id="dmRtty"', 'id="dmFt8"', 'id="dmSstv"',
+                 '<div id="dmPaneCw" role="tabpanel" aria-labelledby="dmCw">',
                  '<div id="dmPaneRtty" role="tabpanel" aria-labelledby="dmRtty" hidden>',
-                 '<div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>', 'gs-id="sstv" data-tile="sstv"',
-                 'id="th-sstv">DIGITAL<'):
+                 '<div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>',
+                 '<div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv" hidden>', 'gs-id="sstv" data-tile="sstv"',
+                 'id="th-sstv">MODEM<'):
         check(must in html, f"index.html: {must}")
+    keys = re.findall(r'class="dm-mode[^"]*" id="dm(\w+)"', html)
+    eq(keys, ["Cw", "Rtty", "Ft8", "Sstv"], "the mode keys: CW, RTTY, FT8, SSTV")
+    check('gs-id="cw"' not in html and 'id="cwClose"' not in html, "the CW panel and its close button are gone")
 
 
 @test("unit")

@@ -77,11 +77,15 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   are the ones whose whole transmission ends inside the radio's own 3-minute TX time-out: Robot 36 /
   72, Martin M1 / M2, Scottie S1 / S2, PD-50, PD-90, PD-120 and PD-160, each with its time on the
   air. Never in CW, RTTY, DV or C4FM; a level control for the ALC.
-- **Digital modes window** (Add panel > Digital; it was the SSTV panel, and a saved layout keeps it): SSTV,
-  RTTY and FT8 in one panel, one shown at a time, every decoder listening while the panel is open, so
-  switching loses nothing; a mode with news while hidden gets a dot, and while SSTV sends a picture the
-  other modes wait (its STOP stays in view). RTTY and FT8 decode only, in the browser, from the radio's
-  audio, under a small waterfall of it (0 to 3 kHz):
+- **Modem window** (Add panel > Modem; it was the SSTV panel, then Digital, and a saved layout keeps it):
+  CW, RTTY, FT8 and SSTV in one panel, one shown at a time, every decoder listening while the panel is
+  open, so switching loses nothing; a mode with news while hidden gets a dot, and while a picture or a
+  CW message goes out the other modes wait (its STOP stays in view). RTTY and FT8 decode only, in the
+  browser, from the radio's audio, under a small waterfall of it (0 to 3 kHz):
+  - **CW**: the CW panel, moved in whole: the neural decoder (Decode), the sidetone and CW TX. The
+    scope's CW button shows the window on CW and starts the decoder. A layout saved with the CW panel
+    showing gives its place to the window, or, with the window already showing, its columns back to
+    the panel that lent them.
   - **RTTY**: Baudot with US-TTY figures, 45.45 / 50 / 75 baud and 170 / 425 / 850 Hz shifts; mark and
     space follow the radio's mode (LSB normal, USB reversed) and Rev swaps them; click a signal in the
     strip to tune to its pair, or nudge with the arrow keys; a squelch keeps noise off the screen.
@@ -285,8 +289,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 - **Band-plan overlay enhancements** (the overlay itself shipped): let the user pick
   their license class to highlight just their privileges and soft-flag tuning outside
   them; make the data region-aware so non-US band plans can drop in.
-- **CW encoder / decoder / transmit** — *shipped*. The "CW" button pops a draggable panel
-  over the waterfall with a **neural decoder** (the DeepCW ONNX model from e04/deepcw-engine,
+- **CW encoder / decoder / transmit** — *shipped*, the Modem window's CW mode (the scope's "CW"
+  button shows it): a **neural decoder** (the DeepCW ONNX model from e04/deepcw-engine,
   run in-browser via onnxruntime-web), a type-to-Morse soft-keyed off-air sidetone, and a
   **TX button** that sends the typed message as CW — operator-triggered, one bounded message,
   failsafe- and TOT-bound. Icom keys via CI-V `17` (semi break-in) so the rig generates the CW;
@@ -301,7 +305,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   Scottie DX, PD-180, PD-240 and PD-290 (3:09 to 4:51 on the air) are longer than the 3-minute TX
   time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig
   doesn't send them (decided 2026-11-19: keep every transmission inside the 3 minutes).
-- **Digital window, next steps** — FT8's other message types (DXpedition, Field Day, RTTY Roundup, EU
+- **Modem window, next steps** — FT8's other message types (DXpedition, Field Day, RTTY Roundup, EU
   VHF: ft8_lib skips them too), a menu that tunes the radio to a band's FT8 frequency, RTTY's AFC,
   decoding a saved recording, FT4.
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. a tuning/zero-beat aid,
@@ -325,7 +329,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   software connects, and for the developer to join their API-consumers group, so it waits for that.
 - **HF conditions**: solar numbers and MUF maps.
 - **Command console**: send a raw CI-V / CAT command and see the answer; a diagnostics panel.
-- **FT8 decoder** in the browser, for a quick look at a band — *shipped*, in the Digital window (see Done).
+- **FT8 decoder** in the browser, for a quick look at a band — *shipped*, in the Modem window (see Done).
 - **Live CW keying** from a paddle (MIDI adapter), the keyboard or touch.
 - **Video feed** of the radio's own screen.
 - **Packaging**: a desktop app, Docker, installers.
