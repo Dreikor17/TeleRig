@@ -3,6 +3,93 @@
 All notable changes to **TeleRig** (formerly **Radio WebOp**) are documented here. This project
 adheres to [Semantic Versioning](https://semver.org).
 
+## [0.4.0] — 2026-11-20
+
+**The Modem window** decodes CW, RTTY, FT8 and SSTV pictures from the radio's audio, in the browser,
+and sends CW and SSTV. Also new: POTA, WWFF and DX spots, a recorder, a WSJT-X bridge, and TeleRig
+updating itself from GitHub.
+
+### Added
+- **Modem window** (Add panel > Modem): CW, RTTY, FT8 and SSTV in one panel, one shown at a time.
+  Every decoder keeps listening while the window is open, so switching loses nothing, and a mode
+  with something new while hidden gets a dot on its key. While a picture or a CW message goes out,
+  the window stays on that mode, its STOP in view.
+  - **CW**: the CW panel, moved in whole: the neural decoder (Decode), the sidetone and CW TX. The
+    scope's CW button opens the window on CW and starts the decoder. A pause of 5 s or more in the
+    received text starts a new bubble.
+  - **RTTY**: Baudot with US-TTY figures, 45.45 / 50 / 75 baud and 170 / 425 / 850 Hz shifts. Mark
+    and space follow the radio's mode (LSB normal, USB reversed) and Rev swaps them; click a signal
+    in the audio strip to tune to it, or nudge with the arrow keys. A squelch keeps noise off the
+    screen. Receive only.
+  - **FT8**: 15 s slots on UTC, decoded in a background worker by a JavaScript port of ft8_lib's
+    decoder (MIT, Kārlis Goba, YL3JG): the messages of each slot with dB, DT and frequency, CQs
+    marked, and a CQ only filter. On a real recording it finds 17 of the 22 messages WSJT-X found
+    there, nothing WSJT-X didn't. The slots follow this computer's clock, which has to be right to
+    about a second. Receive only.
+  - **SSTV receive**: Robot 36 / 72, Martin M1 / M2, Scottie S1 / S2 / DX and PD-50 to PD-290,
+    painted line by line as they arrive. The VIS header picks the mode, each line re-locks on its
+    sync pulse (no slant from a station's fast or slow sound card), and every picture can be saved
+    as a PNG.
+  - **SSTV transmit** (operators): a picture, or a test card, with a line of text such as your
+    callsign, sent as one operator-triggered transmission on the same rules as PTT (one TX owner,
+    STOP, a hidden tab or a dropped connection unkeys). Each picture is held for its own length,
+    and only the modes that end inside the radio's 3-minute TX time-out are offered: Robot 36 / 72,
+    Martin M1 / M2, Scottie S1 / S2 and PD-50 to PD-160. A level control for the ALC.
+- **Spots panel** (Add panel > Spots): POTA and WWFF activators and DX cluster spots (HamQTH.com),
+  newest first, filtered by source, mode and "this band". Click a spot to tune the frequency and
+  mode; the spot you tuned to stays at the top, marked Tuned. The server asks each source only while
+  someone has the panel open, never more often than the source allows.
+- **Recorder panel**, under Controls: records what you hear (the RX audio before VOL), for every
+  radio. MP3 at 48 kb/s by LAME (lamejs, bundled), with "Also save a lossless WAV" for the copy to
+  decode from later; each recording named after the radio, frequency, mode and UTC start, kept in
+  the browser until you download it.
+- **WSJT-X bridge**: WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" shares the radio
+  with the browser, an Icom on its LAN port included. Off by default, this PC only by default, and
+  receive-only until an admin allows transmit; a bridge program is one more user (one transmitter
+  at a time, ON AIR for everyone, STOP by any operator, the 120 s limit). See
+  [docs/WSJTX-BRIDGE.md](docs/WSJTX-BRIDGE.md).
+- **Icom DATA mode** (USB-D / LSB-D / FM-D / AM-D) on the IC-9700 and IC-7300MK2: a DATA switch
+  next to the mode buttons, and what the bridge selects for WSJT-X's "Data/Pkt".
+- **Update now** (Administration > Update): a copy installed with git updates itself from GitHub
+  from the web page. It follows its own branch (a master install updates from master, the releases;
+  a dev install from dev), fast-forward only, goes back to the previous commit if the new code
+  won't load, then restarts. Refused while anyone transmits.
+- **PTT hotkey**: a key of your choice, hold-to-talk or press-to-toggle, on PTT's fail-safe rules: a
+  press while you transmit always stops, and the key never keys while you type, while a dialog is
+  open or while the tab is hidden (user menu > PTT hotkey).
+- **Full screen**, with the screen kept awake ("Keep screen awake" on phones without full screen).
+- **Radio screen theme**, the third step of the theme button: the same layout dressed as a
+  transceiver's own screen.
+- **Icom front-panel TX detection**: the IC-9700 and IC-7300MK2 now report a transmission started at
+  the radio itself (hand mic or front panel) as **ON AIR · FRONT PANEL**, like the Yaesu radios, and
+  nobody can key over it. The IC-728 has no command for it.
+- **Band plan strip** just above the scope, so it no longer covers the bottom of the spectrum.
+
+### Changed
+- **TX time-out 3 minutes on every radio**: the radio's own time-out, set on connect as the backstop
+  if the control link fails, is now 3 minutes on the FT-991A and FT-891 too (it was 2), like the
+  Icoms (47 CFR 97.213(b)). It changes at the next connect. A voice transmission keeps TeleRig's own
+  120 s limit.
+- **RX volume with headroom**: VOL is a dB scale from off to +24 dB, 0 dB being the audio exactly as
+  the radio sends it, with a limiter against clipping and its value shown. Each browser keeps its
+  own VOL.
+- **AF starts at 0**: AF is the radio's own speaker, in the room with the radio. Every connect sets
+  it to 0, and turning it up from 0 asks first.
+- **The CW panel is the Modem window's CW mode.** A saved layout with the CW panel showing gives its
+  place to the Modem window.
+- The **PWR** slider moved to the Controls panel's TX tab.
+- A **dev install** shows `-dev` and its commit after the version (`0.4.0-dev+<commit>`).
+- The **Simulator** shows a band of CW and SSB stations on the scope.
+
+### Fixed
+- **AF scope in CW**: a click on a CW signal tunes it to the radio's CW pitch (it used to send it to
+  the deaf edge); the dial shows as a marker at the pitch.
+- **Meter colours** belong to the scale (S9 at its mark in every theme), not to the bar's length.
+- **Band and mode keys** are lit right after a reload.
+- The pages declare TeleRig's tab icon: no more `/favicon.ico` 404s in the server log.
+- A settings save could put an old copy back over a file changed a moment earlier; it never does
+  now.
+
 ## [0.3.0] — 2026-11-17
 
 **Radio WebOp is now TeleRig**: everyone signs in, one operator transmits at a time, and the panel
@@ -603,6 +690,7 @@ live spectrum scope + waterfall.
 - Mic capture (TX) needs a secure context (HTTPS or localhost), so it won't run
   over plain-HTTP remote access; RX audio playback works over HTTP.
 
+[0.4.0]: https://github.com/Dreikor17/TeleRig/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Dreikor17/TeleRig/releases/tag/v0.3.0
 [0.2.10]: https://github.com/Dreikor17/radio-webop/releases/tag/v0.2.10
 [0.2.02]: https://github.com/Dreikor17/radio-webop/releases/tag/v0.2.02

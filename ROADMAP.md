@@ -7,7 +7,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### WSJT-X bridge, PTT hotkey, full screen, Update now, Radio screen theme, Recorder (unreleased)
+### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
   TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
   and the browser share one radio, including an Icom on its LAN port. Off by default, this PC only
@@ -32,7 +32,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   changed; the new code must import, or it goes back to the previous commit; then TeleRig restarts
   and the page reloads onto the new version. Refused while anyone transmits, and on a folder with
   local changes or commits GitHub does not have. Every step is in the security log. A dev install
-  says so in the top bar: the version reads `0.3.0-dev+<commit>`, the commit it runs.
+  says so in the top bar: the version reads `0.4.0-dev+<commit>`, the commit it runs.
 - **Band plan in its own strip** just above the scope, so it no longer covers the bottom of the
   spectrum; it lines up with the scope's frequency axis, and hovering (or tapping) names the segment.
 - **Radio screen theme**, the third step of the theme button (night, day, radio screen): the same
