@@ -9,6 +9,8 @@
  *  V2. The graph: RX bus -> VOL -> limiter -> speakers. The tools' tap (RadioAudio.bus()) is before VOL.
  *  V3. Moving VOL sets the gain at once, shows the dB and is kept by this browser; a kept VOL comes
  *      back on the next load (and is the gain when RX audio starts). Junk kept values are ignored.
+ *      The track's green fill (--p) always matches the thumb, a kept VOL included: every slider's
+ *      first fill is painted before the kept VOL comes back (the slider sits in .sl, as on the page).
  *  P1. RadioAudio.tapPcm (the Recorder's MP3): a tap gets every audio frame's own samples and rate,
  *      before any resampling or VOL; removing it stops it; nothing while RX audio is off; a tap that
  *      throws neither stops the others nor the playback.
@@ -43,7 +45,8 @@ function env(kept) {
     localStorage: kept === undefined ? {} : { "telerig.vol": kept },
     before(e) {
       e.ctx.AudioContext = FakeCtx;
-      const vol = e.el("input", { id: "vol", type: "range", min: "0", max: "100", step: "1", value: "60" });
+      const sl = e.el("label", { class: "sl" });           // as on the page: app.js paints every .sl slider's fill
+      const vol = e.el("input", { id: "vol", type: "range", min: "0", max: "100", step: "1", value: "60" }, sl);
       vol.value = "60";                                     // the markup's default (attribute -> property)
       e.el("b", { id: "volVal", class: "sl-val" }).textContent = "0 dB";
       e.el("button", { id: "audioBtn" });
@@ -56,6 +59,7 @@ function env(kept) {
   e.rxOn = () => e.doc.getElementById("audioBtn").onclick();
   e.move = (v) => { e.vol.value = String(v); e.vol.oninput({ target: e.vol }); };
   e.kept = () => e.ctx.localStorage.getItem("telerig.vol");
+  e.fill = () => e.vol.style.getPropertyValue("--p");      // the green part of the track
   // one RX audio frame as the server sends it: 'A', 0, rate (LE), then int16 mono samples
   e.audio = (samples, rate) => {
     const buf = new ArrayBuffer(4 + 2 * samples.length), dv = new DataView(buf);
@@ -69,7 +73,8 @@ function env(kept) {
 // V1 + V2: the default and the graph
 {
   const e = env();
-  eq([e.vol.value, e.label(), e.vol.getAttribute("aria-valuetext")], ["60", "0 dB", "0 dB"], "V1 VOL starts at 0 dB and says so");
+  eq([e.vol.value, e.label(), e.vol.getAttribute("aria-valuetext"), e.fill()], ["60", "0 dB", "0 dB", "60%"],
+     "V1 VOL starts at 0 dB, says so, and the fill reaches the thumb");
   e.rxOn();
   const speakers = e.made.find((n) => n.kind === "speakers");
   const lim = e.made.find((n) => n.kind === "limiter");
@@ -87,20 +92,25 @@ function env(kept) {
                                   [30, Math.pow(10, -18 / 20), "−18 dB"], [0, 0, "off"], [61, Math.pow(10, 0.6 / 20), "+1 dB"]]) {
     e.move(v);
     check(near(volume.gain.value, gain), `V3 VOL ${v}: gain ${gain.toFixed(4)} (got ${volume.gain.value})`);
-    eq([e.label(), e.vol.getAttribute("aria-valuetext"), e.kept()], [label, label, String(v)], `V3 VOL ${v}: readout and kept`);
+    eq([e.label(), e.vol.getAttribute("aria-valuetext"), e.kept(), e.fill()], [label, label, String(v), v + "%"],
+       `V3 VOL ${v}: readout, kept and fill`);
   }
   eq(e.toasts, [], "no warnings along the way");
 }
 // V3: a kept VOL comes back, and is the gain when RX starts
 {
   const e = env("85");
-  eq([e.vol.value, e.label()], ["85", "+15 dB"], "V3 the kept VOL comes back at load");
+  eq([e.vol.value, e.label(), e.fill()], ["85", "+15 dB", "85%"], "V3 the kept VOL comes back at load, its fill with it");
   e.rxOn();
   check(near(e.ctx.RadioAudio.bus().outs[0].gain.value, Math.pow(10, 15 / 20)), "V3 ... and is the gain when RX audio starts");
 }
+{
+  const e = env("0");                                       // kept off: the thumb at the left, and no fill
+  eq([e.vol.value, e.label(), e.fill()], ["0", "off", "0%"], "V3 a kept VOL off comes back off, with no fill");
+}
 for (const junk of ["abc", "150", "-5", ""]) {
   const e = env(junk);
-  eq([e.vol.value, e.label()], ["60", "0 dB"], `V3 a kept ${JSON.stringify(junk)} is ignored`);
+  eq([e.vol.value, e.label(), e.fill()], ["60", "0 dB", "60%"], `V3 a kept ${JSON.stringify(junk)} is ignored`);
 }
 
 // P1: the PCM tap

@@ -139,7 +139,13 @@ class Element extends Node {
   constructor(doc, tag) {
     super(doc);
     this.tagName = String(tag).toUpperCase(); this.nodeType = 1;
-    this._attrs = new Map(); this._listeners = {}; this.style = { setProperty() {}, removeProperty() {} };
+    this._attrs = new Map(); this._listeners = {};
+    const props = new Map();                 // style.setProperty is kept (a slider's --p fill), so tests can read it
+    this.style = {
+      setProperty: (k, v) => { props.set(String(k), String(v)); },
+      getPropertyValue: (k) => (props.has(String(k)) ? props.get(String(k)) : ""),
+      removeProperty: (k) => { const v = props.has(String(k)) ? props.get(String(k)) : ""; props.delete(String(k)); return v; },
+    };
     this.value = ""; this.checked = false; this.inert = false; this.scrollTop = 0; this.scrollHeight = 0; this.tabIndex = 0;
     this._html = "";
     const self = this;

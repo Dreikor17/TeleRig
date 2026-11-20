@@ -208,7 +208,13 @@
   if (levelIn) {
     const v = +ls(KEY_LEVEL);
     if (v >= 10 && v <= 100) levelIn.value = String(v);
-    const show = () => { if (levelVal) levelVal.textContent = levelIn.value + "%"; };
+    // the readout and the track's fill (.sl's --p, as app.js's setFill paints it): app.js paints every
+    // slider's fill before this script restores the kept level, so the fill is set here too
+    const show = () => {
+      if (levelVal) levelVal.textContent = levelIn.value + "%";
+      const lo = +levelIn.min || 0, hi = +levelIn.max || 100;
+      levelIn.style.setProperty("--p", Math.round((levelIn.value - lo) / (hi - lo) * 100) + "%");
+    };
     levelIn.addEventListener("input", () => { ls(KEY_LEVEL, levelIn.value); show(); });
     show();
   }

@@ -22,7 +22,8 @@
  *      keyed; a claim that can't be sent: nothing keyed
  *  S5. never sends for a viewer, with no radio, a radio without PTT, a mode with no audio TX, someone
  *      else on the air, or this tab already transmitting; the controls are locked while sending;
- *      mode, text and level are kept per browser
+ *      mode, text and level are kept per browser; the level's green fill (--p) matches its thumb, a kept
+ *      level included (app.js paints every slider's first fill before this script restores the level)
  */
 "use strict";
 const fs = require("fs");
@@ -106,7 +107,8 @@ function page(opts) {
   e.card = e.el("button", { id: "sstvTxCard", type: "button" }, e.paneTx);
   e.text = e.el("input", { id: "sstvTxText", type: "text" }, e.paneTx);
   e.canvas = e.el("canvas", { id: "sstvTxCanvas", width: "320", height: "256" }, e.paneTx);
-  e.level = e.el("input", { id: "sstvTxLevel", type: "range", min: "10", max: "100" }, e.paneTx); e.level.value = "50";
+  e.level = e.el("input", { id: "sstvTxLevel", type: "range", min: "10", max: "100" }, e.paneTx);
+  Object.assign(e.level, { value: "50", min: "10", max: "100" });     // the markup's attributes, as a browser reflects them
   e.levelVal = e.el("b", { id: "sstvTxLevelVal" }, e.paneTx);
   e.btn = e.el("button", { id: "sstvTxSend", type: "button" }, e.paneTx);
   e.statusEl = e.el("p", { id: "sstvTxStatus" }, e.paneTx);
@@ -178,10 +180,16 @@ function page(opts) {
   eq([e.canvas.width, e.canvas.height], [320, 240], "S1 another mode: the picture at its size");
   eq([e.ctx.localStorage.getItem("telerig.sstv.tx.mode"), e.ctx.localStorage.getItem("telerig.sstv.tx.text")], ["r36", "N0CALL"],
      "S5 mode and text are kept in this browser");
+  const fill = () => e.level.style.getPropertyValue("--p");
+  eq([e.level.value, e.levelVal.textContent, fill()], ["50", "50%", "44%"], "S5 the level starts at 50 %, its fill at the thumb (10..100)");
+  e.level.value = "100"; e.input(e.level);
+  eq([e.levelVal.textContent, fill(), e.ctx.localStorage.getItem("telerig.sstv.tx.level")], ["100%", "100%", "100"],
+     "S5 moving the level: readout, fill and kept");
 }
 {
   const e = page({ localStorage: { "telerig.sstv.tx.mode": "m2", "telerig.sstv.tx.text": "W9XYZ", "telerig.sstv.tx.level": "35" } });
-  eq([e.mode.value, e.text.value, e.level.value, e.levelVal.textContent], ["m2", "W9XYZ", "35", "35%"], "S5 a browser's kept choices come back");
+  eq([e.mode.value, e.text.value, e.level.value, e.levelVal.textContent, e.level.style.getPropertyValue("--p")],
+     ["m2", "W9XYZ", "35", "35%", "28%"], "S5 a browser's kept choices come back, the level's fill at its thumb");
 }
 
 // S2: one picture, start to finish (Robot 36)

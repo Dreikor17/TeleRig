@@ -2362,11 +2362,12 @@
     const d = Math.round(volDb(v));
     return (d > 0 ? "+" : d < 0 ? "−" : "") + Math.abs(d) + " dB";
   }
-  function showVol() {
+  function showVol() {                      // the readout, the spoken value and the track's fill
     const v = $("vol"); if (!v) return;
     const t = volLabel(v.value), out = $("volVal");
     if (out) out.textContent = t;
     v.setAttribute("aria-valuetext", t);
+    setFill(v);                             // restoreVol runs after every slider's first fill (above)
   }
   (function restoreVol() {
     const v = $("vol"); if (!v) return;
