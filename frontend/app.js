@@ -751,6 +751,7 @@
   // how wide the operating band listens (waterfall.js Passband, the scope's band too): an Icom's filter slot
   // from the server (filter_bw), a Yaesu's WIDTH code by mode and NAR; 0 = not known (a Yaesu in AM / FM)
   function passbandHz() {
+    if (!currentRadio) return 0;                 // no profile yet (a state frame can beat /api/radios): not known
     if (window.Passband) return Passband.hz(currentRadio, state) || 0;
     return currentRadio && currentRadio.protocol !== "yaesu" ? state.filter_bw || 0 : 0;
   }
@@ -2895,6 +2896,9 @@
     const init = (st.connected && st.radio) || TR.initialRadio;
     if (init && radios.some(p => p.id === init)) $("radioSel").value = init;
     renderRadio(selectedRadio());
+    // The socket opens first, so a state frame can come in before the profiles: drawn without its radio's
+    // profile (no width, an Icom's names for the lit functions). Draw it again now that they are here.
+    if (state.connected) updateState(state);
     return loadPorts();                            // serial COM options now exist (operators/admins)
   }).then(() => {
     if (state.connected && state.radio && currentRadio && state.radio !== currentRadio.id &&

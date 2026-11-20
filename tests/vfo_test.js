@@ -22,6 +22,11 @@
  *      SWR 1.5 / >3.0, ALC as a share of its zone, COMP dB, Vd V, Id A), its scale under the bar, the bar's
  *      amber / red from its marks; a Yaesu's raw reading; the peak a mark on the bar that holds, then falls
  *      back, with nothing beside the reading that comes and goes; a radio without meters hides the block
+ *  T7. a reload: the page opens its socket before /api/radios answers, so a state frame can come first.
+ *      Drawn then, the VFO shows no width (not the filter_bw an Icom's width is read from: a Yaesu showed
+ *      2.4 kHz whatever its WIDTH), and once the profiles are in it is drawn again with the radio's own:
+ *      a Yaesu's WIDTH and its own function names. Both when the server's hello names the radio and when
+ *      the page starts on another profile.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -80,8 +85,12 @@ async function page(opts) {
   opts = opts || {};
   const sockets = [];
   function FakeWS() { this.readyState = 1; this.sent = []; this.send = (d) => this.sent.push(JSON.parse(d)); this.close = () => {}; sockets.push(this); }
-  const fetch = (url) => Promise.resolve(String(url).split("?")[0] === "/api/radios" ? jsonResponse(200, { radios: PROFILES })
-    : jsonResponse(404, { ok: false, error: "not_found" }));
+  // opts.holdRadios: /api/radios answers only at e.releaseRadios() (a reload where a state frame comes first)
+  let release = null;
+  const radios = () => jsonResponse(200, { radios: PROFILES });
+  const fetch = (url) => (String(url).split("?")[0] === "/api/radios"
+    ? (opts.holdRadios ? new Promise((res) => { release = () => res(radios()); }) : Promise.resolve(radios()))
+    : Promise.resolve(jsonResponse(404, { ok: false, error: "not_found" })));
   const e = makeEnv({ WebSocket: FakeWS, fetch });
   for (const id of ["bandRow", "modeRow", "step", "toasts"]) e.el("div", { id });
   e.el("select", { id: "radioSel" });
@@ -113,8 +122,9 @@ async function page(opts) {
   e.frame = (f) => ws.onmessage({ data: JSON.stringify(f) });
   e.frame({ type: "hello", v: 1, conn: 3, user: "ME", role: opts.role || "operator",
             perms: opts.role === "viewer" ? ["view", "listen"] : ["view", "listen", "operate", "tx"],
-            status: {}, tx: { owner: null }, hb_interval: 2 });
+            status: opts.status || {}, tx: { owner: null }, hb_interval: 2 });
   for (let i = 0; i < 8; i++) await e.flush();
+  e.releaseRadios = () => { if (release) release(); };
   e.$ = (id) => e.doc.getElementById(id);
   e.text = (id) => (e.$(id).textContent || "").trim();
   e.inds = (id) => e.$(id).querySelectorAll(".ind").map((x) => x.textContent);
@@ -277,6 +287,19 @@ async function main() {
     e.state({ radio: "ic728", ptt: false, meter: "S" });
     for (let i = 0; i < 4; i++) await e.flush();
     eq(blk.style.display, "none", "T6 a radio with no meters: no meter");
+  }
+  // T7: a reload, a state frame before the profiles
+  for (const [tag, status] of [["the hello names the FT-991A", { connected: true, radio: "ft991a" }],
+                               ["the page starts on another profile", {}]]) {
+    const e = await page({ holdRadios: true, status });
+    e.state({ radio: "ft991a", mode_name: "CW-USB", narrow: 0, width: 10, filter_bw: 2400, preamp: 1, nr: 1 });
+    for (let i = 0; i < 4; i++) await e.flush();
+    eq(e.text("mainMode"), "CW-USB", "T7 " + tag + ": the frame is drawn before the profiles");
+    eq(e.text("mainBw"), "", "T7 " + tag + ": ... with no width yet (not the 2.4 kHz filter_bw an Icom's is read from)");
+    e.releaseRadios();
+    for (let i = 0; i < 12; i++) await e.flush();
+    eq(e.text("mainBw"), "500 Hz", "T7 " + tag + ": once the profiles are in, the FT-991A's own: its WIDTH in CW (500 Hz)");
+    eq(e.inds("mainInd"), ["AGC-M", "AMP1", "DNR"], "T7 " + tag + ": ... and its own names (AMP1, DNR)");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

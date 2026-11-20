@@ -51,6 +51,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   unlike the FT-991A's (SH0 14;); TeleRig sent the FT-991A's, so the FT-891 kept its width (from the WIDTH
   keys or a spot) and its reading came from the wrong digits. Now each radio gets its own form
   (profile `sh_onoff`), and WIDTH off reads as the mode's default.
+- **The VFO after a reload.** The page opens its socket before it has the radios' profiles, so a state
+  frame could be drawn without one: a Yaesu's width read the Icom way (2.4 kHz whatever its WIDTH) and its
+  lit functions with Icom names (P.AMP, NR for AMP1, DNR), until the radio next changed something. Now no
+  width shows until the profiles are in, and the VFO is drawn again when they are.
 - **The audio scope in CW zooms to the radio's width.** On a radio with no scope over CAT (FT-991A,
   FT-891, IC-728) CW showed the whole 0-3.6 kHz of audio, so a 500 Hz filter was squeezed into a seventh
   of the scope. Now, with a CW filter up to 1.2 kHz (a Yaesu's WIDTH, the IC-728's CW-NAR), the scope
