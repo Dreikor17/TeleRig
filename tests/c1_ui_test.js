@@ -225,6 +225,7 @@ function appEnv() {
   const sockets = [];
   function FakeWS() { this.readyState = 1; this.sent = []; this.send = (d) => this.sent.push(JSON.parse(d)); this.close = () => {}; sockets.push(this); }
   const env = makeEnv({ WebSocket: FakeWS });
+  env.load("waterfall.js");                        // AfMap / Passband, as the page loads it before app.js
   env.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };
   for (const id of ["onAir", "onAirStop", "onAirStopLbl", "onAirWho", "onAirTime", "pttBtn", "txStopFab"]) env.el("div", { id });
   env.doc.getElementById("onAirStopLbl").textContent = "STOP";

@@ -38,6 +38,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   outside closes it; it doesn't open while this tab transmits (it would cover STOP).
 - **Delete from the strip.** Each picture shows a red X in its corner while it is hovered or has the
   keyboard focus (always, on a touch screen); the focus moves to the next picture.
+- **A spot tunes the filter too, and the scope shows it.** A click on a spot also sets the filter for its
+  mode: SSB 2.4 kHz, CW 500 Hz, digital 3 kHz (the whole FT8 / FT4 subband), AM and FM their normal
+  filter. An Icom gets its FIL slot (SSB and CW FIL2, digital FIL1 with the DATA switch on: USB-D), a
+  Yaesu NAR off and the WIDTH (its DATA-USB defaults to 500 Hz), the IC-728 (no filter command) the mode
+  only. Only what isn't set already is sent; a spot whose mode isn't known tunes the frequency only. The
+  band-plan view of a radio with no scope over CAT now shades the passband with its width beside it
+  ("2.4 kHz"); a Yaesu's comes from its WIDTH (it always showed 2.4 kHz), none in AM / FM, which it
+  doesn't report.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

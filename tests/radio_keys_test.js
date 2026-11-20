@@ -40,6 +40,7 @@ function pageEnv(status) {
   const fetch = (url) => (String(url).split("?")[0] === "/api/radios" ? radiosAnswer
     : Promise.resolve(jsonResponse(404, { ok: false, error: "not_found" })));
   const e = makeEnv({ WebSocket: FakeWS, fetch });
+  e.load("waterfall.js");                          // AfMap / Passband, as the page loads it before app.js
   e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };
   for (const id of ["bandRow", "modeRow", "radioSel", "step", "toasts"]) e.el("div", { id });
   e.load("tr.js");

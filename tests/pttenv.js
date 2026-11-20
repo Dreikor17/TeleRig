@@ -25,6 +25,7 @@ function pageEnv(lat, opts) {
   e.ctx.addEventListener = (t, fn) => { (winL[t] = winL[t] || []).push(fn); };
   e.ctx.removeEventListener = (t, fn) => { const l = winL[t]; if (l && l.indexOf(fn) >= 0) l.splice(l.indexOf(fn), 1); };
   e.win = (type, init) => { const ev = new e.Event(type, init); for (const fn of (winL[type] || []).slice()) fn(ev); return ev; };
+  e.load("waterfall.js");                          // AfMap / Passband, as the page loads it before app.js
   e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };
   for (const id of ["onAir", "onAirStop", "onAirStopLbl", "onAirWho", "onAirTime", "txStopFab", "toasts"]) e.el("div", { id });
   e.btn = e.el("button", { id: "pttBtn" });

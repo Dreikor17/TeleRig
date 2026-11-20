@@ -657,7 +657,7 @@
     if (!afTimer) {
       scope.setOpMode(s.mode_name);
       scope.meta.tuned = s.freq;
-      scope.meta.filterBw = s.filter_bw;
+      scope.meta.filterBw = Passband.hz(currentRadio, s);   // a Yaesu: its WIDTH code, not filter_bw
       scope.drawOverlay();
     }
     layoutSummaries();
@@ -883,14 +883,8 @@
   // SH DSP bandwidth per context — [code, Hz]; keyed by mode class then narrow(1)/wide(0).
   // From the FT-991A CAT manual WIDTH table. NAR on => narrow column, NAR off => wide column.
   // lists are sorted ascending by Hz so the -/+ stepper moves narrower/wider monotonically.
-  const SH_VALID = {
-    ssb: { 1: [[1, 200], [2, 400], [3, 600], [4, 850], [5, 1100], [6, 1350], [0, 1500], [7, 1500], [8, 1650], [9, 1800]],
-           0: [[9, 1800], [10, 1950], [11, 2100], [12, 2200], [13, 2300], [0, 2400], [14, 2400], [15, 2500], [16, 2600], [17, 2700], [18, 2800], [19, 2900], [20, 3000], [21, 3200]] },
-    cw:  { 1: [[1, 50], [2, 100], [3, 150], [4, 200], [5, 250], [6, 300], [7, 350], [8, 400], [9, 450], [0, 500], [10, 500]],
-           0: [[10, 500], [11, 800], [12, 1200], [13, 1400], [14, 1700], [15, 2000], [0, 2400], [16, 2400], [17, 3000]] },
-    data:{ 1: [[1, 50], [2, 100], [3, 150], [4, 200], [5, 250], [0, 300], [6, 300], [7, 350], [8, 400], [9, 450], [10, 500]],
-           0: [[0, 500], [10, 500], [11, 800], [12, 1200], [13, 1400], [14, 1700], [15, 2000], [16, 2400], [17, 3000]] },
-  };
+  // One table (waterfall.js Passband.SH): the scope's passband and spots.js read it too.
+  const SH_VALID = Passband.SH;
   function widthClass(m) { return CW_MODES.includes(m) ? "cw" : RTTYDATA_MODES.includes(m) ? "data" : "ssb"; }
   function widthList() { return (SH_VALID[widthClass(state.mode_name)] || {})[(state.narrow || 0) ? 1 : 0] || []; }
   function stepWidth(delta) {

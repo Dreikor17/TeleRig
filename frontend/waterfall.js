@@ -15,7 +15,8 @@
     night: {
       bg: "#020c14", wfBg: "#020c14", grid: "rgba(20,90,130,.45)",
       fillTop: "rgba(60,210,170,.55)", fillBot: "rgba(20,90,120,.10)", trace: "#5ff0c8", hold: "rgba(255,200,120,.55)",
-      pass: "rgba(90,200,255,.16)", passEdge: "rgba(120,220,255,.5)", tune: "#ff9a2e", tuneText: "#ffb15a",
+      pass: "rgba(90,200,255,.16)", passEdge: "rgba(120,220,255,.5)", passText: "rgba(120,220,255,.85)",
+      tune: "#ff9a2e", tuneText: "#ffb15a",
       // Icom-style waterfall colormap: dark navy -> blue -> cyan -> green -> yellow -> red -> white
       lut: [[0.00, [2, 6, 18]], [0.18, [12, 28, 110]], [0.36, [10, 110, 200]], [0.52, [10, 200, 200]],
             [0.66, [40, 210, 90]], [0.80, [240, 220, 40]], [0.92, [240, 90, 30]], [1.00, [255, 245, 230]]],
@@ -23,7 +24,8 @@
     screen: {
       bg: "#000000", wfBg: "#0c1a66", grid: "rgba(70,80,106,.55)",
       fillTop: "rgba(220,228,245,.55)", fillBot: "rgba(140,150,175,.10)", trace: "#ffffff", hold: "rgba(156,203,255,.5)",
-      pass: "rgba(255,255,255,.12)", passEdge: "rgba(255,255,255,.45)", tune: "#3bd16f", tuneText: "#5be38a",
+      pass: "rgba(255,255,255,.12)", passEdge: "rgba(255,255,255,.45)", passText: "rgba(255,255,255,.8)",
+      tune: "#3bd16f", tuneText: "#5be38a",
       // the noise floor sits in blue, as on the radio: deep blue -> blue -> cyan -> green -> yellow -> red
       lut: [[0.00, [12, 26, 102]], [0.20, [29, 53, 181]], [0.38, [40, 110, 230]], [0.52, [22, 180, 232]],
             [0.66, [63, 210, 107]], [0.80, [242, 211, 59]], [0.92, [240, 82, 46]], [1.00, [255, 240, 230]]],
@@ -156,10 +158,11 @@
     }
 
     // No-scope radios (e.g. Yaesu FT-991A CAT): no sweeps, but keep the band-plan
-    // strip + tuned marker + freq labels aligned to the current frequency.
+    // strip + tuned marker + freq labels aligned to the current frequency. `still` marks this view:
+    // its passband (app.js sets filterBw) is a few pixels at this span, so drawOverlay labels its width.
     showStatic(center, span) {
       this.lastData = null; this.maxHold = null;
-      this.meta = { mode: 0, center: center || 0, span: span || 200000, lower: 0, upper: 0, tuned: center || 0, filterBw: 0 };
+      this.meta = { mode: 0, center: center || 0, span: span || 200000, lower: 0, upper: 0, tuned: center || 0, filterBw: 0, still: true };
       this.sctx.fillStyle = this.pal.bg; this.sctx.fillRect(0, 0, this.W, this.specH);
       this.wctx.fillStyle = this.pal.wfBg; this.wctx.fillRect(0, 0, this.W, this.wfH);
       this.drawOverlay();
@@ -307,6 +310,7 @@
       const bw = m.filterBw || 0, tuned = m.tuned || 0;   // explicit 0 (AF scope) -> no marker
       // freqToX centers the view on the tuned freq, so in center mode freqToX(tuned)
       // is always mid-screen and the marker/filter ride the center with zero jitter.
+      let pass = null;                                    // [left x, right x] of the passband drawn
       if (bw > 0 && tuned) {
         let loF, hiF;
         if (this.opMode === "USB" || this.opMode === "DV" || this.opMode === "RTTY-R") { loF = tuned; hiF = tuned + bw; }
@@ -318,6 +322,7 @@
         ctx.strokeStyle = this.pal.passEdge; ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x0, 0); ctx.lineTo(x0, h); ctx.moveTo(x1, 0); ctx.lineTo(x1, h); ctx.stroke();
+        pass = [Math.min(x0, x1), Math.max(x0, x1)];
       }
       // tuned channel marker
       if (tuned) {
@@ -345,6 +350,15 @@
           const dec = fhi - flo <= 10000 ? 5 : 4;                // 10 Hz digits on a narrow view (AF / CW)
           ctx.textAlign = "center"; ctx.fillStyle = this.pal.tuneText;
           ctx.fillText((tuned / 1e6).toFixed(dec) + " MHz", cx, 9);
+        }
+        // the band-plan view: its passband is a few pixels at this span, so it says how wide it is,
+        // under the frequency, beside the band on the band's own side of the marker
+        if (pass && m.still) {
+          const t = global.Passband.label(bw), tw = ctx.measureText(t).width;
+          const left = pass[1] <= this.freqToX(tuned) + 0.5;      // LSB: the band is left of the marker
+          const x = Math.max(2, Math.min(w - 2 - tw, left ? pass[0] - 4 - tw : pass[1] + 4));
+          ctx.textAlign = "left"; ctx.fillStyle = this.pal.passText;
+          ctx.fillText(t, x, 22);
         }
         ctx.textAlign = "left"; ctx.textBaseline = "alphabetic";
       }
@@ -442,6 +456,42 @@
       return { mode: 1, center: lower + span / 2, span, lower, upper: lower + span,
                tuned: marker, filterBw: 0, retune: marker ? dial - marker : 0, lsb };
     },
+  };
+
+  // ---- the RX passband: how wide the radio listens (the overlay's band; app.js, spots.js) ----
+  // An Icom's is its filter slot's width, from the server: state.filter_bw, the profile's FIL1-3 width
+  // for the mode (the IC-728: its one filter per mode). A Yaesu reports a DSP WIDTH code instead (SH
+  // 00-21), whose width depends on the mode and NAR: the WIDTH table of the FT-991A and FT-891 CAT
+  // manuals, [code, Hz] ascending (00 = the mode's default: DATA's is 500 Hz). In AM / FM / C4FM the
+  // Yaesu's filter is fixed and not reported over CAT: 0, unknown. Pure functions (tests/passband_test.js).
+  const SH = {
+    ssb: { 1: [[1, 200], [2, 400], [3, 600], [4, 850], [5, 1100], [6, 1350], [0, 1500], [7, 1500], [8, 1650], [9, 1800]],
+           0: [[9, 1800], [10, 1950], [11, 2100], [12, 2200], [13, 2300], [0, 2400], [14, 2400], [15, 2500], [16, 2600], [17, 2700], [18, 2800], [19, 2900], [20, 3000], [21, 3200]] },
+    cw:  { 1: [[1, 50], [2, 100], [3, 150], [4, 200], [5, 250], [6, 300], [7, 350], [8, 400], [9, 450], [0, 500], [10, 500]],
+           0: [[10, 500], [11, 800], [12, 1200], [13, 1400], [14, 1700], [15, 2000], [0, 2400], [16, 2400], [17, 3000]] },
+    data:{ 1: [[1, 50], [2, 100], [3, 150], [4, 200], [5, 250], [0, 300], [6, 300], [7, 350], [8, 400], [9, 450], [10, 500]],
+           0: [[0, 500], [10, 500], [11, 800], [12, 1200], [13, 1400], [14, 1700], [15, 2000], [16, 2400], [17, 3000]] },
+  };
+  const shClass = (mode) => (["CW-USB", "CW-LSB"].includes(mode) ? "cw"
+    : ["RTTY-LSB", "RTTY-USB", "DATA-LSB", "DATA-USB"].includes(mode) ? "data"
+    : ["LSB", "USB"].includes(mode) ? "ssb" : "");
+  const shList = (mode, narrow) => (SH[shClass(mode)] || {})[narrow ? 1 : 0] || [];
+  global.Passband = {
+    SH,
+    // the WIDTH code for `hz` in this mode and NAR (a numbered code before the 00 default), else -1
+    shCode(mode, narrow, hz) {
+      const codes = shList(mode, narrow).filter((e) => e[1] === hz).map((e) => e[0]);
+      const c = codes.find((x) => x !== 0);
+      return c !== undefined ? c : codes.length ? codes[0] : -1;
+    },
+    // the passband width (Hz) for the profile JSON `radio` in the live state `s`; 0 = not known
+    hz(radio, s) {
+      s = s || {};
+      if (!radio || radio.protocol !== "yaesu") return s.filter_bw || 0;
+      const e = shList(s.mode_name, (s.narrow || 0) > 0).find((x) => x[0] === (s.width || 0));
+      return e ? e[1] : 0;
+    },
+    label(hz) { return hz >= 1000 ? +(hz / 1000).toFixed(2) + " kHz" : Math.round(hz) + " Hz"; },
   };
 
   global.fmtHz = function (hz) {

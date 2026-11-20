@@ -346,19 +346,31 @@ def rx_volume_db_scale_with_headroom_in_node_vm(ctx):
 @test("unit")
 def spots_panel_in_node_vm(ctx):
     """spots.js: asks /api/spots only while the panel is on the grid (not again before 30 s); the list
-    newest first with text kept as text; a click tunes (set_freq, then set_mode in this radio's names:
-    SSB by band, CW / CW-USB, DATA-USB / USB, FM); spots off the radio's bands, or for a viewer, can't be
+    newest first with text kept as text; a click tunes (set_freq, then the mode in this radio's names:
+    SSB by band, CW / CW-USB, DATA-USB / USB with the Icom DATA switch, FM, AM; and the filter for it: an
+    Icom FIL slot, a Yaesu NAR off + WIDTH, nothing on the IC-728; each only when the radio isn't there
+    yet; an unknown mode tunes the frequency only); spots off the radio's bands, or for a viewer, can't be
     clicked; the filters work and are kept; a silent source is named. The real tr.js + spots.js in a
-    Node vm (tests/spots_ui_test.js). Static: no HTML parsing, the only actions sent are set_freq and
-    set_mode."""
-    r = subprocess.run(["node", str(REPO / "tests" / "spots_ui_test.js")], capture_output=True, text=True,
-                       timeout=180, cwd=str(REPO))
-    eq(r.returncode, 0, f"spots_ui_test.js: {r.stdout}{r.stderr}")
-    check("ALL PASS" in r.stdout, f"spots_ui_test.js output: {r.stdout}")
+    Node vm (tests/spots_ui_test.js), on its own profiles and again on the real ones (to_json() of every
+    profile in backend/profiles.py). Static: no HTML parsing, only the tuning actions are sent."""
+    import json
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from backend import profiles
+    real = ctx.tmp("profiles") / "profiles.json"
+    real.write_text(json.dumps({pid: p.to_json() for pid, p in profiles.PROFILES.items()}), encoding="utf-8")
+    for args in ([], ["--profiles", str(real)]):
+        r = subprocess.run(["node", str(REPO / "tests" / "spots_ui_test.js"), *args], capture_output=True, text=True,
+                           timeout=180, cwd=str(REPO))
+        eq(r.returncode, 0, f"spots_ui_test.js {' '.join(args)}: {r.stdout}{r.stderr}")
+        check("ALL PASS" in r.stdout, f"spots_ui_test.js {' '.join(args)} output: {r.stdout}")
     js = _strip_comments(_read("spots.js"))
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function"):
         check(bad not in js, f"spots.js never uses {bad}")
-    eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["set_freq", "set_mode"], "spots.js sends only set_freq / set_mode")
+    eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))),
+       ["data_mode", "narrow", "set_filter", "set_freq", "set_mode", "width"],
+       "spots.js sends only the tuning actions: freq, mode, DATA, filter, NAR, WIDTH")
 
 
 @test("unit")

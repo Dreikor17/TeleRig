@@ -3,12 +3,15 @@
  * never more often than each source allows); this page asks GET /api/spots every POLL_MS while the
  * panel is on the grid and the page is visible, and filters the list itself.
  *
- *   tune: set_freq, then set_mode with the spot's mode in this radio's own names (CW -> CW or CW-USB,
- *   SSB -> USB / LSB by band, digital -> DATA-USB or USB, FM / AM), the same WS actions the
- *   frequency box and the mode keys send, so the server's rules apply (operators, no retune under
- *   someone else's transmission). A spot outside the radio's bands, or seen by a viewer, is shown
- *   but cannot be clicked. The spot clicked stays at the top ("Tuned"), whatever the filters and
- *   after the sources drop it, until the radio is tuned more than 3 kHz away from it.
+ *   tune: set_freq, then the spot's mode in this radio's own names (CW -> CW or CW-USB, SSB -> USB /
+ *   LSB by band, digital -> DATA-USB, or USB with the Icom DATA switch on, FM / AM) and the filter
+ *   for that mode (FILTER below: an Icom FIL slot, a Yaesu NAR off + WIDTH; the IC-728 has no filter
+ *   command, so the mode only, and its CW-NAR stays). Each is sent only when the radio is not there
+ *   already, with the same WS actions the frequency box, the mode / DATA keys and the RX filter keys
+ *   send, so the server's rules apply (operators, no retune under someone else's transmission). A
+ *   spot whose mode is not known tunes the frequency only. A spot outside the radio's bands, or seen
+ *   by a viewer, is shown but cannot be clicked. The spot clicked stays at the top ("Tuned"), whatever
+ *   the filters and after the sources drop it, until the radio is tuned more than 3 kHz away from it.
  *
  * Text from the sources is shown with textContent only. window.SpotsPanel = { summary() } (layout.js).
  */
@@ -62,12 +65,44 @@
       default: return "";
     }
   }
+  // The filter for the spot's mode: [Icom FIL slot, Yaesu WIDTH in Hz with NAR off (0: the mode's
+  // fixed filter, NAR off only)]. The slot widths are the radio's own (IC-9700 / IC-7300 defaults:
+  // SSB FIL2 2.4 kHz, CW FIL2 500 Hz, SSB-D FIL1 3.0 kHz); AM and FM get their normal FIL1 (on FIL2 /
+  // FIL3 an Icom FM transmits narrow). A Yaesu's DATA-USB width defaults to 500 Hz: 3 kHz hears the
+  // whole FT8 / FT4 subband.
+  const FILTER = { SSB: [2, 2400], CW: [2, 500], DIGI: [1, 3000], AM: [1, 0], FM: [1, 0] };
+  // What tunes the spot after set_freq: the mode, the Icom DATA switch and the filter, each only when
+  // the radio is not already there. A mode change re-sends a Yaesu's NAR and WIDTH: the radio keeps its
+  // own per mode, and a code means another width in another mode. Unknown mode: nothing.
+  function settings(p, spot, st) {
+    let mode = radioMode(p, spot);
+    const f = FILTER[spot.mode], PB = window.Passband;
+    if (!p || !mode || !f) return [];
+    // the IC-728's narrow CW is a mode (its optional FL-100 filter): kept when chosen, never chosen here
+    if (mode === "CW" && st.mode_name === "CW-NAR" && p.modes.includes("CW-NAR")) mode = "CW-NAR";
+    const caps = p.capabilities || {}, out = [];
+    const moved = mode !== st.mode_name;
+    if (moved) out.push({ action: "set_mode", mode });
+    if (p.protocol === "yaesu") {
+      const nar = moved || (st.narrow || 0) > 0;
+      if (caps.narrow && nar) out.push({ action: "narrow", on: false });
+      const code = caps.ext_ops && f[1] && PB ? PB.shCode(mode, false, f[1]) : -1;
+      if (code >= 0 && (nar || PB.hz(p, st) !== f[1])) out.push({ action: "width", code });
+    } else if (caps.tab_rx !== false) {                 // Icom FIL1-3 (on the RX tab; the IC-728 has none)
+      const on = (st.data || 0) > 0, digi = spot.mode === "DIGI";
+      // DATA off before the filter (a new mode already turned it off), on after it (on the new slot)
+      if (caps.data_mode && !digi && on && !moved) out.push({ action: "data_mode", on: false });
+      if (st.filter !== f[0]) out.push({ action: "set_filter", filter: f[0] });
+      if (caps.data_mode && digi && (moved || !on)) out.push({ action: "data_mode", on: true });
+    }
+    return out;
+  }
   function tune(spot) {
     const c = ctl(), p = profile();
     if (!c || !canTune() || !bandOf(p, spot.hz)) return;
+    const st = radioState();
     c.send({ action: "set_freq", hz: spot.hz });
-    const m = radioMode(p, spot);
-    if (m && m !== radioState().mode_name) c.send({ action: "set_mode", mode: m });
+    for (const m of settings(p, spot, st)) c.send(m);
     picked = { key: keyOf(spot), spot, hz: spot.hz, at: Date.now() };
     try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
     try { TR.srLive("Tuned to " + spot.call + ", " + fmtFreq(spot.hz)); } catch (_) {}

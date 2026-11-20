@@ -1,16 +1,23 @@
-/* The Spots panel (frontend/spots.js), tested on the REAL tr.js + spots.js in a Node vm on tests/fakedom.js.
- * No browser, no server, no radio: fetch answers /api/spots from the sample below (made-up callsigns),
- * RadioControl / RadioLayout are stubs, and RadioControl.send only records. Run by tests/t_c1.py (unit):
+/* The Spots panel (frontend/spots.js), tested on the REAL tr.js + waterfall.js + spots.js in a Node vm on
+ * tests/fakedom.js. No browser, no server, no radio: fetch answers /api/spots from the sample below
+ * (made-up callsigns), RadioControl / RadioLayout are stubs, and RadioControl.send only records. Run by
+ * tests/t_c1.py (unit), once as below and once on the real profiles (backend/profiles.py to_json()):
  *
- *     node tests/spots_ui_test.js       -> exit 0 and "ALL PASS", or exit 1 naming each failure
+ *     node tests/spots_ui_test.js [--profiles FILE]   -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
  *  P1. asks /api/spots (the chosen sources) only while the panel is on the grid; not again before 30 s
  *  P2. the list: newest first; age, frequency, mode, call, reference + name, source; text stays text
- *  P3. a click tunes: set_freq, then set_mode in this radio's names (SSB by band, CW, digital, FM)
+ *  P3. a click tunes: set_freq, then the mode in this radio's names (SSB by band, CW, digital, FM) and
+ *      the filter for it
  *  P4. a spot outside the radio's bands, or for a viewer, is shown but can't be clicked; the panel says why
  *  P5. the filters (sources, mode, this band) work and this browser keeps them; a silent source is named
+ *  P6. the spot you are on stays at the top
+ *  P7. every radio, every spot mode: the mode, the Icom DATA switch and the filter (an Icom FIL slot, a
+ *      Yaesu NAR off + WIDTH, nothing on the IC-728), each only when the radio isn't there already; a
+ *      spot whose mode is not known tunes the frequency and changes nothing else
  */
 "use strict";
+const fs = require("fs");
 const { makeEnv } = require("./fakedom");
 
 let failures = 0, checks = 0;
@@ -27,11 +34,32 @@ const SPOTS = [
   { src: "dx", call: "W0CALL", hz: 146520000, mode: "FM", ref: "", name: "United States", spotter: "K1CALL", time: at(12), note: "" },
   { src: "dx", call: "VK0CALL", hz: 10368100000, mode: "CW", ref: "", name: "Australia", spotter: "K2CALL", time: at(15), note: "" },
 ];
-const FT991A = { id: "ft991a", name: "FT-991A", modes: ["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "DATA-LSB", "DATA-USB"],
-  bands: [{ name: "80", lo: 3500000, hi: 4000000 }, { name: "40", lo: 7000000, hi: 7300000 }, { name: "20", lo: 14000000, hi: 14350000 },
-          { name: "2", lo: 144000000, hi: 148000000 }] };
-const IC7300 = { id: "ic7300mk2", name: "IC-7300MK2", modes: ["LSB", "USB", "CW", "CW-R", "AM", "FM"],
-  bands: [{ name: "40", lo: 7000000, hi: 7300000 }, { name: "20", lo: 14000000, hi: 14350000 }] };
+// The five radios as /api/radios gives them (backend/profiles.py to_json()), only the fields spots.js
+// reads; t_c1.py runs this file again with --profiles, the real to_json() of every profile.
+const LO = [["160", 1.8, 2.0], ["80", 3.5, 4.0]], YAESU60 = [["60", 5.3305, 5.4035]];
+const HI = [["40", 7.0, 7.3], ["30", 10.1, 10.15], ["20", 14.0, 14.35], ["17", 18.068, 18.168], ["15", 21.0, 21.45],
+            ["12", 24.89, 24.99], ["10", 28.0, 29.7]];
+const bands = (...lists) => [].concat(...lists).map(([name, lo, hi]) => ({ name, lo: Math.round(lo * 1e6), hi: Math.round(hi * 1e6) }));
+const caps = (o) => Object.assign({ narrow: false, ext_ops: false, data_mode: false, tab_rx: true }, o);
+const STUBS = [
+  { id: "ic9700", name: "IC-9700", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-R", "AM", "FM", "RTTY", "DV"],
+    bands: bands([["144", 144, 148], ["430", 430, 450], ["1200", 1240, 1300]]), capabilities: caps({ data_mode: true }) },
+  { id: "ic7300mk2", name: "IC-7300MK2", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-R", "RTTY", "RTTY-R", "AM", "FM"],
+    bands: bands(LO, [["60", 5.3, 5.41]], HI, [["6", 50, 54]]), capabilities: caps({ data_mode: true }) },
+  { id: "ft991a", name: "FT-991A", protocol: "yaesu", modes: ["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",
+      "C4FM", "DATA-LSB", "DATA-USB", "DATA-FM"],
+    bands: bands(LO, YAESU60, HI, [["6", 50, 54], ["2", 144, 148], ["70", 430, 450]]), capabilities: caps({ narrow: true, ext_ops: true }) },
+  { id: "ft891", name: "FT-891", protocol: "yaesu", modes: ["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",
+      "DATA-LSB", "DATA-USB"],
+    bands: bands(LO, YAESU60, HI, [["6", 50, 54]]), capabilities: caps({ narrow: true, ext_ops: true }) },
+  { id: "ic728", name: "IC-728", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-NAR", "AM", "FM"],
+    bands: bands(LO, HI), capabilities: caps({ tab_rx: false }) },
+];
+const PROFILES_ARG = process.argv.indexOf("--profiles");
+const REAL = PROFILES_ARG > 0 ? JSON.parse(fs.readFileSync(process.argv[PROFILES_ARG + 1], "utf8")) : null;
+const RADIOS = REAL ? STUBS.map((s) => REAL[s.id]) : STUBS;
+const R = (id) => RADIOS.find((p) => p.id === id);
+const FT991A = R("ft991a"), IC7300 = R("ic7300mk2");
 
 function page(opts) {
   opts = opts || {};
@@ -50,14 +78,15 @@ function page(opts) {
   e.body = e.el("div", { class: "tile-body tile-spots" });  // the panel's scrolling body
   e.el("div", { id: "spotsList" }, e.body);
   e.load("tr.js");
+  e.load("waterfall.js");                                   // Passband (the Yaesu WIDTH table), as on the page
   const perms = new Set(opts.viewer ? ["view", "listen"] : ["view", "listen", "operate"]);
   e.ctx.TR.can = (p) => perms.has(p);
   e.vis = opts.visible !== false;
   e.ctx.RadioLayout = { visible: (id) => id === "spots" && e.vis };
   e.sent = [];
   const radio = opts.radio || FT991A;
-  e.st = { connected: true, radio: radio.id, freq: 14074000, mode_name: "USB" };
-  e.ctx.RadioControl = { send: (o) => e.sent.push(o), state: () => e.st, radios: () => [FT991A, IC7300] };
+  e.st = { connected: true, radio: radio.id, freq: 14074000, mode_name: "USB", filter: 1, data: 0, narrow: 0, width: 0 };
+  e.ctx.RadioControl = { send: (o) => e.sent.push(o), state: () => e.st, radios: () => RADIOS.slice() };
   e.load("spots.js");
   e.asked = asked;
   e.rows = () => e.doc.getElementById("spotsList").querySelectorAll(".spot");
@@ -102,15 +131,19 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     check(!tag.querySelector("b") && !tag.querySelector("img"), "P2 ... no element is made from it");
     check(/6 spots/.test(e.status()), "P2 the status counts: " + e.status());
     e.click(rows[0]);
-    eq(e.sent, [{ action: "set_freq", hz: 14275000 }], "P3 20 m SSB: the freq; USB already, so no mode change");
+    eq(e.sent, [{ action: "set_freq", hz: 14275000 }], "P3 20 m SSB: the freq; USB at WIDTH 00 (2.4 kHz) already, so nothing else");
     e.sent.length = 0; e.click(rows[3]);
-    eq(e.sent, [{ action: "set_freq", hz: 3850000 }, { action: "set_mode", mode: "LSB" }], "P3 80 m SSB -> LSB");
+    eq(e.sent, [{ action: "set_freq", hz: 3850000 }, { action: "set_mode", mode: "LSB" }, { action: "narrow", on: false },
+                { action: "width", code: 14 }], "P3 80 m SSB -> LSB, NAR off, WIDTH 2.4 kHz");
     e.sent.length = 0; e.click(rows[1]);
-    eq(e.sent, [{ action: "set_freq", hz: 7032500 }, { action: "set_mode", mode: "CW-USB" }], "P3 CW on a Yaesu -> CW-USB");
+    eq(e.sent, [{ action: "set_freq", hz: 7032500 }, { action: "set_mode", mode: "CW-USB" }, { action: "narrow", on: false },
+                { action: "width", code: 10 }], "P3 CW on a Yaesu -> CW-USB, WIDTH 500 Hz");
     e.sent.length = 0; e.click(rows[2]);
-    eq(e.sent, [{ action: "set_freq", hz: 14074000 }, { action: "set_mode", mode: "DATA-USB" }], "P3 digital on a Yaesu -> DATA-USB");
+    eq(e.sent, [{ action: "set_freq", hz: 14074000 }, { action: "set_mode", mode: "DATA-USB" }, { action: "narrow", on: false },
+                { action: "width", code: 17 }], "P3 digital on a Yaesu -> DATA-USB, WIDTH 3 kHz");
     e.sent.length = 0; e.click(rows[4]);
-    eq(e.sent, [{ action: "set_freq", hz: 146520000 }, { action: "set_mode", mode: "FM" }], "P3 2 m FM -> FM");
+    eq(e.sent, [{ action: "set_freq", hz: 146520000 }, { action: "set_mode", mode: "FM" }, { action: "narrow", on: false }],
+       "P3 2 m FM -> FM, NAR off (its fixed filter)");
     // P4: 10 GHz is not on an FT-991A
     check(rows[5].tagName === "DIV" && rows[5].classList.contains("off"), "P4 a spot off the radio's bands is not a button");
     check(/^Not on this radio/.test(rows[5].title), "P4 ... and says why: " + rows[5].title);
@@ -123,15 +156,17 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     e.sent.length = 0; e.click(rows[4]);
     eq(e.sent, [], "P4 a row drawn for the previous radio does not tune off the new radio's bands");
   }
-  // P3 on an Icom: CW is CW, digital is USB
+  // P3 on an Icom: CW is CW on FIL2, digital is USB with the DATA switch on
   {
     const e = page({ radio: IC7300 });
     await settle(e);
     const rows = e.rows();
     e.click(rows[1]);
-    eq(e.sent, [{ action: "set_freq", hz: 7032500 }, { action: "set_mode", mode: "CW" }], "P3 CW on an Icom -> CW");
+    eq(e.sent, [{ action: "set_freq", hz: 7032500 }, { action: "set_mode", mode: "CW" }, { action: "set_filter", filter: 2 }],
+       "P3 CW on an Icom -> CW, FIL2 (500 Hz)");
     e.sent.length = 0; e.click(rows[2]);
-    eq(e.sent, [{ action: "set_freq", hz: 14074000 }], "P3 digital on an Icom -> USB, already set: freq only");
+    eq(e.sent, [{ action: "set_freq", hz: 14074000 }, { action: "data_mode", on: true }],
+       "P3 digital on an Icom -> USB with DATA on (USB FIL1 already: USB-D FIL1, 3 kHz)");
     check(rows[4].tagName === "DIV", "P4 2 m is not on an IC-7300MK2");
   }
   // P4: a viewer
@@ -204,6 +239,66 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const e = page({ answer: { spots: SPOTS.slice(0, 1), sources: { pota: { ok: true }, wwff: { ok: false }, dx: { ok: true } }, now: NOW / 1000 } });
     await settle(e);
     check(/WWFF is not answering/.test(e.status()), "P5 a silent source is named: " + e.status());
+  }
+  // P7: every radio, every spot mode. What one click sends, from the radio state given (BASE: USB on
+  // FIL1, DATA off, NAR off, WIDTH 00).
+  {
+    const F = (hz) => ({ action: "set_freq", hz }), M = (mode) => ({ action: "set_mode", mode });
+    const FIL = (filter) => ({ action: "set_filter", filter }), DATA = (on) => ({ action: "data_mode", on });
+    const NAR = { action: "narrow", on: false }, W = (code) => ({ action: "width", code });
+    const BASE = { mode_name: "USB", filter: 1, data: 0, narrow: 0, width: 0 };
+    async function sends(id, hz, mode, st) {
+      const spot = { src: "dx", call: "K0TEST", hz, mode, ref: "", name: "", spotter: "K1CALL", time: at(1), note: "" };
+      const e = page({ radio: R(id), answer: { spots: [spot], sources: { pota: { ok: true }, wwff: { ok: true }, dx: { ok: true } }, now: NOW / 1000 } });
+      await settle(e);
+      e.st = Object.assign({ connected: true, radio: id, freq: 14074000 }, BASE, st || {});
+      const row = e.rows()[0];
+      check(row && row.tagName === "BUTTON", "P7 " + id + " " + (hz / 1e6) + " MHz is on the radio's bands");
+      e.click(row);
+      return e.sent;
+    }
+    const TABLE = {
+      ic7300mk2: [[14285000, "SSB", [FIL(2)]], [7200000, "SSB", [M("LSB"), FIL(2)]], [14030000, "CW", [M("CW"), FIL(2)]],
+                  [14074000, "DIGI", [DATA(true)]], [3885000, "AM", [M("AM")]], [29600000, "FM", [M("FM")]]],
+      ic9700:    [[144300000, "SSB", [FIL(2)]], [144050000, "CW", [M("CW"), FIL(2)]], [144174000, "DIGI", [DATA(true)]],
+                  [144400000, "AM", [M("AM")]], [146520000, "FM", [M("FM")]]],
+      ft991a:    [[14285000, "SSB", []], [7200000, "SSB", [M("LSB"), NAR, W(14)]], [14030000, "CW", [M("CW-USB"), NAR, W(10)]],
+                  [14074000, "DIGI", [M("DATA-USB"), NAR, W(17)]], [7290000, "AM", [M("AM"), NAR]], [146520000, "FM", [M("FM"), NAR]]],
+      ft891:     [[14285000, "SSB", []], [7200000, "SSB", [M("LSB"), NAR, W(14)]], [14030000, "CW", [M("CW-USB"), NAR, W(10)]],
+                  [14074000, "DIGI", [M("DATA-USB"), NAR, W(17)]], [7290000, "AM", [M("AM"), NAR]], [29600000, "FM", [M("FM"), NAR]]],
+      ic728:     [[14285000, "SSB", []], [7200000, "SSB", [M("LSB")]], [14030000, "CW", [M("CW")]], [14074000, "DIGI", []],
+                  [3885000, "AM", [M("AM")]], [29600000, "FM", [M("FM")]]],
+    };
+    for (const [id, rows] of Object.entries(TABLE)) {
+      for (const [hz, mode, want] of rows) {
+        eq(await sends(id, hz, mode), [F(hz)].concat(want), "P7 " + id + " " + mode + " " + (hz / 1e6) + " MHz from USB FIL1");
+      }
+      // a spot whose mode is not known: the frequency, nothing else, even with DATA / NAR / a WIDTH set
+      const hz = id === "ic9700" ? 145100000 : 14100000;
+      eq(await sends(id, hz, "", { data: 1, narrow: 1, width: 11, filter: 3 }), [F(hz)], "P7 " + id + " unknown mode: the frequency only");
+    }
+    // from other states: only what differs is sent
+    const MOVES = [
+      ["ic7300mk2", 14285000, "SSB", { data: 1 }, [DATA(false), FIL(2)], "USB-D -> SSB: DATA off, then FIL2"],
+      ["ic7300mk2", 14074000, "DIGI", { data: 1 }, [], "USB-D FIL1 -> digital: there already"],
+      ["ic7300mk2", 7074000, "DIGI", { mode_name: "LSB", filter: 2, data: 1 }, [M("USB"), FIL(1), DATA(true)],
+       "LSB-D FIL2 -> digital: USB (DATA goes off with the mode), FIL1, DATA on"],
+      ["ic7300mk2", 7030000, "CW", { mode_name: "CW", filter: 2 }, [], "CW FIL2 -> CW: there already"],
+      ["ic7300mk2", 29600000, "FM", { mode_name: "FM", filter: 2 }, [FIL(1)], "FM on FIL2 (narrow) -> FM: FIL1"],
+      ["ic7300mk2", 14285000, "SSB", { filter: 2 }, [], "USB FIL2 -> SSB: there already"],
+      ["ic9700", 144300000, "SSB", { data: 1, filter: 3 }, [DATA(false), FIL(2)], "IC-9700 USB-D FIL3 -> SSB"],
+      ["ic728", 14030000, "CW", { mode_name: "CW-NAR" }, [], "IC-728 in CW-NAR -> CW: stays narrow (its optional filter, never chosen for a spot)"],
+      ["ic728", 14285000, "SSB", { mode_name: "CW-NAR" }, [M("USB")], "IC-728 CW-NAR -> SSB: USB (no filter command; the mode only)"],
+      ["ft991a", 14285000, "SSB", { narrow: 1 }, [NAR, W(14)], "NAR on -> SSB: NAR off, WIDTH 2.4 kHz"],
+      ["ft991a", 14285000, "SSB", { width: 11 }, [W(14)], "WIDTH 2.1 kHz -> SSB: WIDTH 2.4 kHz"],
+      ["ft991a", 14285000, "SSB", { width: 14 }, [], "WIDTH 2.4 kHz -> SSB: there already"],
+      ["ft991a", 14074000, "DIGI", { mode_name: "DATA-USB" }, [W(17)], "DATA-USB at its 500 Hz default -> digital: WIDTH 3 kHz"],
+      ["ft991a", 14074000, "DIGI", { mode_name: "DATA-USB", width: 17 }, [], "DATA-USB at 3 kHz -> digital: there already"],
+      ["ft991a", 14030000, "CW", { mode_name: "CW-USB", narrow: 1 }, [NAR, W(10)], "CW NAR on -> CW: NAR off, WIDTH 500 Hz"],
+      ["ft991a", 146520000, "FM", { mode_name: "FM-N" }, [M("FM"), NAR], "FM-N -> FM: FM, NAR off"],
+      ["ft891", 14074000, "DIGI", { mode_name: "DATA-USB", narrow: 1, width: 5 }, [NAR, W(17)], "FT-891 DATA-USB NAR -> digital"],
+    ];
+    for (const [id, hz, mode, st, want, what] of MOVES) eq(await sends(id, hz, mode, st), [F(hz)].concat(want), "P7 " + id + " " + what);
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

@@ -44,6 +44,28 @@ def af_scope_wiring_in_app_js(ctx):
 
 
 @test("unit")
+def static_view_passband_in_node_vm(ctx):
+    """The RX passband on the scope (tests/passband_test.js): waterfall.js Passband (a Yaesu's width from
+    its WIDTH code by mode and NAR, the CAT manuals' table; an Icom's filter_bw; AM / FM unknown), the
+    static band-plan view of a radio with no scope drawing it on its sideband with its width beside it
+    (never on a sweep or the audio scope), and app.js handing the scope that width on every state frame;
+    one WIDTH table for the scope, the WIDTH keys and spots.js."""
+    r = subprocess.run(["node", str(REPO / "tests" / "passband_test.js")], capture_output=True, text=True,
+                       timeout=120, cwd=str(REPO))
+    eq(r.returncode, 0, f"passband_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"passband_test.js output: {r.stdout}")
+    app = (FRONT / "app.js").read_text(encoding="utf-8")
+    check("scope.meta.filterBw = Passband.hz(currentRadio, s);" in app, "app.js gives the scope Passband's width")
+    check("scope.meta.filterBw = s.filter_bw;" not in app, "... not filter_bw (never updated on a Yaesu)")
+    check("const SH_VALID = Passband.SH;" in app and "[17, 3000]" not in app, "app.js's WIDTH keys read the one table")
+    wf = (FRONT / "waterfall.js").read_text(encoding="utf-8")
+    m = re.search(r"showStatic\(center, span\) \{(.*?)\n    \}\n", wf, re.S)
+    check(m and "still: true" in m.group(1), "showStatic marks the band-plan view")
+    spots = (FRONT / "spots.js").read_text(encoding="utf-8")
+    check("window.Passband" in spots and ".shCode(" in spots and "[17, 3000]" not in spots, "spots.js reads the same table")
+
+
+@test("unit")
 def page_themes_night_day_radio_screen(ctx):
     """The theme button steps night -> day -> radio screen (tr.js), and the scope's own colours follow
     (waterfall.js Scope.setTheme; night and day unchanged), in a Node vm (tests/theme_test.js); app.js
