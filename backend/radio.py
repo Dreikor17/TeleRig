@@ -11,6 +11,7 @@ numbers, power behaviour) come from a RadioProfile (see profiles.py).
 from __future__ import annotations
 
 import json
+import math
 import threading
 import time
 from typing import Callable, Optional
@@ -29,6 +30,7 @@ except Exception:
 
 MOD_LAN = 0x05                 # CI-V value selecting the LAN modulation source (all models)
 PTT_TIMEOUT = 120              # PTT failsafe: auto-unkey after this many seconds keyed
+TOT_MARGIN = 3                 # one keying (an SSTV picture) ends at least this long before the radio's own TOT
 
 # CI-V 0x14 level sub-command -> state key
 LEVEL_KEYS = {0x01: "af", 0x02: "rf", 0x03: "sql", 0x0A: "rfpwr",
@@ -108,6 +110,26 @@ def cw_elements(text: str, wpm: int) -> list:
     return seq
 
 
+def ptt_hold_max(profile) -> int:
+    """The longest one keying may be held, in seconds: TOT_MARGIN inside the radio's own TX time-out
+    (`tot_s`, set on connect: the backstop if the control link fails), never less than PTT_TIMEOUT. Only
+    one SSTV picture is held longer than PTT_TIMEOUT (backend/sstv.py). A radio with no known hardware
+    time-out: PTT_TIMEOUT."""
+    tot = getattr(profile, "tot_s", 0)
+    if isinstance(tot, bool) or not isinstance(tot, int) or tot <= 0:
+        return PTT_TIMEOUT
+    return max(PTT_TIMEOUT, tot - TOT_MARGIN)
+
+
+def ptt_hold_s(profile, hold=None) -> float:
+    """The failsafe time of one keying: `hold` (the TX arbiter's limit for one SSTV picture) when it is a
+    sane positive number, never more than ptt_hold_max(profile); PTT_TIMEOUT for anything else (a voice
+    over, a WSJT-X program). Fails safe to PTT_TIMEOUT."""
+    if isinstance(hold, (int, float)) and not isinstance(hold, bool) and math.isfinite(hold) and hold > 0:
+        return float(min(hold, ptt_hold_max(profile)))
+    return float(PTT_TIMEOUT)
+
+
 def smeter_label(level: int) -> str:
     if level <= 120:
         s = round(level * 9 / 120)
@@ -139,7 +161,7 @@ def fresh_state(p) -> dict:
         "smeter": 0,
         "smeter_s": "S0",
         "af": 128, "rf": 200, "sql": 0, "rfpwr": 0,
-        "ptt": False, "ptt_tot": PTT_TIMEOUT,
+        "ptt": False, "ptt_tot": PTT_TIMEOUT, "ptt_hold_max": ptt_hold_max(p),
         "audio": False,
         "dual_watch": p.dual_watch,
         "active_band": "main",
@@ -432,6 +454,7 @@ class Radio:
         self.state["transport"] = None
         self.state["audio"] = False
         self.state["ptt"] = False
+        self.state["ptt_tot"] = PTT_TIMEOUT
         self.state["cw_tx"] = False
         self.state["cw_tx_ready"] = False
         self._emit_state()
@@ -972,13 +995,20 @@ class Radio:
         self._write(self._b(0x27, 0x14, bytes([0x00, 0x00 if center else 0x01])))
         self._emit_state()
 
-    def set_ptt(self, tx: bool) -> None:
+    def set_ptt(self, tx: bool, hold: Optional[float] = None) -> None:
+        """Key / unkey (only the TX arbiter calls this). Keying arms the stuck-TX failsafe: PTT_TIMEOUT,
+        or `hold` for one SSTV picture (ptt_hold_s: never past this radio's ptt_hold_max, inside its
+        own TOT), shown to the page as state["ptt_tot"] (its countdown and client failsafe)."""
         tx = bool(tx)
         self.state["ptt"] = tx
         if tx:
-            self._ptt_deadline = time.monotonic() + PTT_TIMEOUT
-        elif not self.state.get("vox"):
-            self._ptt_deadline = None                     # keep armed while VOX is still active
+            secs = ptt_hold_s(self.profile, hold)
+            self._ptt_deadline = time.monotonic() + secs
+            self.state["ptt_tot"] = int(secs)
+        else:
+            self.state["ptt_tot"] = PTT_TIMEOUT
+            if not self.state.get("vox"):
+                self._ptt_deadline = None                 # keep armed while VOX is still active
         self._write(self._b(0x1C, 0x00, bytes([1 if tx else 0])))
         self._emit_state()
 

@@ -12,7 +12,8 @@ wrong width makes the radio silently ignore the command, which is why the level
 sliders, power and DSP toggles did nothing before).
 
 TX SAFETY (same as the Icom path): PTT is operator-driven from the UI (TX1;/TX0;)
-and bound by a stuck-TX failsafe — auto-unkey after PTT_TIMEOUT, on disconnect, and
+and bound by a stuck-TX failsafe — auto-unkey after PTT_TIMEOUT (one SSTV picture: its
+own limit, inside the radio's 3-minute TOT), on disconnect, and
 on any client drop while keyed. VOX is never armed over CAT (it can auto-key off mic
 audio with no explicit PTT). The TX; poll keeps the keyed state in sync.
 """
@@ -25,7 +26,7 @@ from typing import Optional
 
 from . import civ, menu_engine, profiles
 from .radio import (CW_YAESU_CHARS, PTT_TIMEOUT, cw_duration, cw_elements,
-                    fresh_state, smeter_label)
+                    fresh_state, ptt_hold_s, smeter_label)
 from .transport import CwKeyPort, find_sibling_port
 
 # Windows quantises time.sleep to ~15 ms unless the multimedia timer resolution is
@@ -222,6 +223,7 @@ class YaesuRadio:
         self._ptt_deadline = None
         self._cw_deadline = None
         self.state["ptt"] = False
+        self.state["ptt_tot"] = PTT_TIMEOUT
         self.state["cw_tx"] = False
         self.state["cw_tx_ready"] = False
         if self.state.get("connected"):
@@ -770,13 +772,17 @@ class YaesuRadio:
             return
         self._send("UP;" if int(direction) > 0 else "DN;")
 
-    def set_ptt(self, tx: bool) -> None:
+    def set_ptt(self, tx: bool, hold: Optional[float] = None) -> None:
         # Operator-driven from the UI (same as the Icom set_ptt). TX1; keys, TX0;
         # unkeys, bound by the stuck-TX failsafe (auto-unkey in _poll, on disconnect,
-        # and on client drop). The TX; poll keeps state["ptt"] in sync with the radio.
+        # and on client drop): PTT_TIMEOUT, or `hold` for one SSTV picture (ptt_hold_s:
+        # never past this radio's ptt_hold_max, inside its own TOT), shown as ptt_tot.
+        # The TX; poll keeps state["ptt"] in sync with the radio.
         tx = bool(tx)
         self.state["ptt"] = tx
-        self._ptt_deadline = (time.monotonic() + PTT_TIMEOUT) if tx else None
+        secs = ptt_hold_s(self.profile, hold) if tx else 0.0
+        self._ptt_deadline = (time.monotonic() + secs) if tx else None
+        self.state["ptt_tot"] = int(secs) if tx else PTT_TIMEOUT
         self._send("TX1;" if tx else "TX0;")
         self._emit_state()
 

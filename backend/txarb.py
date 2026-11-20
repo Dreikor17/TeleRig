@@ -20,6 +20,12 @@ Rules (see the table in §2.13):
     tune claims have caps (I18). A cap ends ITS claim only (ptt and vox stay on the session
     clock): CW still sending at its cap is stopped, and the tune claim (tuning is not observable)
     simply ends there. The session ends at a cap only when nothing else is held.
+  * One SSTV picture (a ptt claim that names its mode, args {"sstv": id}, from the page's Send
+    tab) starts a session with its own limit instead of SESSION_MAX: its time on the air + 5 s
+    (backend/sstv.py), at most the radio's ptt_hold_max (3 s inside its 3-minute hardware TOT).
+    The handler's failsafe gets the same hold (set_ptt(True, hold=...)), clamped again by the
+    handler itself. A picture that doesn't fit the radio starts nothing (`failed`); a picture claim
+    added to a session already under way is a plain ptt claim on that session's clock.
   * The owner's socket closing or being kicked (the server's kick hook; the watchdog checks it
     too), or 6 s without tx_hb from the owner, releases (I5, I7). A kicked connection's tx_hb is
     ignored. A connection may carry its own limit in `hb_timeout` (a bridge client: every command
@@ -44,7 +50,8 @@ import inspect
 import time
 from typing import Any, Callable, Optional
 
-from .radio import PTT_TIMEOUT, cw_duration
+from . import sstv
+from .radio import PTT_TIMEOUT, cw_duration, ptt_hold_max
 
 EXTERNAL = -1
 FRONT_PANEL = "FRONT PANEL"
@@ -95,6 +102,7 @@ class TxArbiter:
         self.ever: set = set()                    # claims held at any time in this session
         self.session_start = 0.0
         self.session_wall = 0.0
+        self.session_max = SESSION_MAX            # this session's limit (one SSTV picture: its own)
         self.claim_start: dict = {}
         self.claim_cap: dict = {}
         self.key_grace_until = 0.0
@@ -174,10 +182,31 @@ class TxArbiter:
             wpm = max(6, min(48, wpm))
         return min(CW_CAP_MAX, cw_duration(msg, wpm) + CW_CAP_EXTRA)
 
-    def _start_primitive(self, k: str, args: Optional[dict]) -> None:
+    def _hold_max(self) -> float:
+        """The radio's longest keying (radio.ptt_hold_max); SESSION_MAX when it can't be read."""
+        try:
+            return float(ptt_hold_max(getattr(self.radio(), "profile", None)))
+        except Exception:
+            return SESSION_MAX
+
+    def _ptt_hold(self, args: Optional[dict]) -> Optional[float]:
+        """One SSTV picture's TX limit (args {"sstv": mode id}): sstv.cap_s against the radio's
+        ptt_hold_max. None for a plain ptt claim, or a picture that doesn't fit the radio."""
+        mode = (args or {}).get("sstv")
+        if mode is None:
+            return None
+        try:
+            return sstv.cap_s(mode, self._hold_max())
+        except Exception:
+            return None
+
+    def _start_primitive(self, k: str, args: Optional[dict], hold: Optional[float] = None) -> None:
         r = self.radio()
         if k == "ptt":
-            r.set_ptt(True)
+            if hold is None:
+                r.set_ptt(True)
+            else:
+                r.set_ptt(True, hold=hold)
         elif k == "cw":
             r.send_cw(str(args["text"]), int(args["wpm"]))
         elif k == "vox":
@@ -219,20 +248,29 @@ class TxArbiter:
         now = self.clock()
         req = {"conn": conn.id, "seq": seq} if seq is not None else None
         if self.owner is None:
+            hold = self._ptt_hold(args) if k == "ptt" else None
+            if k == "ptt" and (args or {}).get("sstv") is not None and hold is None:
+                # A picture this radio can't stay keyed for to its end starts nothing (the policy
+                # refuses it first; this is the arbiter's own check).
+                self.send_to(conn, {"type": "error", "code": "tx_failed",
+                                    "message": "this SSTV mode is longer than the radio's TX limit"})
+                self._bcast(req)
+                return "failed"
             st = self._state()
             self.owner, self.owner_conn, self.owner_user = conn.id, conn, conn.user
             self.claims, self.ever = {k}, {k}
             self.session_start = self.claim_start[k] = now
             self.session_wall = time.time()
+            self.session_max = hold if hold is not None else SESSION_MAX
             self._set_cap(k, now, args)
             self.absent_since = {}
             self.ext_pending_since = self.ext_false_since = None
             conn.last_hb = now
             self.tx_session = {"user": conn.user, "conn": conn.id, "ip": getattr(conn, "ip", None),
-                               "kind": k, "radio": st.get("radio"), "freq": st.get("freq"),
-                               "mode": st.get("mode_name")}
+                               "kind": "sstv" if hold is not None else k, "radio": st.get("radio"),
+                               "freq": st.get("freq"), "mode": st.get("mode_name")}
             try:
-                self._start_primitive(k, args)
+                self._start_primitive(k, args, hold)
             except Exception as e:
                 self.log(f"TeleRig: TX start ({k}) failed: {e!r}")
                 self._reset_owner()
@@ -410,6 +448,7 @@ class TxArbiter:
         self.owner_user = None
         self.claims = set()
         self.ever = set()
+        self.session_max = SESSION_MAX
         self.claim_start = {}
         self.claim_cap = {}
         self.absent_since = {}
@@ -432,6 +471,7 @@ class TxArbiter:
                     claims=sorted(self.ever))
         self.last_session = {"conn": self.owner_conn if self.owner != EXTERNAL else None,
                              "claims": set(self.ever), "start": self.session_start,
+                             "session_max": self.session_max,
                              "start_wall": self.session_wall, "ended_at": now, "reason": reason,
                              "radio_ended": set(radio_ended or ()),
                              "tx_session": dict(self.tx_session or {})}
@@ -498,8 +538,9 @@ class TxArbiter:
             # Backstop for the kick hook: the owner's socket was kicked or is gone (I5, I7).
             self.force_release("disconnect")
             return
-        if (self.claims & {"ptt", "vox"}) and now >= self.session_start + SESSION_MAX:
-            self.force_release("timeout")
+        if (self.claims & {"ptt", "vox"}) and now >= self.session_start + self.session_max:
+            picture = (self.tx_session or {}).get("kind") == "sstv"
+            self.force_release("timeout", claim="sstv" if picture else None)   # tx_revoked names the limit
             return
         expired = [k for k in ("cw", "tune")
                    if k in self.claims and now >= self.claim_cap.get(k, float("inf"))]
@@ -569,6 +610,7 @@ class TxArbiter:
             self.owner, self.owner_conn, self.owner_user = c.id, c, c.user
             self.claims, self.ever = {"ptt"}, set(ls.get("claims") or ()) | {"ptt"}
             self.session_start = ls["start"]                 # the session clock continues
+            self.session_max = min(self._hold_max(), float(ls.get("session_max") or SESSION_MAX))
             self.session_wall = ls.get("start_wall", time.time())
             self.claim_start = {"ptt": now}
             self.claim_cap = {}
@@ -583,6 +625,7 @@ class TxArbiter:
         self.owner, self.owner_conn, self.owner_user = EXTERNAL, None, FRONT_PANEL
         self.claims, self.ever = {"ptt"}, {"ptt"}
         self.session_start = now
+        self.session_max = SESSION_MAX
         self.session_wall = time.time()
         self.claim_start, self.claim_cap, self.absent_since = {"ptt": now}, {}, {}
         self.ext_pending_since = self.ext_false_since = None

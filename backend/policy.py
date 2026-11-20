@@ -44,6 +44,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
+from . import sstv
+
 ROLES = ("viewer", "operator", "admin")
 ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
 
@@ -233,7 +235,13 @@ def _v_rx_func(cmd, ctx):
 
 
 def _v_ptt(cmd, ctx):
-    return _flags(cmd, {"tx": _b(cmd, "tx")}, auto=True, seq=True)
+    out = {"tx": _b(cmd, "tx")}
+    if "sstv" in cmd:            # one SSTV picture (frontend/sstv-tx.js): keyed for its own length
+        v = cmd["sstv"]
+        if out["tx"] is not True or type(v) is not str or v not in sstv.ON_AIR_S:
+            raise Invalid("sstv")
+        out["sstv"] = v
+    return _flags(cmd, out, auto=True, seq=True)
 
 
 def _v_cw_tx(cmd, ctx):
@@ -457,6 +465,10 @@ def _k_checks(action: str, claim: str, conn, cmd: dict, ctx) -> Optional[Verdict
     if claim == "ptt":
         if not getattr(caps, "ptt", False):
             return deny(action, "unsupported", **_seq_extra(conn, cmd))
+        if "sstv" in cmd:        # a picture longer than this radio may stay keyed (its TOT)
+            from .radio import ptt_hold_max
+            if not sstv.fits(cmd["sstv"], ptt_hold_max(prof)):
+                return deny(action, "unsupported", **_seq_extra(conn, cmd))
     elif claim == "tune":
         if not getattr(caps, "tuner", False):
             return deny(action, "unsupported", **_seq_extra(conn, cmd))
@@ -487,7 +499,12 @@ def _lock_k(action: str, claim: str, conn, cmd: dict, ctx) -> Verdict:
         bad = _k_checks(action, claim, conn, cmd, ctx)
         if bad is not None:
             return bad
-    args = {"text": cmd["text"], "wpm": cmd["wpm"]} if claim == "cw" else None
+    if claim == "cw":
+        args = {"text": cmd["text"], "wpm": cmd["wpm"]}
+    elif claim == "ptt" and "sstv" in cmd:
+        args = {"sstv": cmd["sstv"]}
+    else:
+        args = None
     return Verdict("claim", action, cmd=cmd, extra={"claim": claim, "args": args, "seq": cmd.get("seq")})
 
 

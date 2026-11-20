@@ -8,6 +8,7 @@ roles (I11, F23), strict argument types and canonical commands (I20, T60), the l
 validation and F20 helpers (T70, AR-33, AR-61), plus the TX-safety menu flags and the radios'
 menu_item() accessors.
 """
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -198,6 +199,32 @@ C("cw_tx wpm 61 -> invalid", ev(OP, {"action": "cw_tx", "text": "CQ", "wpm": 61}
 C("cw_tx 161 chars -> invalid", ev(OP, {"action": "cw_tx", "text": "E" * 161, "wpm": 20}, ctx(radio=cwr)).reason, "invalid")
 C("FT-991A cw: Yaesu filter (lower case is upper-cased, not dropped)",
   ev(OP, {"action": "cw_tx", "text": "cq", "wpm": 20}, ctx(radio=FakeRadio("ft991a", mode_name="CW-USB", cw_tx_ready=True))).kind, "claim")
+# one SSTV picture: the claim names its mode; only a mode that ends inside the radio's own TOT is let through
+sv = lambda v: (v.kind, v.extra.get("claim"), v.extra.get("args"), v.extra.get("seq"), v.reason)   # noqa: E731
+C("K: ptt + sstv pd160 on the IC-9700 (3-min TOT) -> claim ptt with args {sstv}",
+  sv(ev(OP, {"action": "ptt", "tx": True, "sstv": "pd160", "seq": 4})), ("claim", "ptt", {"sstv": "pd160"}, 4, None))
+C("K: ... the canonical command keeps the mode", ev(OP, {"action": "ptt", "tx": True, "sstv": "r36"}).cmd,
+  {"action": "ptt", "tx": True, "sstv": "r36"})
+C("K: ptt + sstv pd160 on the FT-991A -> claim", ev(OP, {"action": "ptt", "tx": True, "sstv": "pd160"}, ctx(radio=FakeRadio("ft991a"))).kind,
+  "claim")
+C("K: a plain ptt claim carries no args", ev(OP, {"action": "ptt", "tx": True}).extra.get("args"), None)
+for mid in ("pd180", "pd240", "pd290", "sdx"):
+    C(f"K: ptt + sstv {mid} (longer than the 3-min TOT allows) -> unsupported, seq echoed",
+      (lambda v: (v.kind, v.reason, v.extra.get("req")))(ev(OP, {"action": "ptt", "tx": True, "sstv": mid, "seq": 9})),
+      ("deny", "unsupported", {"conn": 1, "seq": 9}))
+notot = FakeRadio("ic9700")
+notot.profile = dataclasses.replace(profiles.PROFILES["ic9700"], tot_s=0)     # a radio with no hardware TOT
+C("K: no TOT on the radio: Martin M1 (1:57) still fits 120 s", ev(OP, {"action": "ptt", "tx": True, "sstv": "m1"}, ctx(radio=notot)).kind,
+  "claim")
+C("K: no TOT on the radio: PD-120 (2:08) -> unsupported", ev(OP, {"action": "ptt", "tx": True, "sstv": "pd120"}, ctx(radio=notot)).reason,
+  "unsupported")
+for bad in ("pd999", "", "PD160", 160, None, True, ["pd160"], {"m": "pd160"}):
+    C(f"K: ptt + sstv {bad!r} -> invalid", ev(OP, {"action": "ptt", "tx": True, "sstv": bad}).reason, "invalid")
+C("K: sstv on a release (ptt false) -> invalid", ev(OP, {"action": "ptt", "tx": False, "sstv": "r36"}, owned).reason, "invalid")
+C("K: IC-728 picture -> unsupported (no ptt)", ev(OP, {"action": "ptt", "tx": True, "sstv": "r36"}, ctx(radio=FakeRadio("ic728"))).reason,
+  "unsupported")
+C("K: a viewer's picture -> role", ev(V, {"action": "ptt", "tx": True, "sstv": "r36"}).reason, "role")
+C("K: someone else on the air: a picture is busy", ev(OP2, {"action": "ptt", "tx": True, "sstv": "r36"}, owned).kind, "busy")
 
 # ---- S (unkey-style, F18 / I23) ------------------------------------------------------------------------
 C("S: owner ptt false -> release", (lambda v: (v.kind, v.extra.get("claim")))(ev(OP, {"action": "ptt", "tx": False}, owned)), ("release", "ptt"))

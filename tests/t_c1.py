@@ -419,6 +419,39 @@ def sstv_transmit_in_node_vm(ctx):
         check(bad not in js, f"sstv-tx.js never uses {bad}")
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["ptt"], "sstv-tx.js sends no radio action but ptt")
     eq(js.count('action: "ptt", tx: true'), 1, "sstv-tx.js claims ptt in one place only")
+    check('action: "ptt", tx: true, sstv: job.m.id' in js, "sstv-tx.js's claim names the picture's mode")
+
+
+@test("unit")
+def sstv_on_air_times_agree_with_the_server(ctx):
+    """backend/sstv.py's time on the air per mode (the server's TX limit of one picture) is the page's own
+    count (sstv-tx.js onAirSeconds) rounded up to 10 ms, for every mode the page knows; every radio that
+    can key holds one picture at most 177 s (3 s inside its 3-minute TOT); and the page offers exactly
+    the modes the server accepts there."""
+    import json
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from backend import profiles, sstv
+    from backend.radio import ptt_hold_max
+    js = ("const fs=require('fs'),vm=require('vm'),path=require('path');"
+          "const ctx={window:{},Math,Map,Int16Array,Array,Object};vm.createContext(ctx);"
+          "for(const f of ['sstv.js','sstv-tx.js'])vm.runInContext(fs.readFileSync(path.join(@FRONT@,f),'utf8'),ctx);"
+          "const S=ctx.window.SSTV,T=ctx.window.SstvTx;"
+          "console.log(JSON.stringify({all:S.MODES.map(m=>[m.id,T.onAirSeconds(m)]),offered:T.modes().map(m=>m.id)}));"
+          ).replace("@FRONT@", json.dumps(str(FRONT)))
+    r = subprocess.run(["node", "-e", js], capture_output=True, text=True, timeout=120, cwd=str(REPO))
+    eq(r.returncode, 0, f"node: {r.stdout}{r.stderr}")
+    got = json.loads(r.stdout)
+    page = dict(got["all"])
+    eq(sorted(page), sorted(sstv.ON_AIR_S), "backend/sstv.py knows exactly the modes the page knows")
+    for mid, s in got["all"]:
+        py = sstv.ON_AIR_S.get(mid)
+        check(py is not None and -1e-6 <= py - s < 0.01, f"{mid}: the server's {py} s is the page's {s:.4f} s, rounded up")
+    holds = {pid: ptt_hold_max(p) for pid, p in profiles.PROFILES.items() if p.capabilities.ptt}
+    eq(sorted(set(holds.values())), [177], "every radio that can key holds one picture at most 177 s")
+    eq(got["offered"], [mid for mid, _ in got["all"] if sstv.fits(mid, 177)],
+       "the page offers exactly the modes the server accepts at 177 s")
 
 
 @test("unit")

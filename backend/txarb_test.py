@@ -51,8 +51,8 @@ class FakeRadio:
         self.calls = []
         self.cw_works = cw_works
 
-    def set_ptt(self, tx):
-        self.calls.append(("set_ptt", tx))
+    def set_ptt(self, tx, hold=None):
+        self.calls.append(("set_ptt", tx) if hold is None else ("set_ptt", tx, hold))
         self.state["ptt"] = bool(tx)
 
     def send_cw(self, text, wpm):
@@ -622,6 +622,111 @@ a = e.conn(1)
 e.arb.claim(a, "cw", args={"text": "0" * 80, "wpm": 4})
 C("cw cap is at most 300 s", e.arb.claim_cap["cw"] - e.clock.t <= 300.0, True)
 
+
+# -- SSTV: one picture is held for its own length, inside the radio's 3-minute TOT (backend/sstv.py) ----------
+def heartbeat_until(env, conn, t):
+    while env.clock.t < t:
+        env.clock.t = min(t, env.clock.t + 0.5)
+        env.arb.on_tx_hb(conn)
+        env.arb.tick(gap=0.5)
+
+
+e = Env()
+a, b = e.conn(1), e.conn(2)
+t0 = e.clock.t
+C("SSTV: a PD-160 picture from IDLE -> started", e.arb.claim(a, "ptt", args={"sstv": "pd160"}, seq=1), "started")
+C("SSTV ... ONE set_ptt(True) with the picture's hold (2:43 on the air + 5 s)", e.radio.calls, [("set_ptt", True, 162.70 + 5.0)])
+C("SSTV ... the session's limit is the picture's", e.arb.session_max, 162.70 + 5.0)
+C("SSTV ... the audit says it was a picture", [k["kind"] for k in e.evs("tx_start")], ["sstv"])
+C("SSTV ... another connection is busy (I3)", (e.arb.claim(b, "ptt", args={"sstv": "r36"}, seq=1), e.radio.calls[1:]), ("busy", []))
+heartbeat_until(e, a, t0 + 150.0)
+C("SSTV still on the air at 2:30 (past a voice over's 120 s)", (e.arb.owner, sorted(e.arb.claims)), (1, ["ptt"]))
+heartbeat_until(e, a, t0 + 167.5)
+C("SSTV still on the air at 2:47.5", e.arb.owner, 1)
+e.radio.calls.clear()
+heartbeat_until(e, a, t0 + 168.0)
+C("SSTV at its limit (2:47.7): force_release('timeout'), unkeyed", (e.arb.owner, e.evs("tx_end")[-1]["reason"], e.radio.calls),
+  (None, "timeout", [("set_ptt", False)]))
+C("SSTV ... the owner is told it was the picture's limit",
+  [(f["reason"], f.get("claim")) for cid, f in e.sent if f.get("type") == "tx_revoked"], [("timeout", "sstv")])
+C("SSTV ... and the arbiter is back to a voice over's limit", e.arb.session_max, txarb.SESSION_MAX)
+e.clock.t += 10
+e.radio.calls.clear()
+t1 = e.clock.t
+e.arb.claim(a, "ptt", seq=2)
+C("SSTV: a plain ptt claim after it: set_ptt(True), no hold", e.radio.calls, [("set_ptt", True)])
+heartbeat_until(e, a, t1 + 119.5)
+C("SSTV ... a voice over still ends at 120 s", e.arb.owner, 1)
+heartbeat_until(e, a, t1 + 120.0)
+C("SSTV ... (released at 120 s)", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+
+e = Env()
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "ptt", args={"sstv": "r36"})
+C("SSTV: a Robot 36 picture is held only for its own limit (0:38 + 5 s)", (e.radio.calls, e.arb.session_max),
+  ([("set_ptt", True, 37.81 + 5.0)], 37.81 + 5.0))
+heartbeat_until(e, a, t0 + 42.5)
+C("SSTV ... on the air at 0:42.5", e.arb.owner, 1)
+heartbeat_until(e, a, t0 + 43.0)
+C("SSTV ... released at 0:42.8, long before 120 s", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+e.clock.t += 5
+C("SSTV: the owner releasing at the picture's end -> one unkey", (e.arb.claim(a, "ptt", args={"sstv": "r36"}),
+                                                                 e.arb.release(a, "ptt"), e.radio.calls[-1]),
+  ("started", True, ("set_ptt", False)))
+
+for mid in ("pd180", "pd290", "sdx", "pd999", 7):
+    e = Env()
+    a = e.conn(1)
+    r = e.arb.claim(a, "ptt", args={"sstv": mid}, seq=3)
+    C(f"SSTV: a {mid!r} picture (doesn't fit the 3-min TOT / unknown) -> failed, nothing keyed",
+      (r, e.radio.calls, e.arb.owner, [f["code"] for cid, f in e.sent if f.get("type") == "error"], e.bcast[-1].get("req")),
+      ("failed", [], None, ["tx_failed"], {"conn": 1, "seq": 3}))
+
+e = Env(FakeRadio("ft991a"))
+e.radio.profile = __import__("dataclasses").replace(e.radio.profile, tot_s=0)       # a radio with no hardware TOT
+a = e.conn(1)
+e.arb.claim(a, "ptt", args={"sstv": "m1"})
+C("SSTV: no TOT on the radio: Martin M1 is held at most 120 s", (e.radio.calls, e.arb.session_max), ([("set_ptt", True, 120.0)], 120.0))
+e.arb.release(a, "ptt")
+e.clock.t += 5
+C("SSTV: no TOT on the radio: PD-120 starts nothing", e.arb.claim(a, "ptt", args={"sstv": "pd120"}), "failed")
+
+e = Env(FakeRadio("ft991a"))
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "tune")
+e.clock.t += 2
+e.radio.calls.clear()
+C("SSTV: a picture claim added to a session under way -> added, as a plain ptt claim",
+  (e.arb.claim(a, "ptt", args={"sstv": "pd160"}), e.radio.calls, e.arb.session_max), ("added", [("set_ptt", True)], txarb.SESSION_MAX))
+heartbeat_until(e, a, t0 + 120.0)
+C("SSTV ... on that session's 120 s clock", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+
+# a picture the radio's poll misread as unkeyed (reconciliation ended it) and that shows TX again within
+# 5 s is reattached with ITS limit, on the clock from its first start (AR-47)
+e = Env(FakeRadio("ft991a"))
+a = e.conn(1)
+t0 = e.clock.t
+e.arb.claim(a, "ptt", args={"sstv": "pd160"})
+heartbeat_until(e, a, t0 + 60.0)
+e.radio.state["ptt"] = False
+e.arb.on_radio_state({"ptt": False})
+for _ in range(6):
+    e.tick()
+    e.arb.on_tx_hb(a)
+C("SSTV: a misread unkey ends the session (reason radio)", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "radio"))
+e.clock.t = e.arb.last_session["ended_at"] + 2.2
+e.radio.state["ptt"] = True
+e.arb.on_radio_state({"ptt": True})
+e.tick(0.7, 0.7)
+C("SSTV ... TX again within 5 s: reattached, the picture's limit and start kept",
+  (e.arb.owner, e.arb.session_start, e.arb.session_max), (1, t0, 162.70 + 5.0))
+heartbeat_until(e, a, t0 + 167.5)
+C("SSTV ... still on the air at 2:47.5", e.arb.owner, 1)
+heartbeat_until(e, a, t0 + 168.0)
+C("SSTV ... released at the picture's limit", (e.arb.owner, e.evs("tx_end")[-1]["reason"]), (None, "timeout"))
+
 # -- T62: a start primitive that silently did nothing (phantom claim) ------------------------------------
 e = Env(FakeRadio("ic9700", cw_works=False))
 a, b = e.conn(1), e.conn(2)
@@ -716,9 +821,9 @@ class Recording:
     def __getattr__(self, name):
         return getattr(self.r, name)
 
-    def set_ptt(self, tx):
-        self.calls.append(("set_ptt", tx))
-        self.r.set_ptt(tx)
+    def set_ptt(self, tx, hold=None):
+        self.calls.append(("set_ptt", tx) if hold is None else ("set_ptt", tx, hold))
+        self.r.set_ptt(tx, hold=hold)
 
     def set_rx_func(self, name, on):
         self.calls.append(("set_rx_func", name, on))

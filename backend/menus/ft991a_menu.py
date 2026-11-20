@@ -107,7 +107,7 @@ FT991A_MENU = [
     # --- Memory / Scan / TX general ---
     MenuItem(34, "MEM GROUP", "Memory/Scan", kind="enum", digits=1, options=_DISEN),
     MenuItem(35, "QUICK SPLIT FREQ", "Memory/Scan", kind="signed-int", digits=3, min=-20, max=20, unit="kHz"),
-    MenuItem(36, "TX TOT", "General TX", kind="int", digits=2, min=0, max=30, unit="min", critical=True, tx_tot=True, note="0 = OFF; app sets 2 min on connect"),
+    MenuItem(36, "TX TOT", "General TX", kind="int", digits=2, min=0, max=30, unit="min", critical=True, tx_tot=True, note="0 = OFF; app sets 3 min on connect"),
     MenuItem(37, "MIC SCAN", "Memory/Scan", kind="enum", digits=1, options=_DISEN),
     MenuItem(38, "MIC SCAN RESUME", "Memory/Scan", kind="enum", digits=1, options=["PAUSE", "TIME"]),
     MenuItem(39, "REF FREQ ADJ", "General", kind="signed-int", digits=3, min=-25, max=25),

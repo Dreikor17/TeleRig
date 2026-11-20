@@ -4,8 +4,10 @@
  *
  *     node tests/sstv_tx_test.js        -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
- *  E1. the modes offered: only those whose whole transmission (settle, VIS, picture, tail) fits the
- *      117 s on-air limit, each with its time; the longer ones are not offered
+ *  E1. the modes offered: only those whose whole transmission (settle, VIS, picture, tail) ends 3 s
+ *      inside the radios' longest keying (177 s: 3 s inside their 3-minute TOT), so 174 s on the air at
+ *      most, each with its time; the longer ones are not offered; the page's times are the server's
+ *      (backend/sstv.py, checked by tests/t_c1.py)
  *  E2. the encoder, sample for sample, equals the reference encoder (tests/sstv_encode.js, written from
  *      the specifications) for every mode offered; the level scales it and never clips
  *  E3. what it sends decodes (the real decoder, sstv.js): the VIS picks the mode, the picture matches
@@ -50,14 +52,15 @@ for (const f of ["sstv.js", "sstv-tx.js"]) vm.runInContext(fs.readFileSync(path.
 const { MODES, Decoder } = bare.SSTV, TXM = bare.SstvTx;
 {
   const offered = TXM.modes().map((m) => m.id);
-  eq(offered, ["r36", "r72", "m1", "m2", "s1", "s2", "pd50", "pd90"], "E1 the modes offered: the ones that fit 117 s on the air");
+  eq(offered, ["r36", "r72", "m1", "m2", "s1", "s2", "pd50", "pd90", "pd120", "pd160"],
+     "E1 the modes offered: the ones that end 3 s inside the radios' longest keying (174 s on the air)");
   for (const m of MODES) {
     const s = TXM.onAirSeconds(m), want = 0.3 + 0.91 + m.durationS + 0.6;
     check(Math.abs(s - want) < 0.03, `E1 ${m.name}: ${s.toFixed(2)} s on the air (settle + VIS + ${m.durationS.toFixed(1)} s + tail)`);
-    check(offered.includes(m.id) === (s <= 117), `E1 ${m.name} ${offered.includes(m.id) ? "offered" : "not offered"} at ${s.toFixed(1)} s`);
+    check(offered.includes(m.id) === (s <= 174), `E1 ${m.name} ${offered.includes(m.id) ? "offered" : "not offered"} at ${s.toFixed(1)} s`);
   }
-  check(TXM.onAirSeconds(MODES.find((m) => m.id === "m1")) < 117 && TXM.onAirSeconds(MODES.find((m) => m.id === "pd120")) > 120,
-        "E1 Martin M1 (116 s) is the longest offered; PD-120 (128 s) is out");
+  check(TXM.onAirSeconds(MODES.find((m) => m.id === "pd160")) < 174 && TXM.onAirSeconds(MODES.find((m) => m.id === "pd180")) > 177,
+        "E1 PD-160 (2:43) is the longest offered; PD-180 (3:09) is out");
 }
 for (const m of TXM.modes()) {
   const img = imageData(m.width, m.height), out = TXM.encode(m, img, 0.5);
@@ -159,7 +162,7 @@ function page(opts) {
   const e = page();
   const opts = e.mode.querySelectorAll("option").map((o) => o.textContent);
   eq(opts, ["Robot 36 · 0:38", "Robot 72 · 1:14", "Martin M1 · 1:57", "Martin M2 · 1:00", "Scottie S1 · 1:52", "Scottie S2 · 1:13",
-            "PD-50 · 0:52", "PD-90 · 1:32"], "S1 the mode menu: each mode with its time on the air");
+            "PD-50 · 0:52", "PD-90 · 1:32", "PD-120 · 2:08", "PD-160 · 2:43"], "S1 the mode menu: each mode with its time on the air");
   eq(e.mode.value, "s1", "S1 Scottie S1 by default");
   check(e.btn.disabled && /Choose a picture/.test(e.status()), "S1 no picture: Send is off and the panel says what to do: " + e.status());
   e.click(e.tabTx);
@@ -191,7 +194,8 @@ function page(opts) {
   check(/Opening the radio's TX audio/.test(e.status()), "S2 ... and the panel says what it waits for: " + e.status());
   check(e.mode.disabled && e.card.disabled && e.text.disabled && e.level.disabled, "S5 the controls are locked while sending");
   e.adv(300); e.ready();
-  eq(e.claims().map((o) => [o.action, o.tx, o.auto]), [["ptt", true, undefined]], "S2 the server's ready: ONE ptt claim");
+  eq(e.claims().map((o) => [o.action, o.tx, o.auto, o.sstv]), [["ptt", true, undefined, "r36"]],
+     "S2 the server's ready: ONE ptt claim, naming the mode (the server holds it for the picture's length)");
   e.adv(500);
   eq(e.samples(), 0, "S2 no audio before the grant");
   e.grant();
@@ -302,11 +306,38 @@ function page(opts) {
   eq(e.releases().map((x) => x.auto), [undefined], "S2 ... and the picture still ends on time, released once");
 }
 {
-  const e = page({ state: { ptt_tot: 60 } });                         // a radio whose TX limit is shorter
+  const e = page({ state: { ptt_hold_max: 60 } });                    // a radio whose longest keying is shorter
   e.click(e.card);
   check(e.btn.disabled && /longer than the radio's TX limit/.test(e.status()), "S5 a mode longer than the radio's TX limit: Send is off: " + e.status());
   e.setMode("r36");
   check(!e.btn.disabled, "S5 ... a mode inside it can be sent");
+}
+{
+  const e = page();                                                   // no ptt_hold_max: a voice over's 120 s
+  e.click(e.card);
+  e.setMode("m1");
+  check(!e.btn.disabled, "S5 no ptt_hold_max: Martin M1 (1:57) fits 120 s");
+  e.setMode("pd120");
+  check(e.btn.disabled && /longer than the radio's TX limit/.test(e.status()), "S5 ... PD-120 (2:08) doesn't: " + e.status());
+}
+{
+  // PD-160 on a radio with a 3-minute TOT (ptt_hold_max 177), start to finish: the claim names it, the
+  // audio runs the whole 2:43 in real time, ONE release after the tail
+  const e = page({ state: { ptt_hold_max: 177 } });
+  e.click(e.card); e.setMode("pd160");
+  check(!e.btn.disabled, "S5 PD-160 (2:43) fits a radio whose longest keying is 177 s: " + e.status());
+  eq(e.btn.textContent, "Send · 2:43", "S2 PD-160: the button gives its time on the air");
+  e.click(e.btn); e.adv(100); e.ready();
+  eq(e.claims().map((o) => o.sstv), ["pd160"], "S2 PD-160: one claim, naming PD-160");
+  e.grant();
+  const total = Math.round(0.3 * FS) + Math.ceil(e.ctx.SstvTx.onAirSeconds(e.ctx.SSTV.byId("pd160")) * FS - 0.3 * FS - 0.6 * FS) + Math.round(0.6 * FS);
+  e.adv(120000);
+  eq([e.releases().length, e.btn.textContent], [0, "STOP"], "S2 PD-160: still sending at 2:00 (no voice-over limit in the page)");
+  e.adv(42000);
+  eq(e.releases().length, 0, "S2 PD-160: still sending at 2:42");
+  e.adv(1500);
+  eq(e.releases().map((x) => x.auto), [undefined], "S2 PD-160: released once, after its last line and the tail");
+  check(Math.abs(e.samples() - total) <= 1, "S2 PD-160: every sample sent: " + e.samples() + " of " + total);
 }
 {
   const e = page();

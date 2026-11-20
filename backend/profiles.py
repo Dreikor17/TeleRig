@@ -9,11 +9,13 @@ of menu numbers change per model.
 
 >>> ADDING A RADIO? Follow the transmit-safety contract in docs/ADDING-A-RADIO.md.
 Every radio that can key TX MUST have: operator-triggered keying only (NO autonomous
-transmission), the 120 s PTT stuck-TX failsafe in its handler, TOT set on connect, a
+transmission), the 120 s PTT stuck-TX failsafe in its handler (one SSTV picture: its own
+limit, `hold` in set_ptt), a 3-minute TOT set on connect (`tot_s`), a
 bounded + stoppable CW send, unkey + restore on disconnect, RF power read (not forced) on
 connect, and `tx_tot` / `tx_route` (plus `critical`) on its TX time-out and PTT-routing menu
 items. On top, the server's TX arbiter allows one TX owner: the owner's drop unkeys at once,
-a silent owner after 6 s, other clients' drops never; it keeps its own 120 s session clock;
+a silent owner after 6 s, other clients' drops never; it keeps its own 120 s session clock
+(one SSTV picture: its time on the air + 5 s, at most 3 s inside the TOT);
 a front-panel key is never unkeyed by a browser drop -- only on radios that report TX: both
 handlers read TX state (Yaesu CAT `TX;`, Icom CI-V `1C 00`); the IC-728 has no CI-V TX command,
 so its front panel stays invisible. The high-SWR cutoff + warning is required but not
@@ -145,10 +147,13 @@ class RadioProfile:
     has_tuner: bool = False        # internal antenna tuner (in/out toggle) available
     # Safety: hardware TX time-out timer set on connect (backstop if the control link drops
     # mid-transmit). Icom = CI-V 1A 05 (datanum_hi, datanum_lo, value); Yaesu = a CAT EX
-    # string. ~120 s where the radio allows — Icom's coarsest non-OFF step is 3 min, so the
-    # app's 120 s PTT failsafe stays the precise limit there. See docs/ADDING-A-RADIO.md.
+    # string. 3 min, never longer: the 3-minute limit for a remotely commanded station whose
+    # control link fails (47 CFR 97.213(b)); also Icom's shortest non-OFF step. The app's 120 s
+    # PTT failsafe stays the precise limit of a voice over; one SSTV picture may be held up to
+    # 3 s inside the TOT (radio.ptt_hold_max, from `tot_s`). See docs/ADDING-A-RADIO.md.
     tot_civ: tuple = ()            # Icom: (0x00, datanum_lo, value); () = none
     tot_cat: str = ""              # Yaesu: full CAT EX string; "" = none
+    tot_s: int = 0                 # the time-out that command sets, in seconds; 0 = none (no long keying)
     # CW transmit: how this radio sends a typed CW message. Operator-triggered — one
     # bounded message per TX press, fully under the operator's control, and the RIG
     # generates the CW at the keyer speed we set (cleaner than host-timed keying; the
@@ -283,7 +288,7 @@ IC9700 = RadioProfile(
         "DV": {1: 6250, 2: 6250, 3: 6250}, "DD": {1: 130000, 2: 130000, 3: 130000},
     },
     mod_dataoff=(0x01, 0x15), lan_mod_level=(0x01, 0x14),
-    tot_civ=(0x00, 0x41, 0x01),     # TX TOT 0041 = 3 min (no 2-min step; app's 120 s failsafe is the precise limit)
+    tot_civ=(0x00, 0x41, 0x01), tot_s=180,   # TX TOT 0041 = 3 min (the app's 120 s failsafe is a voice over's limit)
     cw_send="civ17",                # CW message TX via CI-V 17 (semi BK-IN keys it)
     default_freq=144_200_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (5000, "5 kHz"),
@@ -334,7 +339,7 @@ IC7300MK2 = RadioProfile(
         "AM": {1: 9000, 2: 6000, 3: 3000}, "FM": {1: 15000, 2: 10000, 3: 7000},
     },
     mod_dataoff=(0x00, 0x84), lan_mod_level=(0x00, 0x83),
-    tot_civ=(0x00, 0x32, 0x01),     # TX TOT 0032 = 3 min (closest to 120 s)
+    tot_civ=(0x00, 0x32, 0x01), tot_s=180,   # TX TOT 0032 = 3 min
     cw_send="civ17",                # CW message TX via CI-V 17 (semi BK-IN keys it)
     default_freq=14_074_000,
     steps=[(1, "1 Hz"), (10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"),
@@ -408,7 +413,7 @@ FT991A = RadioProfile(
         "DATA-FM": {1: 16000, 2: 9000, 3: 9000}, "C4FM": {1: 16000, 2: 16000, 3: 16000},
     },
     mod_dataoff=(0x00, 0x00), lan_mod_level=(0x00, 0x00),
-    tot_cat="EX03602;",             # menu 036 TX TOT = 2 min = 120 s (exact)
+    tot_cat="EX03603;", tot_s=180,  # menu 036 TX TOT = 3 min = 180 s
     # CW TX: host-timed DTR keying on the SECOND (Standard) USB port — the proven method
     # (N1MM/fldigi/cwdaemon). CAT runs on the Enhanced port; on connect the app sets
     # menu 033 CAT RTS=DISABLE + menu 060 PC KEYING=DTR and opens the sibling port DTR-low.
@@ -469,7 +474,7 @@ FT891 = RadioProfile(
         "AM": {1: 9000, 2: 6000, 3: 3000}, "FM": {1: 16000, 2: 9000, 3: 9000},
     },
     mod_dataoff=(0x00, 0x00), lan_mod_level=(0x00, 0x00),
-    tot_cat="EX051402;",            # menu 05-14 TX TOT = 02 min = 120 s (exact backstop)
+    tot_cat="EX051403;", tot_s=180, # menu 05-14 TX TOT = 03 min = 180 s
     pc_keying_off_cat="EX07120;",   # menu 07-12 PC KEYING = OFF on connect (safety default)
     cw_send="",                     # no CAT text-CW yet: FT-891 KY only plays stored KM memories
     # CW: MD3 and MD7 are both plain "CW (CW BFO)" on the FT-891 (CAT manual, MD) — the side is

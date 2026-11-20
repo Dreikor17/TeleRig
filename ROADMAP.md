@@ -69,12 +69,17 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   frequency and UTC time.
 - **SSTV transmit** (the SSTV panel's Send tab, operators only): a picture (chosen, dropped or
   pasted, cropped to fill the mode's frame) or a test card, with a line of text such as your
-  callsign, sent as one operator-triggered transmission on the same rules as PTT: one TX owner, the
-  120 s limit, STOP, and a hidden tab or a dropped connection unkeys. The audio is made in the page
-  before anything is keyed and goes out on the mic's path in real time; the radio is released only
-  after the last line has played out. The modes offered are the ones whose whole transmission fits
-  the 120 s PTT session: Robot 36 / 72, Martin M1 / M2, Scottie S1 / S2, PD-50 and PD-90, each with
-  its time on the air. Never in CW, RTTY, DV or C4FM; a level control for the ALC.
+  callsign, sent as one operator-triggered transmission on the same rules as PTT: one TX owner,
+  STOP, and a hidden tab or a dropped connection unkeys. The audio is made in the page before
+  anything is keyed and goes out on the mic's path in real time; the radio is released only after
+  the last line has played out. Each picture is held for its own length (its time on the air + 5 s,
+  set by the server from the mode, not the page; a voice over keeps its 120 s), and the modes offered
+  are the ones whose whole transmission ends inside the radio's own 3-minute TX time-out: Robot 36 /
+  72, Martin M1 / M2, Scottie S1 / S2, PD-50, PD-90, PD-120 and PD-160, each with its time on the
+  air. Never in CW, RTTY, DV or C4FM; a level control for the ALC.
+- **TX time-out 3 minutes on every radio.** The radio's own TX time-out, set on connect as the
+  backstop if the control link fails, is now 3 minutes on the FT-991A and FT-891 too (it was 2),
+  like the Icoms: the 3-minute limit for a remotely commanded station (47 CFR 97.213(b)).
 - **Icom front-panel TX detection.** The Icom radios now report their own transmit state (CI-V
   `1C 00`, read about 3 times a second), like the Yaesu radios always did: a hand-mic or
   front-panel key is the FRONT PANEL owner, shown to everyone, and nobody can key over it (a
@@ -279,10 +284,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   fixed-window seam (after e04/web-deep-cw-decoder). *Follow-ups:* optional WebGPU backend.
 - **Recorder, next steps** — the TX audio in the recording too, and QSO timestamps / a
   recording log on top of the Recorder panel (Done above).
-- **SSTV transmit, longer modes** — Scottie DX and PD-120 to PD-290 (2 to 5 minutes) don't fit the
-  120 s PTT session or the 2-minute radio time-out TeleRig sets on connect. Sending them needs a
-  deliberate decision: an SSTV claim with its own cap (like CW's) and a longer radio time-out while
-  it runs. Also: replying with a received picture, and decoding a saved recording.
+- **SSTV transmit, next steps** — replying with a received picture, and decoding a saved recording.
+  Scottie DX, PD-180, PD-240 and PD-290 (3:09 to 4:51 on the air) are longer than the 3-minute TX
+  time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig
+  doesn't send them (decided 2026-11-19: keep every transmission inside the 3 minutes).
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. RTTY/FT8
   decode, a tuning/zero-beat aid, memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).

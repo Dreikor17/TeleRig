@@ -269,7 +269,8 @@
       stopped: "Your transmission was stopped" + by + ".",
       heartbeat: "Transmission ended — the link to the server stalled.",
       timeout: m.claim === "cw" ? "CW stopped — the message ran past its time limit."
-                                : "Transmission ended — the 120 s limit was reached.",
+             : m.claim === "sstv" ? "Transmission ended — the picture ran past its time limit."
+                                  : "Transmission ended — the 120 s limit was reached.",
       radio_change: "Transmission ended — the radio was switched" + by + ".",
       radio_disconnect: "Transmission ended — the radio was disconnected" + by + ".",
       admin_switch: "Transmission ended — an admin switched the radio" + by + ".",

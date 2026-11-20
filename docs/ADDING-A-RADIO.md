@@ -24,7 +24,10 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    loop auto‑unkeys past the deadline, the client shows a countdown and unkeys too, and
    **disconnect unkeys**. Mirror `Radio.set_ptt`, the `_poll` failsafe, and the `disconnect`
    unkey. Every `set_ptt(True)` (and an Icom VOX‑on) re‑arms the deadline, so a handler must
-   never see repeated start calls; the TX arbiter (item 3) guarantees that.
+   never see repeated start calls; the TX arbiter (item 3) guarantees that. `set_ptt(True,
+   hold=…)` is one SSTV picture: arm `ptt_hold_s(profile, hold)` instead (the arbiter's limit
+   for that picture, never past `ptt_hold_max(profile)`, 3 s inside the radio's TOT, item 5)
+   and show it in `state.ptt_tot`, back to `PTT_TIMEOUT` on unkey and on disconnect.
 3. **One TX owner, and who is unkeyed when a browser goes away (the server's TX arbiter,
    `backend/txarb.py`).** Every keyed path (PTT, VOX, the CW message, TUNE) is a *claim* by one
    browser connection. At most one connection (or the radio's own front panel) owns TX; anyone
@@ -47,7 +50,10 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
    - **the arbiter's own 120 s session clock:** a session holding `ptt` or `vox` is
      force‑released 120 s after it started (a monotonic clock that a new claim does not restart),
      whatever the radio's deadline says. A CW message is capped at its duration + 5 s (≤ 300 s)
-     and TUNE at 20 s. The handler's failsafe (item 2) stays as a second, independent layer;
+     and TUNE at 20 s. One SSTV picture (a `ptt` claim that names its mode) gets its own session
+     limit, its time on the air + 5 s, at most 3 s inside the radio's TOT (item 5); a mode that
+     doesn't fit the radio is refused. The handler's failsafe (item 2) stays as a second layer,
+     which clamps a picture's hold to its own `ptt_hold_max` again;
    - **only an explicit STOP stops someone else's transmission**: `tx_stop`, from the two‑tap
      STOP in the page or `POST /api/tx_stop`. A non‑owner's `ptt false`, `cw_stop` or VOX‑off
      gets `busy`, so one stray tap can't cut another operator off;
@@ -67,11 +73,14 @@ or explicitly marked N/A with a reason. When in doubt, **fail safe** (don't tran
 4. **Auto‑keying paths bound to the same failsafe.** Any mode that can key TX off audio
    (VOX) arms the same deadline, is a `vox` claim in the arbiter, and is dropped on
    disconnect.
-5. **Hardware TOT set on connect.** Set the radio's own time‑out timer to ≈120 s (closest
-   the radio supports) as a backstop for **control‑link loss** — if the network drops
+5. **Hardware TOT set on connect.** Set the radio's own time‑out timer to 3 min (180 s),
+   never longer, as the backstop for **control‑link loss**: the 3‑minute limit for a remotely
+   commanded station whose control link fails (47 CFR 97.213(b)). If the network drops
    mid‑transmit the app failsafe can't fire, but the rig's own timer will. The profile
-   carries the command; `N/A` if the radio doesn't expose it over the control link (then
-   the app‑level failsafe is the only backstop — note it). Mark the radio's TX TOT menu item
+   carries the command and, in `tot_s`, the time it sets: that bounds one SSTV picture
+   (`ptt_hold_max` = `tot_s` − 3 s). `N/A` if the radio doesn't expose it over the control link
+   (then `tot_s` = 0, nothing is keyed longer than 120 s, and the app‑level failsafe is the only
+   backstop — note it). Mark the radio's TX TOT menu item
    `tx_tot=True` (and `critical=True`): writing **OFF** then needs an admin **and** an explicit
    confirmation, decided by comparing the encoded bytes with the encoding of OFF.
 6. **CW message send is bounded + stoppable** (if `cw_send` is set). The handler keys one

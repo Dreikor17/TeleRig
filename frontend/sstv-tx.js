@@ -7,15 +7,18 @@
  *   1. the mic's path is taken (RadioAudio.txBegin: the server's mic flag on, the client mic muted) and
  *      the server's "ready" awaited (a serial radio's host TX device opens first);
  *   2. the ptt claim goes to the server's TX arbiter through RadioControl.send, so app.js's claim rules
- *      apply (a seq, heartbeats, never from a hidden page); busy or denied ends it there;
+ *      apply (a seq, heartbeats, never from a hidden page); busy or denied ends it there. The claim names
+ *      the mode (sstv: id), so the server holds this one keying for the picture's own length (its time
+ *      on the air + 5 s, backend/sstv.py) instead of a voice over's 120 s;
  *   3. once granted, the audio streams in real time, LEAD ahead, as the mic's 16 kHz frames; the server
  *      forwards them only while this tab owns TX with ptt (I10);
  *   4. after the last sample has played out (a silent tail), ptt is released and the path given back.
- * The same button is STOP from the first step on. Losing the claim (the 120 s limit, another user's STOP,
- * a hidden tab, a dropped connection, a radio change) or closing the panel stops the audio at once.
- * Only modes whose whole transmission fits TeleRig's 120 s PTT session, and the 2-minute time-out set
- * in the radio on connect, are offered (MAX_ON_AIR_S). Nothing is sent by a viewer, for a radio
- * without PTT, or in a mode that transmits no audio (CW, RTTY, DV, C4FM).
+ * The same button is STOP from the first step on. Losing the claim (the picture's limit, another user's
+ * STOP, a hidden tab, a dropped connection, a radio change) or closing the panel stops the audio at once.
+ * Only modes whose whole transmission ends inside the radio's own 3-minute TX time-out, set on connect as
+ * the backstop if the control link fails, are offered (MAX_ON_AIR_S; state.ptt_hold_max for the radio
+ * in use). Nothing is sent by a viewer, for a radio without PTT, or in a mode that transmits no audio
+ * (CW, RTTY, DV, C4FM).
  *
  * The picture never leaves the page except as the radio's audio. Nothing here parses text as HTML.
  *
@@ -30,7 +33,8 @@
   const FS = 16000;
   const SETTLE_MS = 300;                 // silence after the key, before the VIS: the radio settles on TX
   const TAIL_MS = 600;                   // silence after the picture: the last line plays out before unkey
-  const MAX_ON_AIR_S = 117;              // the 120 s PTT session and the radio's 2-minute time-out, less margin
+  const FIT_MARGIN_S = 3;                // a mode fits when it ends this far inside the radio's longest keying (backend/sstv.py)
+  const MAX_ON_AIR_S = 177 - FIT_MARGIN_S;   // the longest keying: 3 s inside the radios' 3-minute TOT
   const clamp255 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
   const ycc = (p) => [0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2],               // Y, Cb, Cr
                       128 - 0.168736 * p[0] - 0.331264 * p[1] + 0.5 * p[2],
@@ -181,7 +185,7 @@
   if (tabRx) tabRx.addEventListener("click", () => showTab("rx"));
   if (tabTx) tabTx.addEventListener("click", () => showTab("tx"));
 
-  // ---- the mode menu: only what fits the PTT session ----
+  // ---- the mode menu: only what fits inside the radio's own time-out ----
   for (const m of TX_MODES) {
     const o = document.createElement("option");
     o.value = m.id;
@@ -303,7 +307,7 @@
     const o = otherOwner();
     if (o) return "Busy: " + ownerName(o) + " is transmitting.";
     if (tx() && tx().ownedOrPending && tx().ownedOrPending()) return "This tab is transmitting already.";
-    if (onAirSeconds(txMode()) > (+st.ptt_tot || 120) - 3) return "This mode is longer than the radio's TX limit: choose a shorter one.";
+    if (onAirSeconds(txMode()) > (+st.ptt_hold_max || 120) - FIT_MARGIN_S) return "This mode is longer than the radio's TX limit: choose a shorter one.";
     if (!img) return "Choose a picture, drop or paste one here, or use the test card.";
     return "";
   }
@@ -339,7 +343,7 @@
   function claim() {
     clearTimer();
     phase = "claim";
-    const sent = ctl().send({ action: "ptt", tx: true });   // the only claim this file ever sends
+    const sent = ctl().send({ action: "ptt", tx: true, sstv: job.m.id });   // the only claim this file ever sends
     if (!sent) { end("Nothing sent: the claim could not be sent (is the tab in the background?)."); return; }
     job.timer = setTimeout(() => { if (phase === "claim") { releasePtt(); end("Nothing sent: no answer from the server."); } }, CLAIM_MS);
     render();
