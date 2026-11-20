@@ -7,6 +7,20 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
+### SSTV: no false pictures, a picture viewer, delete (unreleased)
+- **SSTV receive, no false pictures.** A start is a picture only once its lines prove it: 4 of its first
+  12 line syncs must arrive where the header's timing puts them, as real pulses (low inside, the porch
+  and the picture around them). Until then nothing shows. A header heard in noise, voice or a tone, or a
+  chosen mode started on them, used to paint about ten lines of noise into the strip; now it is dropped
+  and the decoder keeps listening, and a real header heard meanwhile is caught (a false start used to
+  make it miss a picture that began right after). A picture that ends early goes into the strip only if
+  a quarter of it arrived; the status says when it isn't kept.
+- **Picture viewer.** Click a picture in the strip to see it large, with when it came and its size:
+  Export PNG saves it under its own name (mode, frequency, UTC time), Delete removes it. Esc or a click
+  outside closes it; it doesn't open while this tab transmits (it would cover STOP).
+- **Delete from the strip.** Each picture shows a red X in its corner while it is hovered or has the
+  keyboard focus (always, on a touch screen); the focus moves to the next picture.
+
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
   TeleRig, which answers Hamlib's `rigctld` protocol from its own radio handlers, so the program
@@ -301,6 +315,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   fixed-window seam (after e04/web-deep-cw-decoder). *Follow-ups:* optional WebGPU backend.
 - **Recorder, next steps** — the TX audio in the recording too, and QSO timestamps / a
   recording log on top of the Recorder panel (Done above).
+- **SSTV receive, next steps** — the last 2 to 4 pixels of each line pick up what follows the scan (in
+  Robot 36 the next line's sync, so the right edge turns green) and the first is a little dark: the scan
+  edges need to allow for the FM discriminator's filter. Decoding a saved recording also needs the
+  decoder to work through a long buffer as it goes (today it keeps about 6 s and works after each
+  piece, which is right for the radio's 20 ms packets).
 - **SSTV transmit, next steps** — replying with a received picture, and decoding a saved recording.
   Scottie DX, PD-180, PD-240 and PD-290 (3:09 to 4:51 on the air) are longer than the 3-minute TX
   time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig

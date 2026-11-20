@@ -11,6 +11,10 @@
  *  V4. a picture already under way: the chosen mode starts at the next sync pulse
  *  V5. noise alone never starts a picture; an unknown VIS is reported, not decoded; a signal that
  *      goes away ends the picture as "lost", with the lines received so far
+ *  V6. a start is a picture only once 4 of its first 12 line syncs arrive: a header followed by silence,
+ *      noise or voice-band noise, a chosen mode on voice-band noise, or a header and two lines are dropped
+ *      (onFalse) and never shown; the rows wait until the picture is confirmed; a real header inside a
+ *      start's trial wins; interference over a real picture's first lines still lets it through
  */
 "use strict";
 const fs = require("fs");
@@ -33,9 +37,10 @@ const FS = 16000;                                       // == sstv_encode.FS
 const { pic, tone, vis, picture, audio } = require("./sstv_encode");
 
 function decode(pcm, want, chunk) {
-  const r = { starts: [], rows: [], ends: [], unknown: [] };
-  const d = new Decoder(FS, { onStart: (s) => r.starts.push(s), onRow: (x) => r.rows.push(Array.from(x.rgba)),
-                              onEnd: (e) => r.ends.push(e), onUnknown: (u) => r.unknown.push(u.vis) });
+  const r = { starts: [], rows: [], ends: [], unknown: [], falses: [], early: 0, ys: [] };
+  const d = new Decoder(FS, { onStart: (s) => r.starts.push(s),
+                              onRow: (x) => { if (!r.starts.length) r.early++; r.ys.push(x.y); r.rows.push(Array.from(x.rgba)); },
+                              onEnd: (e) => r.ends.push(e), onUnknown: (u) => r.unknown.push(u.vis), onFalse: (f) => r.falses.push(f) });
   if (want) d.setMode(want);
   chunk = chunk || 320;
   for (let i = 0; i < pcm.length; i += chunk) d.feed(pcm.subarray(i, i + chunk));
@@ -79,6 +84,7 @@ for (const m of MODES) {
   const r = decode(pcm);
   eq(r.starts.map((s) => s.mode.id), [m.id], `V2 ${m.name}: the VIS picks the mode`);
   const expectRows = long ? null : m.height;
+  check(r.early === 0 && r.ys.every((y, i) => y === i), `V2 ${m.name}: the start comes first, then the rows top down`);
   if (expectRows) eq([r.rows.length, r.ends.map((e) => e.reason)], [expectRows, ["done"]], `V2 ${m.name}: every row, then done`);
   else check(r.rows.length > 20 && !r.ends.length, `V2 ${m.name}: rows keep coming (${r.rows.length} in 25 s)`);
   const err = mae(r.rows, m, img);
@@ -137,6 +143,68 @@ for (const m of MODES) {
   const r3 = decode(audio(segs.slice(0, k), { tail: 4, noise: 0.002 }));
   eq(r3.ends.map((e) => e.reason), ["lost"], "V5 the signal goes away: the picture ends as lost");
   check(r3.rows.length > 70 && r3.rows.length < 90, `V5 ... with the lines received (${r3.rows.length})`);
+}
+
+// ---- V6: a start is a picture only once its line syncs arrive ----
+let seed = 4242;
+function gauss() { let s = 0; for (let k = 0; k < 6; k++) { seed = (seed * 1103515245 + 12345) & 0x7fffffff; s += seed / 0x7fffffff; } return (s - 3) * 1.4; }
+const clip = (v) => Math.max(-32767, Math.min(32767, Math.round(v)));
+function noise(sec, rms, lowpassHz) {                      // white, or low-passed like voice (most of it under ~1 kHz)
+  const out = new Int16Array(Math.round(sec * FS)), a = lowpassHz ? Math.exp((-2 * Math.PI * lowpassHz) / FS) : 0;
+  let y = 0;
+  for (let i = 0; i < out.length; i++) { const x = gauss(); y = lowpassHz ? a * y + (1 - a) * x * 3 : x; out[i] = clip(y * rms * 32767); }
+  return out;
+}
+function cat(...parts) {
+  const out = new Int16Array(parts.reduce((n, p) => n + p.length, 0));
+  let k = 0;
+  for (const p of parts) { out.set(p, k); k += p.length; }
+  return out;
+}
+{
+  const hdr = audio(vis(byId("m2").vis), { tail: 0 });
+  for (const [what, after] of [["silence", new Int16Array(12 * FS)], ["noise", noise(12, 0.25)], ["voice-band noise", noise(12, 0.3, 500)]]) {
+    const r = decode(cat(hdr, after));
+    eq([r.starts.length, r.rows.length, r.ends.length, r.falses.map((f) => f.mode.id)], [0, 0, 0, ["m2"]],
+       `V6 a Martin M2 header, then ${what}: no picture, the start dropped`);
+  }
+}
+{
+  const r = decode(noise(30, 0.3, 500), "m2");
+  check(r.starts.length === 0 && r.rows.length === 0 && r.falses.length > 0,
+        `V6 Martin M2 chosen, 30 s of voice-band noise: no picture (${r.starts.length} shown, ${r.falses.length} starts dropped)`);
+}
+{
+  const m = byId("m2"), segs = picture(m, pic(m.width, m.height)), perLine = segs.length / m.height;
+  const r = decode(audio([...vis(m.vis), ...segs.slice(0, 2 * perLine)], { tail: 8 }));
+  eq([r.starts.length, r.rows.length, r.falses.length], [0, 0, 1], "V6 a header and 2 lines, then nothing: dropped, never shown");
+}
+{
+  const m = byId("r36"), pcm = audio([...vis(m.vis), ...picture(m, pic(m.width, m.height))]);
+  const cut = Math.round((0.3 + 0.91 + 3.5 * 0.15) * FS);   // the lead, the header and 3.5 lines
+  const r = { starts: 0, rows: 0 };
+  const d = new Decoder(FS, { onStart: () => r.starts++, onRow: () => r.rows++ });
+  for (let i = 0; i < cut; i += 320) d.feed(pcm.subarray(i, Math.min(cut, i + 320)));
+  eq([r.starts, r.rows], [0, 0], "V6 Robot 36 after 3 lines: nothing shown yet (the rows wait)");
+  for (let i = cut; i < pcm.length; i += 320) d.feed(pcm.subarray(i, i + 320));
+  eq([r.starts, r.rows], [1, 240], "V6 ... the 4th good sync starts it, with every row");
+}
+{
+  const m = byId("r36"), img = pic(m.width, m.height);
+  // Scottie DX: its trial would outlast the 6 s history, so only the watch during the trial finds the real header
+  const r = decode(cat(audio(vis(byId("sdx").vis), { tail: 0 }), noise(0.6, 0.05), audio([...vis(m.vis), ...picture(m, img)])));
+  eq([r.falses.map((f) => f.mode.id), r.starts.map((s) => s.mode.id), r.rows.length], [["sdx"], ["r36"], 240],
+     "V6 a header that led nowhere, then a real one inside its trial: the real picture");
+  check(mae(r.rows, m, img) < 5, "V6 ... decoded right");
+}
+{
+  const m = byId("r36"), img = pic(m.width, m.height);
+  const pcm = audio([...vis(m.vis), ...picture(m, img)], { noise: 0.05 });
+  const from = Math.round((0.3 + 0.91 + 0.15) * FS), to = from + Math.round(6 * 0.15 * FS);   // lines 1 to 6
+  for (let i = from; i < to; i++) pcm[i] = clip(gauss() * 0.5 * 32767);
+  const r = decode(pcm);
+  eq([r.starts.length, r.rows.length, r.ends.map((e) => e.reason)], [1, 240, ["done"]],
+     "V6 interference over lines 1-6 of a real picture: still a picture (4 good syncs in the first 12)");
 }
 
 console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);

@@ -11,8 +11,14 @@
  *   Modes (timings: the Barber / N7CXI "Dayton paper" tables): Robot 36 / 72, Martin M1 / M2, Scottie
  *   S1 / S2 / DX, PD-50 / 90 / 120 / 160 / 180 / 240 / 290. "Auto" starts on a VIS header; a chosen
  *   mode starts at the next sync pulse (joining a picture already under way).
+ *   A start is a picture only once its lines prove it: 4 of the first 12 line syncs must arrive where the
+ *   timing puts them, as real pulses (low inside, the porch and picture around them). Until then the
+ *   decoder holds the rows back and the panel shows nothing; a start that fails is dropped (onFalse).
+ *   Noise, voice or a tone that passes for a header, or a chosen mode started on them, never shows.
  *
- * window.SSTV = { MODES, Decoder } (tests, and the TX side later); window.SstvPanel = { summary(), feed(pcm, rate) }.
+ * window.SSTV = { MODES, Decoder } (tests, and the TX side later);
+ * window.SstvPanel = { summary(), feed(pcm, rate) }. The pictures received go into a strip: click one to
+ * view it large (Export PNG saves it); its red X (on hover) deletes it.
  */
 (function () {
   "use strict";
@@ -66,6 +72,12 @@
   // ---- the decoder ----
   const FC = 1700;                                   // mixer centre: the middle of 1100 .. 2300 Hz
   const LOST_LINES = 10;                             // this many lines with no sync in a row: the signal is gone
+  // The trial a start goes through (see the top): CONFIRM good syncs in the first CONFIRM_OF lines searched.
+  // A good sync: at least SYNC_GOOD of the pulse below 1350 Hz, and at most SYNC_AROUND of the 2 ms on either
+  // side (the porch and the picture are 1500 Hz and up). Measured: a real picture weak enough that its VIS is
+  // barely read still gives >= 0.86 inside and <= 0.16 around; noise and voice give 0.22 .. 1 around.
+  const CONFIRM = 4, CONFIRM_OF = 12, SYNC_GOOD = 0.7, SYNC_AROUND = 0.25;
+  const SKIP_HEADER = 30;                            // ms: after a start, the search for the next one begins this far on
   function lowpass(n, cutoff, fs) {                  // windowed sinc (Blackman), unity gain at DC
     const h = new Float32Array(n), m = (n - 1) / 2, fc = cutoff / fs;
     let s = 0;
@@ -97,7 +109,7 @@
       this.reset();
     }
     // -- control --
-    reset() { this.state = "idle"; this.m = null; this.offset = 0; this.nextCheck = 0; this.line = 0; this.rows = 0; this.missed = 0; }
+    reset() { this.state = "idle"; this.m = null; this.offset = 0; this.nextCheck = 0; this.line = 0; this.rows = 0; this.missed = 0; this.trial = null; }
     setMode(want) { this.want = want === "auto" || BY_ID.has(want) ? want : "auto"; this.reset(); }
     ms(t) { return (t * this.fs) / 1000; }
     // -- input --
@@ -154,7 +166,11 @@
     work() {
       for (let guard = 0; guard < 4096; guard++) {
         if (this.state === "idle") { if (!this.lookForStart()) return; }
-        else if (this.state === "rx") { if (!this.nextLine()) return; }
+        else if (this.state === "rx") {
+          // a start still on trial gives way to a header heard meanwhile (a real picture has no header in it)
+          if (this.trial && this.want === "auto" && this.lookForStart()) continue;
+          if (!this.nextLine()) return;
+        }
         else return;
       }
     }
@@ -198,7 +214,7 @@
       // The windows above tolerate a few ms; the picture's time comes from the sharp 1900 -> 1200 Hz
       // edge where the start bit begins, exactly 300 ms before the stop bit ends.
       const visEnd = this.edgeDown(now - this.ms(312), now - this.ms(288), 1550 + off) + this.ms(300);
-      this.begin(m, off, visEnd + this.ms(m.first + m.syncAt), true);
+      this.begin(m, off, visEnd + this.ms(m.first + m.syncAt), now);
       return true;
     }
     edgeDown(a, b, thr) {                               // first time the 2 ms mean falls below thr
@@ -210,19 +226,40 @@
       const m = BY_ID.get(this.want);
       const s0 = now - this.ms(m.syncMs);
       if (this.syncFrac(s0, now) < 0.85 || this.syncFrac(s0 - this.ms(3), s0) > 0.3) return false;
-      this.begin(m, 0, s0, true);
+      this.begin(m, 0, s0, now);
       return true;
     }
     // firstSync: where line 0's sync starts, known to the sample (the VIS edge, or a sync just found):
-    // the first line is not searched (after a VIS the stop bit and the first sync are one 1200 Hz tone)
-    begin(m, off, firstSync) {
+    // the first line is not searched (after a VIS the stop bit and the first sync are one 1200 Hz tone).
+    // found: where the header or sync was found. The picture starts on trial: onStart waits for its lines.
+    begin(m, off, firstSync, found) {
+      if (this.trial) this.emit("onFalse", { mode: this.m, lines: this.line });    // a new header replaces a start on trial
       this.m = m; this.offset = off; this.state = "rx";
       this.line = 0; this.rows = 0; this.missed = 0;
       this.anchor = firstSync; this.period = this.ms(m.lineMs); this.firstLine = true;
       this.cr = new Float32Array(m.width).fill(128); this.cb = new Float32Array(m.width).fill(128);
       // re-count the sync-ish samples with this picture's offset
       for (let i = 0; i < this.n; i++) this.S[i + 1] = this.S[i] + (this.f[i] - off < 1350 ? 1 : 0);
-      this.emit("onStart", { mode: m, offsetHz: Math.round(off) });
+      this.trial = { good: 0, seen: 0, rows: [], offsetHz: Math.round(off) };
+      this.nextCheck = found + this.ms(SKIP_HEADER);   // not this header again
+    }
+    judge(at, sync, best) {                             // on trial: is the sync found at `at` a real line sync?
+      const t = this.trial, edge = this.ms(0.5), side = this.ms(2.5);
+      const around = Math.max(this.syncFrac(at - side, at - edge), this.syncFrac(at + sync + edge, at + sync + side));
+      t.seen++;
+      if (best >= SYNC_GOOD && around <= SYNC_AROUND) t.good++;
+    }
+    confirm() {                                         // a picture after all: it starts now, with the rows held back
+      const t = this.trial;
+      this.trial = null;
+      this.emit("onStart", { mode: this.m, offsetHz: t.offsetHz });
+      for (const r of t.rows) this.emit("onRow", r);
+    }
+    drop() {                                            // not a picture: forget it; the search goes on from where it was
+      const m = this.m, lines = this.line, next = this.nextCheck;
+      this.reset();
+      this.nextCheck = next;
+      this.emit("onFalse", { mode: m, lines });
     }
     nextLine() {                                        // returns true when a line was done
       const m = this.m, win = this.ms(3), sync = this.ms(m.syncMs);
@@ -238,6 +275,7 @@
           const fr = this.syncFrac(pred + d, pred + d + sync);
           if (fr > best + 1e-9 || (Math.abs(fr - best) <= 1e-9 && Math.abs(d) < Math.abs(bestD))) { best = fr; bestD = d; }
         }
+        if (this.trial) this.judge(pred + bestD, sync, best);
         if (best > 0.55) {
           anchor = pred + 0.5 * bestD;
           this.period += 0.05 * bestD;
@@ -247,6 +285,9 @@
       this.anchor = anchor; this.firstLine = false;
       this.draw(anchor - this.ms(m.syncAt));
       this.line++;
+      const t = this.trial;
+      if (t && t.good >= CONFIRM) this.confirm();
+      else if (t && t.seen - t.good > CONFIRM_OF - CONFIRM) { this.drop(); return true; }   // it can't get there now
       if (this.line >= m.lines) this.finish("done");
       return true;
     }
@@ -287,8 +328,12 @@
         this.row(a); this.row(b);
       }
     }
-    row(rgba) { this.emit("onRow", { y: this.rows, rgba }); this.rows++; }
+    row(rgba) {
+      const r = { y: this.rows++, rgba };
+      if (this.trial) this.trial.rows.push(r); else this.emit("onRow", r);
+    }
     finish(reason) {
+      if (this.trial) { this.drop(); return; }          // never shown, so it never ends either
       const m = this.m, rows = this.rows;
       this.reset();
       this.nextCheck = this.end();
@@ -305,10 +350,11 @@
   const tile = document.querySelector('.grid-stack-item[data-tile="sstv"]');
   const canvas = $("sstvCanvas"), status = $("sstvStatus"), modeSel = $("sstvMode"), gallery = $("sstvGallery");
   if (!tile || !canvas || !status) return;
-  const KEY = "telerig.sstv.mode", KEEP = 12;
+  // the strip keeps the newest KEEP pictures; one that ended early only if KEEP_PART of its lines came
+  const KEY = "telerig.sstv.mode", KEEP = 12, KEEP_PART = 0.25;
   const g2d = (canvas.getContext && canvas.getContext("2d")) || null;
   let dec = null, rate = 0, cur = null, rowsDone = 0, unknown = null, lastNote = "";
-  const pics = [];                                        // {url, file, name, li}
+  const pics = [];                                        // the strip, newest first: {url, file, name, at, w, h, rows, part, el, open}
 
   const audio = () => window.RadioAudio || null;
   const rxOn = () => { const A = audio(); try { return !!(A && A.on()); } catch (_) { return false; } };
@@ -361,9 +407,11 @@
     onEnd: ({ mode, rows, reason }) => {
       const c = cur;
       cur = null;
-      if (c && rows > 0) keep(c, rows);
-      lastNote = reason === "done" ? "Received " + mode.name + " (" + rows + " lines) at " + utc(c ? c.at : new Date(Date.now())) + "."
-        : mode.name + " ended early: the signal went away at line " + rows + " of " + mode.height + ".";
+      const whole = reason === "done", enough = whole || rows >= mode.height * KEEP_PART;
+      if (c && rows > 0 && enough) keep(c, rows);
+      lastNote = whole ? "Received " + mode.name + " (" + rows + " lines) at " + utc(c ? c.at : new Date(Date.now())) + "."
+        : mode.name + " ended early: the signal went away at line " + rows + " of " + mode.height + "." +
+          (enough ? "" : " Not kept: less than a quarter of it arrived.");
       try { TR.srLive(lastNote); } catch (_) {}
       render();
     },
@@ -373,16 +421,104 @@
     const name = c.mode.name + (c.freqText ? " · " + c.freqText : "") + " · " + utc(c.at);
     const file = ["TeleRig_SSTV", safe(c.mode.name), c.freqText ? safe(c.freqText.split(" ")[0]) + "MHz" : "", stamp(c.at)]
       .filter(Boolean).join("_") + ".png";
-    const add = (url) => {
-      const a = document.createElement("a");
-      a.className = "sstv-pic"; a.href = url; a.download = file; a.title = "Download " + name;
-      const img = document.createElement("img"); img.src = url; img.alt = name + (rows < c.mode.height ? " (part)" : "");
-      a.appendChild(img);
-      if (gallery) gallery.insertBefore(a, gallery.firstChild);
-      pics.unshift({ url, file, name, el: a });
-      while (pics.length > KEEP) { const old = pics.pop(); try { URL.revokeObjectURL(old.url); } catch (_) {} if (old.el.parentNode) old.el.parentNode.removeChild(old.el); }
+    const p = { file, name, at: c.at, w: c.mode.width, h: c.mode.height, rows, part: rows < c.mode.height };
+    if (canvas.toBlob) canvas.toBlob((b) => { if (b) { p.url = URL.createObjectURL(b); add(p); } }, "image/png");
+  }
+
+  // ---- the strip: each picture opens the viewer; its red X (shown on hover or focus) deletes it ----
+  const T = () => window.TR || null;
+  const icon = (n) => { const t = T(); return t && typeof t.icon === "function" ? t.icon(n) : null; };
+  let delGuard = 0;                                       // the next X slides under the pointer: a double click deletes one
+  function add(p) {
+    const item = document.createElement("div"), open = document.createElement("button"), x = document.createElement("button");
+    const img = document.createElement("img");
+    item.className = "sstv-item"; item.setAttribute("role", "listitem");
+    open.className = "sstv-pic"; open.setAttribute("type", "button"); open.setAttribute("title", p.name);
+    img.src = p.url; img.alt = p.name + (p.part ? " (part)" : "");
+    open.appendChild(img);
+    x.className = "sstv-del"; x.setAttribute("type", "button"); x.setAttribute("title", "Delete");
+    x.setAttribute("aria-label", "Delete " + p.name);
+    x.appendChild(icon("x") || document.createTextNode("×"));
+    item.appendChild(open); item.appendChild(x);
+    open.addEventListener("click", () => view(p));
+    x.addEventListener("click", (e) => { if (!(e && e.detail > 0 && Date.now() < delGuard)) remove(p); });
+    p.el = item; p.open = open;
+    if (gallery) gallery.insertBefore(item, gallery.firstChild);
+    pics.unshift(p);
+    while (pics.length > KEEP) forget(pics[pics.length - 1]);
+  }
+  function forget(p) {                                    // out of the strip, its PNG freed (and out of the viewer)
+    const i = pics.indexOf(p);
+    if (i < 0) return;
+    pics.splice(i, 1);
+    if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
+    if (viewing === p && viewer) viewer.m.close();
+    try { URL.revokeObjectURL(p.url); } catch (_) {}
+  }
+  function remove(p) {                                    // the X, or Delete in the viewer
+    const i = pics.indexOf(p);
+    if (i < 0) return;
+    const next = pics[i + 1] || pics[i - 1] || null;      // the neighbour that takes the focus
+    const focused = p.el.contains(document.activeElement) || viewing === p;
+    forget(p);
+    delGuard = Date.now() + 400;
+    if (focused) {
+      const to = next ? next.open : gallery;
+      if (to === gallery && gallery && !gallery.hasAttribute("tabindex")) gallery.setAttribute("tabindex", "-1");
+      if (to && typeof to.focus === "function") to.focus();
+    }
+    try { TR.srLive("Deleted " + p.name); } catch (_) {}
+  }
+
+  // ---- the viewer: the picture large, Export PNG, Delete (TR.modal: Esc, backdrop, focus back) ----
+  let viewer = null, viewing = null;
+  const ymd = (d) => d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  const hms = (d) => pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds());
+  function view(p) {
+    const t = T();
+    if (!t || typeof t.modal !== "function" || typeof t.h !== "function") { save(p); return; }   // no dialog here: save it
+    if (t.txBlocksModal && t.txBlocksModal()) {            // the backdrop would cover the top bar's STOP
+      if (typeof t.toast === "function") t.toast("Stop transmitting to open a picture.", "warn");
+      return;
+    }
+    if (!viewer) viewer = buildViewer(t);
+    viewing = p;
+    viewer.show(p);
+    viewer.m.open();
+    viewer.first.focus();
+  }
+  function save(p) {
+    const a = document.createElement("a");
+    a.setAttribute("href", p.url); a.setAttribute("download", p.file);
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function buildViewer(t) {
+    const h = t.h;
+    const m = t.modal({ id: "sstvView", className: "sstv-view", onClose: () => { viewing = null; } });
+    const name = h("span", { class: "sstv-view-name", id: m.titleId });
+    const img = h("img", { class: "sstv-view-img", alt: "" });
+    const cap = h("p", { class: "sstv-view-cap" });
+    const exp = h("a", { class: "ctl-btn primary", id: "sstvViewExport", title: "Save the picture as a PNG file", text: "Export PNG" });
+    const del = h("button", { type: "button", class: "ctl-btn danger-ghost", id: "sstvViewDelete", text: "Delete",
+                              on: { click: () => { if (viewing) remove(viewing); } } });
+    m.dialog.append(
+      h("header", { class: "tm-head" },
+        h("span", { class: "tm-chip" }, icon("tr-sstv"), h("b", { text: "SSTV" })),
+        name,
+        h("button", { type: "button", class: "tm-x", title: "Close", "aria-label": "Close", on: { click: () => m.close() } },
+          icon("x") || "×")),
+      h("div", { class: "tm-body" }, img, cap, h("div", { class: "tm-actions" }, del, exp)));
+    return {
+      m, first: exp,
+      show(p) {
+        name.textContent = p.name;
+        img.src = p.url; img.alt = p.name + (p.part ? " (part)" : "");
+        img.style.setProperty("aspect-ratio", p.w + " / " + p.h);      // the box before the PNG has loaded
+        cap.textContent = "Received " + ymd(p.at) + " " + hms(p.at) + " UTC · " + p.w + " × " + p.h +
+          (p.part ? " · " + p.rows + " of " + p.h + " lines" : "");
+        exp.setAttribute("href", p.url); exp.setAttribute("download", p.file);
+      },
     };
-    if (canvas.toBlob) canvas.toBlob((b) => { if (b) add(URL.createObjectURL(b)); }, "image/png");
   }
   function feed(pcm, r) {
     if (!onGrid()) return;
