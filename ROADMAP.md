@@ -51,6 +51,18 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   unlike the FT-991A's (SH0 14;); TeleRig sent the FT-991A's, so the FT-891 kept its width (from the WIDTH
   keys or a spot) and its reading came from the wrong digits. Now each radio gets its own form
   (profile `sh_onoff`), and WIDTH off reads as the mode's default.
+- **The audio scope in CW zooms to the radio's width.** On a radio with no scope over CAT (FT-991A,
+  FT-891, IC-728) CW showed the whole 0-3.6 kHz of audio, so a 500 Hz filter was squeezed into a seventh
+  of the scope. Now, with a CW filter up to 1.2 kHz (a Yaesu's WIDTH, the IC-728's CW-NAR), the scope
+  shows 2.5 widths centred on the pitch (1.25 kHz for 500 Hz, 625 Hz for 250 Hz, never under 400 Hz) and
+  shades the passband around the marker; SSB, data and wider CW filters stay at 3.6 kHz (a wide one may
+  be the radio's SSB filter, not centred on the pitch: the IC-728's CW). The waterfall starts again when the scale
+  or the side (USB / LSB, which mirrors it) changes, and its finer FFT reacts a little slower (a third of
+  a second of audio).
+- **No humps at a narrow filter's edges.** The audio scope's noise floor was a 500 Hz-wide average, which
+  sank at a narrow filter's edges and lit the passband's rim up in two humps (a 250 Hz filter lit up
+  whole). With a CW filter it is now measured inside the passband only (a median, clear of its skirts):
+  the noise inside looks as it does on a wide band, the outside stays dark, and signals stand out.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

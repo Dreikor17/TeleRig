@@ -427,7 +427,15 @@
   // the carrier sits `pitch` Hz away from the dial, and the dial is the tuned marker, drawn at the
   // pitch. A signal on the marker is heard at the pitch, inside the radio's CW filter and the CW
   // decoder's window, and a reply there is zero-beat. Pure functions (tests/af_scope_test.js).
+  // In CW with a CW filter (up to AF_CW_NARROW wide, centred on the pitch), the scope zooms to AF_ZOOM
+  // widths centred on the pitch (frame), shades the passband (view) and measures the noise floor inside
+  // it only (floor). A wider filter may be the radio's SSB filter, placed by its BFO rather than on the
+  // pitch (the IC-728's CW: its 2.4 kHz filter), so that keeps the whole 0..3600 Hz and the mean floor.
   const AF_LSB_MODES = ["LSB", "CW-LSB", "RTTY-LSB", "DATA-LSB", "CW-R", "RTTY", "DATA-L"];
+  const AF_ZOOM = 2.5, AF_MIN_SPAN = 400;        // CW: 2.5 filter widths shown, never under 400 Hz
+  const AF_CW_NARROW = 1200;                     // the widest filter taken as centred on the CW pitch
+  const AF_MEDIAN_DB = 0.92;                     // a noise bin's dB: its median sits this far above its mean
+  const cwFilter = (cw, bw) => !!cw && bw > 0 && bw <= AF_CW_NARROW;
   global.AfMap = {
     // {side, pitch, shown} for a CW mode on this radio, else null. radio = the profile JSON
     // (cw_sides, cw_pitch_hz); s = the live state (freq, key_pitch, cw_bfo, cw_disp).
@@ -444,17 +452,83 @@
     },
     // The sweep meta for Scope.pushSweep (fixed edges, mode 1), plus lsb (mirror the FFT bins) and
     // retune (dial - marker): a tap at RF f tunes to f + retune, so the tapped signal lands ON the
-    // marker — at the pitch in CW, as the radio itself would put it.
-    view(dial, span, mode, cw) {
+    // marker — at the pitch in CW, as the radio itself would put it. The scope shows the audio from a0
+    // to a0 + span Hz (frame); in CW, with a CW filter bw Hz wide, it shades the passband: bw Hz
+    // centred on the marker, the pitch (Scope.drawOverlay).
+    view(dial, span, mode, cw, a0, bw) {
+      a0 = a0 || 0;
       const lsb = cw ? cw.side < 0 : AF_LSB_MODES.includes(mode);
       let carrier = dial, marker = 0;
       if (cw) {
         if (cw.shown) carrier = dial - cw.side * cw.pitch;
         marker = carrier + cw.side * cw.pitch;                  // = dial when the dial shows the zero beat
       }
-      const lower = lsb ? carrier - span : carrier;
+      const lower = lsb ? carrier - a0 - span : carrier + a0;
       return { mode: 1, center: lower + span / 2, span, lower, upper: lower + span,
-               tuned: marker, filterBw: 0, retune: marker ? dial - marker : 0, lsb };
+               tuned: marker, filterBw: marker && cwFilter(cw, bw) ? bw : 0, retune: marker ? dial - marker : 0, lsb };
+    },
+    // The audio the scope shows: a0 to a0 + span Hz of the RX audio. In CW with a CW filter (the radio's
+    // width bw, Passband.hz, up to AF_CW_NARROW), AF_ZOOM widths centred on the pitch, no narrower than
+    // AF_MIN_SPAN and inside 0..max: a 500 Hz filter fills 2/5 of the scope (the whole 0..3600 Hz squeezed
+    // it into 1/7). In the other modes, and in CW with a wider filter or the width not known, 0..max.
+    frame(cw, bw, max) {
+      if (!cwFilter(cw, bw)) return { a0: 0, span: max };
+      const span = Math.round(Math.max(AF_MIN_SPAN, Math.min(max, AF_ZOOM * bw)));
+      return { a0: Math.round(Math.max(0, Math.min(max - span, cw.pitch - span / 2))), span };
+    },
+    // The analyser for a frame on a scope W px wide: about one FFT bin a pixel (fftSize ~ W * sr / span),
+    // 4096 to 16384 (16384 is a third of a second of audio at 48 kHz: longer would smear CW elements),
+    // and the frame's bins: the first, k0, and how many, n.
+    plan(fr, sr, W) {
+      const fftSize = Math.max(4096, Math.min(16384, 1 << Math.round(Math.log2(Math.max(2048, W * sr / fr.span)))));
+      const binHz = sr / fftSize, k0 = Math.round(fr.a0 / binHz);
+      return { fftSize, binHz, k0, n: Math.max(1, Math.min(fftSize / 2 - k0, Math.round(fr.span / binHz))) };
+    },
+    // The CW passband's bins in a frame, [first, last] (audio order: bin 0 = the frame's lowest tone):
+    // bw Hz centred on the pitch, where the radio's CW filter sits. null when it isn't a CW filter (wider
+    // than AF_CW_NARROW, not CW) or the width is not known.
+    pass(cw, bw, pl) {
+      if (!cwFilter(cw, bw)) return null;
+      return [Math.round((cw.pitch - bw / 2) / pl.binHz) - pl.k0, Math.round((cw.pitch + bw / 2) / pl.binHz) - pl.k0];
+    },
+    // The noise floor under each of a frame's n bins (b: dB, audio order; out: the floor), which app.js
+    // subtracts so the noise goes dark and only signals show. tmp: scratch, n long.
+    //  - No passband known (pb null): the mean over +/-H bins, which flattens the radio's audio shape.
+    //  - The CW passband known (pb, from pass): inside it, the median of the bins within +/-H of a bin that
+    //    are inside it and clear of its edges (its outer tenth each side: the filter's skirts), less
+    //    AF_MEDIAN_DB, so the noise looks as it does on the other path; outside it, the floor at the nearer
+    //    edge, so the stopband stays dark and only what beats the passband's noise shows there. The mean
+    //    across a narrow filter's edges sank there and lit the passband's rim up in two humps (a 250 Hz
+    //    filter lit up whole).
+    floor(b, n, H, pb, out, tmp) {
+      const g = pb ? Math.round((pb[1] - pb[0]) / 10) : 0;
+      const c0 = pb ? Math.max(0, pb[0] + g) : 0, c1 = pb ? Math.min(n - 1, pb[1] - g) : -1;
+      if (c1 - c0 < 2) {                                          // no passband in the frame: the mean
+        let sum = 0, cnt = 0;
+        for (let j = 0; j <= H && j < n; j++) { sum += b[j]; cnt++; }
+        for (let i = 0; i < n; i++) {
+          out[i] = sum / cnt;
+          const rem = i - H; if (rem >= 0) { sum -= b[rem]; cnt--; }
+          const add = i + 1 + H; if (add < n) { sum += b[add]; cnt++; }
+        }
+        return out;
+      }
+      const p0 = Math.max(0, pb[0]), p1 = Math.min(n - 1, pb[1]);
+      const len = Math.min(2 * H, c1 - c0), step = Math.max(1, Math.round(H / 8));
+      let pi = -1, pv = 0;                                        // the median every step bins, joined by lines
+      for (let i = p0; ; i = Math.min(p1, i + step)) {
+        const lo = Math.max(c0, Math.min(c1 - len, i - H)), m = len + 1;
+        const s = tmp.subarray(0, m);
+        s.set(b.subarray(lo, lo + m));
+        s.sort();
+        const v = (m & 1 ? s[m >> 1] : (s[m / 2 - 1] + s[m / 2]) / 2) - AF_MEDIAN_DB;
+        if (pi >= 0) for (let j = pi + 1; j < i; j++) out[j] = pv + (v - pv) * (j - pi) / (i - pi);
+        out[i] = v; pi = i; pv = v;
+        if (i >= p1) break;
+      }
+      for (let i = 0; i < p0; i++) out[i] = out[p0];
+      for (let i = p1 + 1; i < n; i++) out[i] = out[p1];
+      return out;
     },
   };
 

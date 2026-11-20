@@ -196,7 +196,12 @@ radio, in `backend/rigctl.py`:
      the radio's own CAT read (`"EX0707;"`); the values ride the state as `cw_bfo` / `cw_disp`.
      Take the side and pitch from the manual (the CW pitch / display menus, or the BFO table:
      the IC‑728's 9.01060 MHz CW TX vs 9.00980 MHz CW RX = an LSB‑side 800 Hz). The frequency
-     map itself is `AfMap` in `frontend/waterfall.js` (tests: `tests/af_scope_test.js`).
+     map itself is `AfMap` in `frontend/waterfall.js` (tests: `tests/af_scope_test.js`). In CW
+     with a CW filter up to 1.2 kHz (`Passband.hz`: an Icom's `filter_bw` for the mode, a Yaesu's
+     WIDTH code), the audio scope shows 2.5 widths centred on the pitch, shades that passband and
+     measures its noise floor inside it (`AfMap.frame`, `AfMap.floor`), so give `filter_bw` the
+     radio's real CW filter widths. A wider one is taken as not centred on the pitch (the IC‑728's
+     CW uses its 2.4 kHz SSB filter) and keeps the whole 0–3.6 kHz.
    - **`rx_ranges`** — what the radio receives, `[(lo_hz, hi_hz), ...]`, from the manual's
      specifications (every band in `bands` must lie inside it: `backend/vfo_meter_test.py`). A
      frequency typed into the VFO (or the Controls box) is tuned only inside it, and a bare number

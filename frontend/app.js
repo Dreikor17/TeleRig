@@ -2642,41 +2642,42 @@
     ensureAudioCtx();
     const sr = audioCtx.sampleRate;
     afAnalyser = audioCtx.createAnalyser();
-    // Size the FFT so the passband spans ~1 bin per output pixel — maximum useful detail without
-    // over/under-sampling (fftSize ~= W*sr/AF_MAX; e.g. 8192 @ 48 kHz over a ~700 px scope).
-    const W = (scope && scope.W) || 700;
-    const fft = 1 << Math.round(Math.log2(Math.max(2048, W * sr / AF_MAX)));
-    afAnalyser.fftSize = Math.max(4096, Math.min(16384, fft));
     afAnalyser.smoothingTimeConstant = 0;        // no temporal smoothing — crisp, like WSJT
     try { srcNode.connect(afAnalyser); } catch (_) { afAnalyser = null; return; }
-    const bins = afAnalyser.frequencyBinCount, buf = new Float32Array(bins);
-    const nyq = sr / 2;
-    const n = Math.max(64, Math.min(bins, Math.round(AF_MAX / nyq * bins)));   // bins inside the passband
-    const data = new Uint8Array(n), b = new Float32Array(n), bl = new Float32Array(n);
-    const binHz = sr / afAnalyser.fftSize;
-    const H = Math.max(6, Math.round(250 / binHz));   // baseline half-window (~250 Hz of bins)
+    // The frame (AfMap.frame: the audio shown, in CW with the radio's width known zoomed to it around the
+    // pitch) and its FFT (AfMap.plan: ~1 bin a pixel, e.g. 8192 @ 48 kHz for 3.6 kHz over ~700 px) follow
+    // the mode, the width and the scope's width; the buffers are made again when they change.
+    let fr = null, pl = null, key = "", buf = null, data = null, b = null, bl = null, tmp = null, H = 6;
     const ns = $("noScope"); if (ns) ns.hidden = true;
     const badge = $("afBadge"); if (badge) badge.hidden = false;
     afTimer = setInterval(() => {
       if (!scope.wrap.clientWidth || !scope.wrap.clientHeight) return;   // scope parked / collapsed: no work
-      afAnalyser.getFloatFrequencyData(buf);     // raw dB (full dynamic range), not the lossy 0-255 byte path
-      const mode = state.mode_name || "USB";
-      const view = AfMap.view(state.freq || 0, AF_MAX, mode, AfMap.cw(currentRadio, state, mode));
+      const mode = state.mode_name || "USB", cw = AfMap.cw(currentRadio, state, mode);
+      const bw = cw ? passbandHz() : 0;          // CW: the radio's filter width (0 = not known)
+      const f = AfMap.frame(cw, bw, AF_MAX), p = AfMap.plan(f, sr, scope.W || 700);
+      const view = AfMap.view(state.freq || 0, f.span, mode, cw, f.a0, bw);
       const lsb = view.lsb;                      // LSB side: mirror, so RF rises left to right
-      for (let i = 0; i < n; i++) { const d = buf[lsb ? (n - 1 - i) : i]; b[i] = d > -200 ? d : -160; }
-      // Per-frequency noise baseline via a wide boxcar mean (O(n) sliding window). Subtracting it
-      // flattens the radio's shaped passband so the floor goes dark and only energy ABOVE the local
-      // noise shows — the clean WSJT look (vs a single global floor that leaves the hump bright).
-      let sum = 0, cnt = 0;
-      for (let j = 0; j <= H && j < n; j++) { sum += b[j]; cnt++; }
-      for (let i = 0; i < n; i++) {
-        bl[i] = sum / cnt;
-        const rem = i - H; if (rem >= 0) { sum -= b[rem]; cnt--; }
-        const add = i + 1 + H; if (add < n) { sum += b[add]; cnt++; }
+      const k = [f.a0, f.span, lsb, p.fftSize, p.k0, p.n].join();
+      if (k !== key) {
+        // a new scale or side (mirrored): the old rows would be drawn the old way, so the waterfall starts again
+        if (fr && (fr.a0 !== f.a0 || fr.span !== f.span || fr.lsb !== lsb)) scope.clear();
+        key = k; fr = { a0: f.a0, span: f.span, lsb }; pl = p;
+        if (afAnalyser.fftSize !== p.fftSize) afAnalyser.fftSize = p.fftSize;
+        buf = new Float32Array(afAnalyser.frequencyBinCount);
+        data = new Uint8Array(p.n); b = new Float32Array(p.n); bl = new Float32Array(p.n); tmp = new Float32Array(p.n);
+        H = Math.max(6, Math.round(250 / p.binHz));   // the floor's half-window (~250 Hz of bins)
       }
+      afAnalyser.getFloatFrequencyData(buf);     // raw dB (full dynamic range), not the lossy 0-255 byte path
+      const n = pl.n, k0 = pl.k0;
+      for (let i = 0; i < n; i++) { const d = buf[k0 + i]; b[i] = d > -200 ? d : -160; }
+      // The noise floor under each bin (AfMap.floor), subtracted so the floor goes dark and only energy
+      // ABOVE the local noise shows — the clean WSJT look (vs a single global floor that leaves the hump
+      // bright). In CW with the width known it is measured inside the passband only: no humps at its edges.
+      AfMap.floor(b, n, H, AfMap.pass(cw, bw, pl), bl, tmp);
       const gain = 160 / AF_RANGE_DB;
       for (let i = 0; i < n; i++) {
-        const r = (b[i] - bl[i] - AF_MARGIN_DB) * gain;        // dB above the local noise floor -> 0..160
+        const j = lsb ? n - 1 - i : i;
+        const r = (b[j] - bl[j] - AF_MARGIN_DB) * gain;        // dB above the noise floor -> 0..160
         data[i] = r <= 0 ? 0 : r >= 160 ? 160 : r | 0;
       }
       // Fixed edges. In CW the dial is the tuned marker, at the pitch; in the other modes the dial

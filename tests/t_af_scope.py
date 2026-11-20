@@ -18,7 +18,9 @@ FRONT = REPO / "frontend"
 @test("unit")
 def af_scope_cw_map_in_node_vm(ctx):
     """waterfall.js AfMap: in CW every side x display setting x pitch reads true, the marker sits at the
-    pitch and a tap lands the signal on it; SSB / data unchanged; the marker is drawn at the pitch."""
+    pitch and a tap lands the signal on it; SSB / data unchanged; the marker is drawn at the pitch. In CW
+    with the radio's width known the scope zooms to 2.5 widths around the pitch (reading as true, the
+    passband shaded) and the noise floor is measured inside the passband: no humps at its edges."""
     r = subprocess.run(["node", str(REPO / "tests" / "af_scope_test.js")], capture_output=True, text=True,
                        timeout=120, cwd=str(REPO))
     eq(r.returncode, 0, f"af_scope_test.js: {r.stdout}{r.stderr}")
@@ -29,14 +31,27 @@ def af_scope_cw_map_in_node_vm(ctx):
 
 @test("unit")
 def af_scope_wiring_in_app_js(ctx):
-    """app.js draws the AF scope from AfMap (no private sideband list left) and a scope tap adds the CW
-    retune, so the tapped signal lands on the marker."""
+    """app.js draws the AF scope from AfMap (no private sideband list or floor left): the frame, its FFT
+    and its floor follow the radio's width in CW only, a new scale or side starts the waterfall again, and
+    a scope tap adds the CW retune, so the tapped signal lands on the marker."""
     app = (FRONT / "app.js").read_text(encoding="utf-8")
     m = re.search(r"function startAfScope\(srcNode\) \{(.*?)\n  \}\n", app, re.S)
     check(m, "startAfScope")
     body = m.group(1) if m else ""
-    check("AfMap.view(state.freq || 0, AF_MAX, mode, AfMap.cw(currentRadio, state, mode))" in body,
-          "the AF frame is placed by AfMap (sideband + CW pitch)")
+    check('const mode = state.mode_name || "USB", cw = AfMap.cw(currentRadio, state, mode);' in body,
+          "the CW side and pitch from AfMap.cw")
+    check("const bw = cw ? passbandHz() : 0;" in body, "the radio's width is taken in CW only (SSB / data stay 0..3600 Hz)")
+    check("AfMap.frame(cw, bw, AF_MAX)" in body and "AfMap.plan(f, sr, scope.W || 700)" in body,
+          "the frame (the CW zoom) and its FFT come from AfMap")
+    check("AfMap.view(state.freq || 0, f.span, mode, cw, f.a0, bw)" in body,
+          "the AF frame is placed by AfMap (sideband + CW pitch + the zoom)")
+    check("AfMap.floor(b, n, H, AfMap.pass(cw, bw, pl), bl, tmp);" in body,
+          "the noise floor from AfMap (inside the passband in CW)")
+    check("if (fr && (fr.a0 !== f.a0 || fr.span !== f.span || fr.lsb !== lsb)) scope.clear();" in body,
+          "a new scale or side starts the waterfall again (the old rows would be drawn the old way)")
+    check("let sum = 0, cnt = 0;" not in body, "no private floor left in app.js")
+    check("const AF_RANGE_DB = 30;" in app and "const AF_MARGIN_DB = 3;" in app,
+          "the brightness mapping af_scope_test.js H reproduces")
     check("const lsb = view.lsb;" in body, "the FFT bins mirror exactly when AfMap says LSB side")
     check("scope.pushSweep(view, data);" in body, "the frame is pushed with AfMap's meta (marker in CW)")
     check('"CW-LSB", "RTTY-LSB"' not in body, "no private sideband list is left in app.js")
