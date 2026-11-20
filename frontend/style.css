@@ -381,7 +381,10 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .meter-tx-scale .zone{top:9px;height:2px;background:var(--danger)}       /* ALC: the zone to stay inside */
 .meter.tx .meter-tx-scale{color:var(--tft-digit)}
 .meter-read{grid-area:read;display:flex;align-items:baseline;justify-content:flex-end;min-width:0}
-.meter-val{font:700 16px/1 var(--font-ui);color:var(--num);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+/* the reading starts at the same place whatever its length: left-aligned in a box as wide as its longest text
+   (S9+60; on transmit COMP 25.5 dB), so S9 stays put when +0 or +20 joins it */
+.meter-val{font:700 16px/1 var(--font-ui);color:var(--num);text-align:left;min-width:6ch;white-space:nowrap;font-variant-numeric:tabular-nums}
+.meter.tx .meter-val{min-width:12ch}
 .meter-sel{grid-area:keys;display:flex;gap:3px;justify-content:flex-end;flex-wrap:nowrap}
 .m-btn{min-width:0;background:var(--key);color:var(--txt);border:1px solid var(--key-edge);
   border-radius:var(--r-sm);padding:2px 5px;cursor:pointer;font:600 10px/1.2 var(--font-ui)}

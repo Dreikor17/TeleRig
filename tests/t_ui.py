@@ -378,6 +378,29 @@ def level_meters_colour_by_the_scale(ctx):
             check(d["display"] not in ("flex", "grid"), f"{s}: the labels are positioned, not spread ({d})")
 
 
+@test("unit")
+def meter_reading_holds_its_place(ctx):
+    """The meter's reading (in the VFO tile) starts at the same place whatever its length: left-aligned in a
+    box as wide as its longest text (S9+60 on receive, COMP 25.5 dB on transmit), so "S9" does not move when
+    "+0" or "+20" joins it (it was right-aligned, and the S value moved back and forth across S9)."""
+    rules = _css_rules((FRONT / "style.css").read_text(encoding="utf-8"))
+
+    def decl(selector):
+        out = {}
+        for m, sel, d in rules:
+            if m == "" and selector in [x.strip() for x in sel.split(",")]:
+                out.update(d)
+        return out
+    v = decl(".meter-val")
+    eq(v.get("text-align"), "left", ".meter-val is left-aligned")
+    ch = lambda d: float(d.get("min-width", "0ch").rstrip("ch") or 0) if d.get("min-width", "").endswith("ch") else 0.0
+    check(ch(v) >= len("S9+60") + 1, f".meter-val min-width holds S9+60 with room: {v.get('min-width')}")
+    check(ch(decl(".meter.tx .meter-val")) >= len("COMP 25.5 dB"), "on transmit it holds COMP 25.5 dB")
+    for m, sel, d in rules:
+        if "meter-val" in sel:
+            check(d.get("text-align", "left") == "left", f"{m} {sel}: no rule right-aligns the reading again")
+
+
 @test("smoke")
 def pages_carry_their_icons_inline(ctx):
     srv = ctx.server()

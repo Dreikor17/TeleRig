@@ -17,8 +17,9 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   rows to the panels right above it). On receive it is the S-meter, its scale above the bar, S9+ in red; on
   transmit the TX meter picked with its keys (Po unless the radio has none), on its own scale under the
   bar, with the values the radio's CI-V reference gives (Po %, SWR 1.5 / 2 / 3 with amber and red, ALC
-  in its zone, COMP dB, Vd V, Id A); a Yaesu shows the raw reading (its CAT reference has no scale). A peak
-  mark holds the highest reading for 1.5 s. The TX meters are read only while transmitting (Vd and Id
+  in its zone, COMP dB, Vd V, Id A); a Yaesu shows the raw reading (its CAT reference has no scale). A mark
+  on the bar holds the peak for a second, then falls back; the reading stays put (it starts at the same
+  place whatever its length, so S9 doesn't move when +0 or +20 joins it). The TX meters are read only while transmitting (Vd and Id
   always), so receiving reads the S-meter as fast as before.
 - **Type a frequency**: click the VFO's digits (or Enter on them): MHz (14.074), the VFO's own grouping
   (7.074.50), .230 for the kHz on the MHz you are on, or a bare number, read as MHz where the radio receives
