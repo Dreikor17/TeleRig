@@ -7,7 +7,25 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 
 ## Done
 
-### SSTV: no false pictures, a picture viewer, delete (unreleased)
+### The VFO with its meter, typing a frequency; SSTV: no false pictures, a viewer (unreleased)
+- **The VFO, laid out like an Icom main screen** (picked from the VFO examples, look A). Each band: a top
+  line (TX/RX, the mode with -D, the filter and, on an Icom, its width, the VFO and the band), the digits
+  with the ones under the kHz small, the offsets beside them (RIT with its kHz, split, duplex with its
+  offset, the FM tone, the dial lock) and the lit functions (AGC, the radio's own preamp name, ATT, NB,
+  NR / DNR, AN / DNF, MN, NAR, COMP, VOX, MON). With two bands the operating one takes the room.
+- **The meter is in the VFO panel**, along its bottom; the Meter panel is gone (a saved layout gives its
+  rows to the panels right above it). On receive it is the S-meter, its scale above the bar, S9+ in red; on
+  transmit the TX meter picked with its keys (Po unless the radio has none), on its own scale under the
+  bar, with the values the radio's CI-V reference gives (Po %, SWR 1.5 / 2 / 3 with amber and red, ALC
+  in its zone, COMP dB, Vd V, Id A); a Yaesu shows the raw reading (its CAT reference has no scale). A peak
+  mark holds the highest reading for 1.5 s. The TX meters are read only while transmitting (Vd and Id
+  always), so receiving reads the S-meter as fast as before.
+- **Type a frequency**: click the VFO's digits (or Enter on them): MHz (14.074), the VFO's own grouping
+  (7.074.50), .230 for the kHz on the MHz you are on, or a bare number, read as MHz where the radio receives
+  there and as kHz or Hz otherwise (7074 is 7.074 MHz; 1296 on the IC-9700 is 1296 MHz); Enter tunes,
+  Esc cancels, and a frequency the radio can't receive is refused with the reason. The Controls panel's
+  frequency box reads the same way. Scrolling over a digit still tunes it. Each radio's receive coverage
+  is in its profile (`rx_ranges`, from the manuals), and the Icom meter scales too (`meter_marks`).
 - **SSTV receive, no false pictures.** A start is a picture only once its lines prove it: 4 of its first
   12 line syncs must arrive where the header's timing puts them, as real pulses (low inside, the porch
   and the picture around them). Until then nothing shows. A header heard in noise, voice or a tone, or a

@@ -26,7 +26,7 @@ from typing import Optional
 
 from . import civ, menu_engine, profiles
 from .radio import (CW_YAESU_CHARS, PTT_TIMEOUT, cw_duration, cw_elements,
-                    fresh_state, ptt_hold_s, smeter_label)
+                    fresh_state, ptt_hold_s, smeter_label, tx_meter_due)
 from .transport import CwKeyPort, find_sibling_port
 
 # Windows quantises time.sleep to ~15 ms unless the multimedia timer resolution is
@@ -436,7 +436,7 @@ class YaesuRadio:
             self._send("SM0;")                       # S-meter — every cycle (the fast needle)
             time.sleep(self._CMD_DT)
             mkey = self.state.get("meter", "S")      # selected TX meter (S comes from SM0)
-            if mkey in YAESU_METER and not self._poll_stop.is_set():
+            if mkey in YAESU_METER and tx_meter_due(self.state) and not self._poll_stop.is_set():
                 self._send(f"RM{YAESU_METER[mkey]};")
                 time.sleep(self._CMD_DT)
             if cyc % 4 == 0 and not self._poll_stop.is_set():      # freq / mode / PTT ~3x/s

@@ -165,7 +165,7 @@ def theme_head_script_and_tokens(ctx):
         check(re.search(re.escape(t) + r"\s*:", screen), f"radio-screen palette lacks {t}")
     check('"Exo 2"' in screen, "the radio-screen theme uses Exo 2")
     for rule in (".screen .key.active", ".screen #pttBtn.tx-mine", ".screen .bandrow.active",
-                 '.screen .band-freq .fd[data-place="10"]', ".screen .led{display:none}", ".screen .utc-clock{"):
+                 ".screen .band-freq .fd-lo", ".screen .led{display:none}", ".screen .utc-clock{"):
         check(rule in css, f"radio-screen rule {rule}")
     check("body.day{" not in css, "the old body.day palette is gone")
     check("[hidden]{display:none!important}" in css, "global [hidden] rule")

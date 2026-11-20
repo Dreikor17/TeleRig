@@ -3,7 +3,7 @@
  * failure fallback. Loads after tr.js and before app.js, so the grid is built before app.js measures.
  *
  *   intent[dev]   the user's saved layout for this device (boot.layout, else DEFAULT)
- *   gate(id)      role + radio capability (ptt: TR.can("tx") && caps.ptt; meter: the radio has meters)
+ *   gate(id)      role + radio capability (ptt: TR.can("tx") && caps.ptt)
  *   effective     intent items that are not hidden and pass the gate; only these are in the grid
  *
  * Saving happens on GESTURES only (drag/resize stop in arrange mode, keyboard moves, ▲▼, add, remove,
@@ -64,14 +64,15 @@
 
   // ---- the tile registry (§3.1), mirrored by layout_store.PANEL_IDS (the server also accepts the retired
   // "cw": CW had a panel of its own before it became a mode of the Modem window; foldCw) ----
-  const TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv"];
+  const TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"];
   const TILES = {
-    vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 64,  bodyPxAlt: 120 },
+    // vfo bodyPx: one band's lines + the meter along the bottom with 16 px digits (style.css: 112 px + 16);
+    // bodyPxAlt: two bands, each on one line (the short-body layout) + the meter
+    vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 130, bodyPxAlt: 108 },
     // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
     // phone 44 + 6 + a 52 px row (its keys keep the 44 px touch height) + 2 -> 6 phone rows (§3.6)
     ptt:      { title: "Transmit", icon: "mic",                minW: 2, bodyPx: 52,  bodyPxAlt: 84, bodyPxAltPhone: 104 },
     audio:    { title: "Audio",    icon: "volume-2",           minW: 2, bodyPx: 72 },
-    meter:    { title: "Meter",    icon: "gauge",              minW: 3, bodyPx: 48 },
     scope:    { title: "Scope",    icon: "audio-waveform",     minW: 4, bodyPx: 200 },
     controls: { title: "Controls", icon: "sliders-horizontal", minW: 3, bodyPx: 240 },
     // recorder bodyPx: the Record row (31) and the hint line (21), with room to start the list
@@ -82,9 +83,9 @@
     // bodyPx: the mode keys (28), SSTV's tabs and mode row (31 + 31), the status line (21) and a picture
     sstv:     { title: "Modem",    icon: "tr-sstv",            minW: 3, bodyPx: 250 },
   };
-  const GATEABLE = new Set(["ptt", "meter"]);              // the only tiles a gate can park
+  const GATEABLE = new Set(["ptt"]);                       // the only tile a gate can park
   const PHONE_RESIZABLE = new Set(["scope", "spots", "sstv"]); // phone: user-sized (stored h, `s` handle)
-  const PHONE_FIT = new Set(["audio", "meter", "controls", "recorder"]); // phone: height follows the content
+  const PHONE_FIT = new Set(["audio", "controls", "recorder"]); // phone: height follows the content
   const HEAD_ROWS = 2;                                     // collapsed slot, fixed (AR-58)
   const B = (boot.layout_bounds && boot.layout_bounds.desktop && boot.layout_bounds.phone) ? boot.layout_bounds
     : { desktop: { cols: 12, y_max: 199, h_max: 96, bottom_max: 200, dw_max: 11 },
@@ -93,15 +94,15 @@
   const SPLIT_DEFAULT = 0.38;
   const DEFAULT = {                                        // §3.6
     desktop: { column: 12, items: [
-      { id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 },
-      { id: "ptt", x: 7, y: 0, w: 2, h: 5 }, { id: "audio", x: 9, y: 0, w: 3, h: 5 },
-      { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 },
+      { id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "vfo", x: 3, y: 0, w: 4, h: 7 },
+      { id: "ptt", x: 7, y: 0, w: 2, h: 7 }, { id: "audio", x: 9, y: 0, w: 3, h: 7 },
+      { id: "scope", x: 3, y: 7, w: 9, h: 17 },
       { id: "recorder", x: 0, y: 18, w: 3, h: 6 },
-      { id: "spots", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "sstv", x: 9, y: 9, w: 3, h: 15, hidden: true }] },
+      { id: "spots", x: 9, y: 7, w: 3, h: 17, hidden: true }, { id: "sstv", x: 9, y: 7, w: 3, h: 17, hidden: true }] },
     phone: { column: 1, items: [
-      { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 }, { id: "meter", y: 3 },
-      { id: "audio", y: 4 }, { id: "controls", y: 5 }, { id: "recorder", y: 6 },
-      { id: "spots", y: 7, h: 10, hidden: true }, { id: "sstv", y: 8, h: 12, hidden: true }] },
+      { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 },
+      { id: "audio", y: 3 }, { id: "controls", y: 4 }, { id: "recorder", y: 5 },
+      { id: "spots", y: 6, h: 10, hidden: true }, { id: "sstv", y: 7, h: 12, hidden: true }] },
   };
   // the Recorder came after layouts were first saved: a saved layout without it gets it right under
   // Controls (placeRecorder), the place the default gives it
@@ -188,9 +189,27 @@
     for (const o of seen.values()) if (o !== lender && !o.hidden && overlap(slot, rectOf(o))) return;
     lender.w += cw.room.dw;
   }
+  // A layout saved while the meter had a panel of its own ("meter"): the meter is in the VFO panel now. On the
+  // desktop the rows a showing Meter panel took go to the panels right above it (inside its columns), so the
+  // VFO above it gets the room its meter needs; with none above, the panels right below it grow up into them.
+  // On the phone the panels simply close up (list order).
+  function foldMeter(d, items, seen) {
+    if (d !== "desktop") return;
+    const raw = items.find((it) => it && typeof it === "object" && it.id === "meter");
+    if (!raw || raw.hidden === true) return;
+    const m = rectOf(canonItem(d, raw));
+    const within = (r) => r.x >= m.x && r.x + r.w <= m.x + m.w;
+    const shown = [...seen.values()].filter((it) => !it.hidden && !it.collapsed);
+    const above = shown.filter((it) => { const r = rectOf(it); return within(r) && r.y + r.h === m.y; });
+    if (above.length) { for (const it of above) it.h = Math.min(B.desktop.h_max, it.h + m.h); return; }
+    for (const it of shown) {
+      const r = rectOf(it);
+      if (within(r) && r.y === m.y + m.h) { it.y -= m.h; it.h = Math.min(B.desktop.h_max, it.h + m.h); }
+    }
+  }
   // drop unknown / duplicate ids; a known id missing from a saved layout gets its DEFAULT item, hidden
-  // (the Recorder in a layout saved before it existed: placeRecorder; a CW panel: foldCw, first, so the
-  // Recorder's place counts the Modem window where the CW panel was)
+  // (the Recorder in a layout saved before it existed: placeRecorder; a CW panel: foldCw, and a Meter panel:
+  // foldMeter, first, so the Recorder's place counts the Modem window where the CW panel was)
   function normalize(d, data) {
     if (!data || typeof data !== "object" || !Array.isArray(data.items)) return null;
     const seen = new Map();
@@ -198,6 +217,7 @@
       if (it && typeof it === "object" && TILE_IDS.includes(it.id) && !seen.has(it.id)) seen.set(it.id, canonItem(d, it));
     }
     foldCw(d, data.items, seen);
+    foldMeter(d, data.items, seen);
     if (!seen.has("recorder")) placeRecorder(d, seen);
     const items = TILE_IDS.map((id) => seen.get(id) ||
       Object.assign(canonItem(d, DEFAULT[d].items.find((i) => i.id === id)), { hidden: true }));
@@ -269,18 +289,17 @@
   function capsFromBoot(id) {
     const r = (Array.isArray(boot.radios) ? boot.radios : []).find((x) => x && x.id === id);
     const tc = (r && r.tile_caps) || {};
-    return { ptt: tc.ptt !== false, meters: tc.meters !== false, dual: tc.dual_watch === true, name: r ? r.name : "" };
+    return { ptt: tc.ptt !== false, dual: tc.dual_watch === true, name: r ? r.name : "" };
   }
   function capsFromProfile(p) {
     const c = (p && p.capabilities) || {};
-    return { ptt: c.ptt !== false, meters: !(Array.isArray(c.meters) && c.meters.length === 0),
+    return { ptt: c.ptt !== false,
              dual: ("dual_watch" in c ? !!c.dual_watch : !!(p && p.dual_watch)), name: (p && p.name) || "" };
   }
   let caps = capsFromBoot(TR.initialRadio);
   const can = (perm) => { try { return !!TR.can(perm); } catch (_) { return false; } };
   function gate(id) {
     if (id === "ptt") return can("tx") && caps.ptt;
-    if (id === "meter") return caps.meters;
     return true;
   }
   function gateReason(id) {
@@ -453,7 +472,7 @@
         for (const it of eff) { it._row = row; row += it.collapsed ? HEAD_ROWS : phoneH(it); placeTile(tileEl[it.id], it, "intent"); }
       } else {
         // pass 1: tiles whose intent slot is free among the accepted fits; pass 2: the rest. A tile a gate
-        // could have parked (ptt, meter) comes last, so a panel the user moved into its hole while it was
+        // could have parked (ptt) comes last, so a panel the user moved into its hole while it was
         // gated keeps that spot, and the returning tile goes to a visible free area with a notice (AR-43).
         const order = eff.slice().sort((a, b) => (GATEABLE.has(a.id) ? 1 : 0) - (GATEABLE.has(b.id) ? 1 : 0));
         const fits = [], rest = [];
@@ -716,7 +735,6 @@
     const txt = (eid) => { const e = $(eid); return e ? (e.textContent || "").trim() : ""; };
     switch (id) {
       case "vfo": return st.freq ? fmtFreq(st.freq) + (st.mode_name ? " " + st.mode_name : "") : "—";
-      case "meter": return txt("meterVal");
       case "scope": return txt("spanVal");
       case "ptt": {
         const o = TR.tx && TR.tx.owner;

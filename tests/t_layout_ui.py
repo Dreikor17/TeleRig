@@ -34,7 +34,7 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
     "exo2-latin-italic.woff2": "26a4dc84a13ae17366fcd188e354530db070234c038370df9ee47f1b0d611a7a",
     "OFL.txt": "7f95a8eeecc6904ffc81cd10cc8ebc7fcee72a67922924bf45f02dff03b88127",
 }
-TILE_IDS = ["vfo", "ptt", "audio", "meter", "scope", "controls", "recorder", "spots", "sstv"]
+TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
 B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose"
@@ -163,7 +163,7 @@ def index_tiles_parking_and_script_order(ctx):
     check("hidden" in pa and pa.get("aria-hidden") == "true", "#tileParking hidden + aria-hidden")
     check(parking not in _ancestors(t, grid) and grid not in _ancestors(t, parking), "#tileParking is outside #grid")
     items = [k for k, n in enumerate(t.nodes) if "grid-stack-item" in _classes(n)]
-    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "nine tiles, registry order")
+    eq([t.nodes[k][1].get("data-tile") for k in items], TILE_IDS, "eight tiles, registry order (the meter is in the VFO tile)")
     for k in items:
         tid = t.nodes[k][1]["data-tile"]
         eq(t.nodes[k][2], parking, f"{tid}: a direct child of #tileParking")
@@ -211,7 +211,7 @@ def index_tiles_parking_and_script_order(ctx):
         check(gone not in html, f"{gone} removed")
     srcs = re.findall(r'<script src="([^"]+)"', html)
     eq(srcs, ["/static/vendor/gridstack/gridstack-all.js?v=14.0.0", "/static/tr.js", "/static/waterfall.js",
-              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/cwtool.js",
+              "/static/bandplan.js", "/static/layout.js", "/static/app.js", "/static/freqentry.js", "/static/cwtool.js",
               "/static/vendor/lamejs/lame.min.js?v=1.2.1", "/static/recorder.js", "/static/spots.js", "/static/sstv.js",
               "/static/sstv-tx.js", "/static/ft8-decode.js", "/static/ft8.js", "/static/rtty.js", "/static/digital.js",
               "/static/account.js", "/static/bridge.js", "/static/device.js", "/static/admin.js"], "script order")
@@ -234,7 +234,7 @@ def layout_js_registry_matches_the_server(ctx):
     from backend import layout_store
     eq(_js_array(src, "TILE_IDS"), list(layout_store.PANEL_IDS), "layout.js TILE_IDS == layout_store.PANEL_IDS")
     eq(TILE_IDS, list(layout_store.PANEL_IDS), "registry order")
-    eq(list(layout_store.TILE_IDS), TILE_IDS + ["cw"], "the server also accepts the retired cw (folded by layout.js)")
+    eq(list(layout_store.TILE_IDS), TILE_IDS + ["cw", "meter"], "the server also accepts the retired cw and meter (folded by layout.js)")
     # the §3.6 desktop default: stored unchanged by the server and filling exactly 24 rows, no overlap
     m = re.search(r"desktop: \{ column: 12, items: \[(.*?)\] \},", src, re.S)
     check(m, "DEFAULT.desktop in layout.js")
@@ -243,9 +243,9 @@ def layout_js_registry_matches_the_server(ctx):
         items.append({"id": mm.group(1), "x": int(mm.group(2)), "y": int(mm.group(3)), "w": int(mm.group(4)),
                       "h": int(mm.group(5)), "hidden": bool(mm.group(6)), "collapsed": False})
     eq(sorted(i["id"] for i in items), sorted(TILE_IDS), "every tile in the desktop default")
-    want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 4, 5), "ptt": (7, 0, 2, 5), "audio": (9, 0, 3, 5),
-            "meter": (3, 5, 9, 4), "scope": (3, 9, 9, 15), "recorder": (0, 18, 3, 6),
-            "spots": (9, 9, 3, 15), "sstv": (9, 9, 3, 15)}
+    want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 4, 7), "ptt": (7, 0, 2, 7), "audio": (9, 0, 3, 7),
+            "scope": (3, 7, 9, 17), "recorder": (0, 18, 3, 6),
+            "spots": (9, 7, 3, 17), "sstv": (9, 7, 3, 17)}
     for i in items:
         eq((i["x"], i["y"], i["w"], i["h"]), want[i["id"]], f"§3.6 {i['id']}")
     eq([i["id"] for i in items if i["hidden"]], ["spots", "sstv"], "only Spots and the Modem window start hidden")
@@ -262,7 +262,7 @@ def layout_js_registry_matches_the_server(ctx):
     pm = re.search(r"phone: \{ column: 1, items: \[(.*?)\] \},", src, re.S)
     check(pm, "DEFAULT.phone in layout.js")
     ranks = re.findall(r'\{ id: "(\w+)", y: (\d+)', pm.group(1))
-    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "meter", "audio", "controls", "recorder", "spots", "sstv"],
+    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "audio", "controls", "recorder", "spots", "sstv"],
        "§3.6 phone ranks")
     # the bounds layout.js falls back to are the server's table (it normally reads boot.layout_bounds)
     fb = re.search(r"desktop: \{ cols: (\d+), y_max: (\d+), h_max: (\d+), bottom_max: (\d+), dw_max: (\d+) \}", src)
@@ -321,10 +321,10 @@ def scripts_tile_mode_and_cwdiag(ctx):
     m = re.search(r"^ASSETS = \((.*?)\)\s*$", srv, re.M | re.S)
     check(m, "server.py ASSETS")
     eq(re.findall(r'"([^"]+)"', m.group(1)), ["style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js",
-                                               "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js",
+                                               "app.js", "freqentry.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js",
                                                "ft8.js", "rtty.js", "digital.js", "account.js", "bridge.js", "device.js", "admin.js"],
        "ASSETS (cache-busted, §3.15)")
-    for f in ("layout.js", "app.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js",
+    for f in ("layout.js", "app.js", "freqentry.js", "cwtool.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js",
               "digital.js", "tr.js", "waterfall.js", "account.js", "bridge.js", "device.js", "admin.js"):
         r = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(r.returncode, 0, f"node --check {f}: {r.stderr}")
@@ -476,20 +476,20 @@ def _vfo_digit_problems(css: str) -> list:
         probs.append("--vfo-wcap is not a registered <length> (it would resolve against the digits column)")
     if [d.get("--vfo-wcap") for d in get("#bands")] != ["7.4cqw"]:
         probs.append("#bands{--vfo-wcap:7.4cqw} (the §4.2 tile-width term) is missing")
-    # 4. a row is never narrower than its content and its side tracks never shrink below their content
+    # 4. a row is never narrower than its content and its offsets track never shrinks below its content
     row = get(".tile-vfo .bandrow")
     if not any(d.get("min-width") == "min-content" for d in row):
         probs.append(".tile-vfo .bandrow{min-width:min-content} is missing (a too-narrow tile must scroll, not overlap)")
-    if not any(d.get("grid-template-columns") == "minmax(min-content,auto) minmax(auto,1fr) minmax(min-content,auto)" for d in row):
-        probs.append(".tile-vfo .bandrow tracks: the mode box / side column can shrink below their content")
+    if not any(d.get("grid-template-columns") == "minmax(auto,1fr) minmax(min-content,auto)" for d in row):
+        probs.append(".tile-vfo .bandrow tracks: the offsets column can shrink below its content")
     fq = get(".tile-vfo .b-center .band-freq")
     if not fq or fq[-1].get("overflow") != "visible":
         probs.append(".tile-vfo .b-center .band-freq{overflow:visible} is missing (the phone ellipsis rule would clip)")
     # 5. one-line (short, dual watch) rows: the digits never shrink; when narrow, labels step aside
-    short = lambda c: any("max-height:120px" in x for x in c)
+    short = lambda c: any("max-height:220px" in x for x in c)
     if not any(d.get("flex") == "0 0 auto" for d in get("#bands.dual .b-center .band-freq", short)):
         probs.append("short dual rows: #bands.dual .b-center .band-freq{flex:0 0 auto} is missing")
-    hidden = {s for c, sels, d in rules if any("max-height:120px" in x and "max-width:320px" in x for x in c)
+    hidden = {s for c, sels, d in rules if any("max-height:220px" in x and "max-width:320px" in x for x in c)
               and d.get("display") == "none" for s in sels}
     for s in ("#bands.dual .band-fil", "#bands.dual .b-vfo"):
         if s not in hidden:
@@ -518,9 +518,9 @@ def vfo_digits_fit_their_column_and_are_never_clipped(ctx):
     check(not probs, "VFO digits: " + "; ".join(probs))
     # the parser and the checks see real rules (a self-test, so an empty list means something)
     rules = _css_rules(css)
-    check(any(c and "max-height:120px" in c[-1] for c, _, _ in rules), "the parser sees the VFO container queries")
+    check(any(c and "max-height:220px" in c[-1] for c, _, _ in rules), "the parser sees the VFO container queries")
     check(_vfo_digit_problems(css.replace(".tile-vfo .b-center{container-type:inline-size;", ".tile-vfo .b-center{"))
-          and _vfo_digit_problems(css + "\n@container (max-height:120px){#bands.dual .b-center{overflow:hidden}}")
+          and _vfo_digit_problems(css + "\n@container (max-height:220px){#bands.dual .b-center{overflow:hidden}}")
           and _vfo_digit_problems(css + "\n@container (max-width:300px){#bands .tx{display:none}}"),
           "the checks catch a lost container, a hidden-overflow digits column and a hidden TX/RX tag")
 

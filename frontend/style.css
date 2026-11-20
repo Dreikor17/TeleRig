@@ -284,62 +284,71 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .radio-help li code{color:var(--txt);font-family:var(--font-ui);font-size:11px}
 
 /* ---- TFT band readout (instrument: dark in both themes) ---- */
+/* ---- VFO: laid out like an Icom main screen. Each band: a top line (TX/RX, mode, filter + its width ... VFO, band),
+   the digits (the sub-kHz ones small) with the offsets beside them (RIT, split, duplex, lock), and the lit
+   function strip; the meter runs along the bottom of the tile (below). ---- */
 .bands{display:flex;flex-direction:column;gap:6px;margin:0}
 .bands.tft{gap:6px}
-.bandrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:8px 10px;
+.bandrow{display:grid;grid-template-columns:minmax(auto,1fr) minmax(min-content,auto);grid-template-areas:"top top" "freq offs" "ind ind";
+  align-items:center;column-gap:10px;row-gap:4px;padding:6px 10px 7px;
   border:1px solid var(--tft-border);border-radius:var(--r-ctl);background:var(--tft-row);cursor:pointer;color:var(--tft-digit)}
 .bandrow:hover{border-color:#3a3d42}
 .bandrow.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset,0 0 14px var(--tft-glow)}
+.b-top{grid-area:top;display:flex;align-items:center;gap:6px;min-width:0}
+.b-center{grid-area:freq;display:flex;flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+.b-offs{grid-area:offs;display:flex;flex-direction:column;align-items:flex-end;gap:3px;align-self:end}
+.b-offs:empty{display:none}
+.ind-strip{grid-area:ind;display:flex;flex-wrap:wrap;gap:3px;min-height:15px;align-items:center}
+.bandrow:not(.active) .ind-strip{display:none}               /* only the operating band's functions are tracked */
 .band-tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--tft-digit-dim)}
-.band-freq{font-family:var(--font-ui);font-weight:700;font-size:26px;line-height:1;color:var(--tft-digit-dim);
-  letter-spacing:.02em;font-variant-numeric:tabular-nums}
+#bands:not(.dual) .band-tag{display:none}                    /* MAIN / SUB matter only with two receivers */
+#rowSub .band-tag{color:var(--tft-sub)}
+.band-freq{font-family:var(--font-ui);font-weight:800;font-size:26px;line-height:1;color:var(--tft-digit-dim);
+  letter-spacing:-.01em;font-variant-numeric:tabular-nums;white-space:nowrap}
 .bandrow.active .band-freq{color:var(--tft-digit);text-shadow:0 0 10px var(--tft-glow)}
+.band-freq .fd-lo,.band-freq .fdsep.lo{font-size:.58em}       /* below the kHz: the digits you rarely read */
 .band-mode{background:var(--tft-pill-bg);color:var(--tft-pill-fg);font-weight:700;padding:2px 8px;border-radius:var(--r-sm);font-size:13px}
 .band-fil{color:var(--tft-digit-dim);font-size:11px;font-style:normal}
-.b-modebox{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:56px}
-.b-modebox .band-mode{font-size:15px;width:100%;text-align:center}
-.bandrow:not(.active) .band-mode,.bandrow:not(.active) .b-vfo{background:rgba(255,255,255,.04);color:var(--tft-digit-dim)}
-.b-center{display:flex;flex-direction:column;min-width:0;gap:2px}
-.ind-strip{display:flex;flex-wrap:wrap;gap:3px;min-height:13px;align-items:center}
-.ind{font-size:9px;font-weight:700;letter-spacing:.04em;line-height:1;padding:2px 4px;border-radius:3px;
+.band-bw{color:var(--tft-digit);font-size:11px}
+.band-bw:empty{display:none}
+.b-vfo{margin-left:auto;font-size:11px;font-weight:700;color:var(--tft-digit)}
+.b-band{display:flex;align-items:baseline;gap:5px}
+.b-band i{font-style:normal;font-size:11px;color:var(--tft-digit-dim)}
+.bandrow:not(.active) .band-mode{background:rgba(255,255,255,.04);color:var(--tft-digit-dim)}
+.bandrow:not(.active) .b-vfo,.bandrow:not(.active) .band-bw{color:var(--tft-digit-dim)}
+/* the lit functions (AGC amber), and the offsets in amber boxes */
+.ind{font-size:10px;font-weight:700;letter-spacing:.04em;line-height:1;padding:2px 5px;border-radius:3px;
   background:var(--tft-pill-bg);color:var(--tft-pill-fg);border:1px solid rgba(52,211,153,.35)}
 .ind.amber{background:rgba(251,191,36,.12);color:var(--tft-amber);border-color:rgba(251,191,36,.4)}
-.band-freq{white-space:nowrap}
-/* digit size follows the VFO tile body (container-type:size, §4.2): the operating VFO is full size,
-   the other one 0.72x; a single-receiver radio (#bands:not(.dual)) gets up to 72 px.
-   The §4.2 width term (7.4cqw of the tile body) is resolved on #bands (--vfo-wcap is a registered <length>,
-   so it computes there, against the tile body, and inherits as px). The digits column (.b-center) is an
-   inline-size container, so 13.5cqw (= 100 % / 7.4 em, the widest readout: 12 characters, 1296.200.000)
-   also keeps the digits inside their own column, beside the mode box and the side column (§3.1) */
-@property --vfo-wcap{syntax:"<length>";inherits:true;initial-value:64px}
-#bands{--vfo-wcap:7.4cqw}
-.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(26cqh,var(--vfo-wcap),13.5cqw),64px))}
-.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(26cqh,var(--vfo-wcap),13.5cqw),64px)}
-#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(44cqh,var(--vfo-wcap),13.5cqw),72px)}
-.b-side{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:58px}
-.b-vfo{font-size:11px;font-weight:700;color:var(--tft-pill-fg);background:var(--tft-pill-bg);padding:1px 6px;border-radius:var(--r-sm)}
-#rowSub .band-tag{color:var(--tft-sub)}
-.b-band{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
-.b-band i{font-style:normal;font-size:10px;color:var(--tft-digit-dim)}
 /* the radio's TX/RX tag (inside the TFT) */
-.tx{font-weight:700;font-size:12px;padding:1px 7px;border-radius:var(--r-sm);background:var(--tft-pill-bg);color:var(--tft-pill-fg)}
+.tx{font-weight:700;font-size:11px;padding:2px 7px;border-radius:var(--r-sm);background:var(--tft-pill-bg);color:var(--tft-pill-fg)}
 .tx.on{background:var(--tx-solid);color:#fff;box-shadow:0 0 8px rgba(239,68,68,.6)}
-/* per-digit VFO tuning: hover a digit for up/down arrows; click top/bottom or scroll it */
+/* the operating band's digits: click (or Enter) to type a frequency, freqentry.js; scroll a digit to tune it */
+.band-freq.tunable{cursor:text;border-radius:4px}
+.band-freq.tunable:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .band-freq .fd{position:relative;display:inline-block}
 .band-freq .fdsep{opacity:.65}
-.band-freq.tunable .fd{cursor:ns-resize}
 .band-freq.tunable .fd:hover{background:rgba(52,211,153,.16);border-radius:4px;box-shadow:0 0 0 1px rgba(52,211,153,.45) inset}
-.band-freq.tunable .fd:hover::before,
-.band-freq.tunable .fd:hover::after{position:absolute;left:0;right:0;text-align:center;
-  font-size:10px;line-height:1;color:var(--tft-pill-fg);opacity:.95;pointer-events:none}
-.band-freq.tunable .fd:hover::before{content:"▲";top:-9px}
-.band-freq.tunable .fd:hover::after{content:"▼";bottom:-9px}
+/* typing a frequency: the entry takes the digits' place (and their size), the hint the function strip's */
+.vfo-entry{display:flex;align-items:baseline;gap:.25em;padding:.04em .2em .08em;border:1px solid var(--accent);border-radius:4px;
+  background:var(--field);box-shadow:0 0 0 3px var(--accent-tint);line-height:1}
+.vfo-entry input{width:8.6ch;min-width:0;padding:0;margin:0;border:0;outline:none;background:none;
+  font:800 1em/1 var(--font-ui);letter-spacing:-.01em;color:var(--tft-digit);caret-color:var(--accent-hi);font-variant-numeric:tabular-nums}
+.vfo-entry input::placeholder{color:var(--tft-digit-dim);opacity:.55}
+.vfo-entry .ve-unit{font:700 max(11px,.28em)/1 var(--font-ui);color:var(--tft-digit-dim)}
+.ve-hint{grid-area:ind;margin:0;font-size:11px;line-height:15px;color:var(--tft-digit-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ve-hint.err{color:var(--danger-hi)}
+.bandrow.typing .ind-strip{display:none}
 
-/* ---- S-meter ---- */
-.meter{display:grid;grid-template-columns:1fr auto;grid-template-rows:auto auto;gap:2px 8px;margin:0}
+/* ---- the meter, along the bottom of the VFO tile: S on receive (scale above the bar), on transmit the TX meter
+   picked with its keys (its scale under the bar, from the radio's CI-V reference: app.js renderMeter); a
+   mark on the bar holds the highest reading for a moment, then falls back. The reading has its corner to
+   itself, right-aligned, so it never moves. ---- */
+.meter{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"scale read" "bar read" "txs keys";
+  column-gap:12px;row-gap:2px;align-items:center;margin:0;padding-top:6px;border-top:1px solid var(--tft-border)}
 /* each scale label sits at the value it names on the bar's 0..240 S scale (renderMeter): an S unit
    is 120/9, S9 is 120 (the middle) and +60 dB is 241, so S1 5.6 %, S9 50 %, +20 66.8 %, +40 83.6 % */
-.meter-scale{grid-column:1;position:relative;height:11px;font-size:9px;line-height:11px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+.meter-scale{grid-area:scale;position:relative;height:11px;font-size:9px;line-height:11px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
 .meter-scale span{position:absolute;top:0;transform:translateX(-50%);white-space:nowrap}
 .meter-scale span:nth-child(1){left:5.6%}
 .meter-scale span:nth-child(2){left:16.7%}
@@ -349,19 +358,33 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .meter-scale span:nth-child(6){left:66.8%}
 .meter-scale span:nth-child(7){left:83.6%}
 .meter-scale span:nth-child(8){left:100%;transform:translateX(-100%)}
+.meter-scale span:nth-child(n+6){color:var(--danger-hi)}      /* over S9 */
+.meter.tx .meter-scale{opacity:.55}
+.meter-track{grid-area:bar;position:relative}
 /* level colours belong to the SCALE, not to the fill's length: the bar is its own size container and
    the fill's gradient is one bar wide (100cqw), so a low reading is all green and the amber and red
-   only show once the reading climbs past S9 (the mic bar below works the same way) */
-.meter-bar{grid-column:1;grid-row:2;height:12px;background:var(--meter-track);border:1px solid var(--tft-border);border-radius:3px;overflow:hidden;
-  container-type:inline-size}
+   only show once the reading climbs past S9 (the mic bar below works the same way). Both are combs:
+   the track shows the dark ticks, the fill lights them. */
+.meter-bar{height:12px;border:1px solid var(--tft-border);border-radius:3px;overflow:hidden;container-type:inline-size;
+  background:repeating-linear-gradient(90deg,rgba(255,255,255,.07) 0 3px,rgba(0,0,0,0) 3px 5px),var(--meter-track)}
 .meter-fill{height:100%;width:0%;
   background:linear-gradient(90deg,var(--tft-pill-fg) 0 50%,var(--tft-amber) 66.8%,#f87171 83.6% 100%);background-size:100cqw 100%;
-  transition:width .05s linear}
-.meter-val{grid-row:1/3;grid-column:2;align-self:center;font:700 16px/1 var(--font-ui);color:var(--num);
-  min-width:54px;text-align:right;font-variant-numeric:tabular-nums}
-.meter-sel{grid-column:1/3;display:flex;gap:4px;margin-top:6px;flex-wrap:wrap}
-.m-btn{flex:1 1 auto;min-width:34px;background:var(--key);color:var(--txt);border:1px solid var(--key-edge);
-  border-radius:var(--r-sm);padding:3px 6px;cursor:pointer;font:600 11px/1.2 var(--font-ui)}
+  -webkit-mask-image:repeating-linear-gradient(90deg,#000 0 3px,rgba(0,0,0,0) 3px 5px);
+  mask-image:repeating-linear-gradient(90deg,#000 0 3px,rgba(0,0,0,0) 3px 5px);transition:width .05s linear}
+/* on transmit the colours follow the TX meter's own marks (SWR amber from 1.5, red from 2; ALC red past its zone) */
+.meter.tx .meter-fill{background:linear-gradient(90deg,var(--tft-pill-fg) 0 var(--m-warn,100%),var(--tft-amber) var(--m-warn,100%) var(--m-bad,100%),
+  #f87171 var(--m-bad,100%) 100%);background-size:100cqw 100%}
+.meter-peak{position:absolute;top:1px;bottom:1px;left:0;width:2px;margin-left:-1px;background:var(--tft-digit);opacity:.9;pointer-events:none}
+.meter-peak[hidden]{display:none}
+.meter-tx-scale{grid-area:txs;position:relative;height:11px;font-size:9px;line-height:11px;color:var(--txt-dim);font-variant-numeric:tabular-nums}
+.meter-tx-scale span{position:absolute;top:0;white-space:nowrap}
+.meter-tx-scale .zone{top:9px;height:2px;background:var(--danger)}       /* ALC: the zone to stay inside */
+.meter.tx .meter-tx-scale{color:var(--tft-digit)}
+.meter-read{grid-area:read;display:flex;align-items:baseline;justify-content:flex-end;min-width:0}
+.meter-val{font:700 16px/1 var(--font-ui);color:var(--num);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.meter-sel{grid-area:keys;display:flex;gap:3px;justify-content:flex-end;flex-wrap:nowrap}
+.m-btn{min-width:0;background:var(--key);color:var(--txt);border:1px solid var(--key-edge);
+  border-radius:var(--r-sm);padding:2px 5px;cursor:pointer;font:600 10px/1.2 var(--font-ui)}
 .m-btn:hover{background:var(--key-hi)}
 .m-btn.active{background:var(--sel-bg);color:var(--sel-fg);border-color:var(--sel-bg);font-weight:700}
 
@@ -1156,52 +1179,64 @@ body.arranging .tile-body{opacity:.6}
 @media (prefers-reduced-motion:reduce){.tile,.toast,.onair-dot{transition:none!important;animation:none!important}}
 .grid-stack-item.is-collapsed>.tile{bottom:auto;height:auto}     /* header-only card in its fixed 2-row slot (§3.11) */
 
-/* VFO tile: container-sized digits; the border follows the operating VFO (§4.2 state cues) */
+/* VFO tile: container-sized digits; the border follows the operating VFO (§4.2 state cues). The tile body is the
+   size container; the bands take what the meter along its bottom leaves. */
 .tile-vfo{container-type:size}                                   /* only fixed-position-free bodies get containment */
-.tile-vfo>.tile-fit{height:100%}
-.tile-vfo .bands{height:100%}
-.tile-vfo .bandrow{flex:1 1 0;min-height:0}
+.tile-vfo>.tile-fit{height:100%;display:flex;flex-direction:column;gap:6px}
+.tile-vfo .bands{flex:1 1 auto;min-height:0}
+.tile-vfo .bandrow{flex:0 0 auto;min-height:0}
+.tile-vfo .bandrow.active{flex:1 1 auto}                       /* the operating band takes the room the other leaves */
+.tile-vfo .meter{flex:0 0 auto}
 /* the digits are never clipped or overlapped (§3.1). The digits column is an inline-size container (its
    width comes from the row, never from the digits, which size themselves to it) with a floor that holds the
-   widest readout at the 16 px minimum (7.4 em = 118.4 px); the mode box and the side column never shrink
-   below their content (a min-content track minimum: an `auto` minimum would stop at their 56/58 px
-   min-width); a row is never narrower than its content, so a tile made narrower than that scrolls in its
-   body instead. The phone ellipsis rules above do not apply inside the tile. */
-.tile-vfo .bandrow{min-width:min-content;grid-template-columns:minmax(min-content,auto) minmax(auto,1fr) minmax(min-content,auto)}
+   widest readout at the 16 px minimum (7.4 em = 118.4 px); the offsets column never shrinks below its content
+   (a min-content track minimum); a row is never narrower than its content, so a tile made narrower than that
+   scrolls in its body instead. The phone ellipsis rules above do not apply inside the tile. */
+.tile-vfo .bandrow{min-width:min-content;grid-template-columns:minmax(auto,1fr) minmax(min-content,auto)}
 .tile-vfo .b-center{container-type:inline-size;min-width:calc(7.4 * 16px)}
 .tile-vfo .b-center .band-freq{min-width:auto;overflow:visible;text-overflow:clip}
-.tile-vfo .band-mode,.tile-vfo .band-fil,.tile-vfo .tx,.tile-vfo .b-vfo,.tile-vfo .b-band{white-space:nowrap}
-/* a narrow VFO body (e.g. the 4-column default in a 900-1000 px window): tighter row chrome, a smaller mode
-   pill and no fixed column minimums (the mode box and side column are still never narrower than their own
-   content), so the digits keep their room. (A width-only query on an element INSIDE .b-center would query
+.tile-vfo .band-mode,.tile-vfo .band-fil,.tile-vfo .band-bw,.tile-vfo .tx,.tile-vfo .b-vfo,.tile-vfo .b-band{white-space:nowrap}
+/* digit size follows the VFO tile body (container-type:size, §4.2): the height the body has left once the
+   band's lines and the meter are in (one band: 112 px of them; two: 160 px, the digits shared 1 : 0.72),
+   the §4.2 width term (7.4cqw of the tile body: --vfo-wcap is a registered <length> resolved on #bands, so
+   it computes there, against the tile body, and inherits as px) and the digits column itself (13.5cqw =
+   100 % / 7.4 em, the widest readout: 12 characters, 1296.200.000); never under 16 px. layout.js keeps the
+   tile tall enough for the 16 px digits (TILES.vfo bodyPx / bodyPxAlt). */
+@property --vfo-wcap{syntax:"<length>";inherits:true;initial-value:64px}
+#bands{--vfo-wcap:7.4cqw}
+.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 160px) / 1.72),var(--vfo-wcap),13.5cqw),64px))}
+.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 160px) / 1.72),var(--vfo-wcap),13.5cqw),64px)}
+#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc(100cqh - 112px),var(--vfo-wcap),13.5cqw),72px)}
+/* a narrow VFO body (e.g. the 4-column default in a 900-1000 px window): tighter row chrome and a smaller mode
+   pill, so the digits keep their room. (A width-only query on an element INSIDE .b-center would query
    .b-center itself; the queries below that reach in there also test the height, which only the tile body
    can answer.) */
 @container (max-width:320px){
-  .bandrow{gap:6px;padding-left:8px;padding-right:8px}
-  .b-modebox,.b-side{min-width:min-content}
-  .b-modebox .band-mode{font-size:12px;padding:1px 6px}
+  .bandrow{column-gap:6px;padding-left:8px;padding-right:8px}
+  .b-top{gap:4px}
+  .band-mode{font-size:12px;padding:1px 6px}
 }
-/* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar) with BOTH receivers: each
-   receiver becomes one line (mode, digits, indicators, VFO). The indicators only take the room left in
-   the digits column, so they are the part that gets cut, never the digits. */
-@container (max-height:120px){
+/* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar) with BOTH receivers: each receiver
+   becomes one line (its top line, the digits, the offsets), and the function strip steps aside, so the
+   digits stay readable */
+@container (max-height:220px){
   #bands.dual{gap:4px}
-  #bands.dual .bandrow{padding:2px 8px;gap:8px}
-  #bands.dual .b-modebox{flex-direction:row;gap:5px;min-width:min-content}
-  #bands.dual .b-modebox .band-mode{font-size:12px;width:auto;padding:1px 6px}
-  #bands.dual .b-center{flex-direction:row;align-items:center;gap:8px}
+  #bands.dual .bandrow{grid-template-columns:auto minmax(auto,1fr) minmax(min-content,auto);grid-template-areas:"top freq offs";
+    row-gap:0;padding:2px 8px}
+  #bands.dual .b-vfo{margin-left:6px}
+  #bands.dual .b-center{flex-direction:row;align-items:center}
   #bands.dual .b-center .band-freq{flex:0 0 auto}
-  #bands.dual .ind-strip{order:2;flex:1 1 0;min-width:0;flex-wrap:nowrap;overflow:hidden;min-height:0}
-  #bands.dual .b-side{flex-direction:row;align-items:center;gap:6px;min-width:min-content}
-  #bands.dual .b-band{flex-direction:row;align-items:baseline;gap:4px}
+  #bands.dual .ind-strip,#bands.dual .ve-hint{display:none}
+  #bands.dual .b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 70px) / 1.72),var(--vfo-wcap),13.5cqw),40px))}
+  #bands.dual .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 70px) / 1.72),var(--vfo-wcap),13.5cqw),40px)}
 }
-/* ...and when that short body is also narrow, the digits win: indicators and band name step aside */
-@container (max-height:120px) and (max-width:460px){
-  #bands.dual .ind-strip,#bands.dual .b-band{display:none}
+/* ...and when that short body is also narrow, the digits win: the band name steps aside */
+@container (max-height:220px) and (max-width:460px){
+  #bands.dual .b-band{display:none}
 }
-/* ...and at <= 320 px the filter and VFO labels step aside too: mode, digits and the TX/RX tag stay */
-@container (max-height:120px) and (max-width:320px){
-  #bands.dual .band-fil,#bands.dual .b-vfo{display:none}
+/* ...and at <= 320 px the filter, its width and the VFO step aside too: TX/RX, mode, digits stay */
+@container (max-height:220px) and (max-width:320px){
+  #bands.dual .band-fil,#bands.dual .band-bw,#bands.dual .b-vfo{display:none}
 }
 .tile:has(#bands){border-color:rgba(16,185,129,.30)}
 .tile:has(#bands.sub-active){border-color:rgba(59,130,246,.35)}
@@ -1235,13 +1270,6 @@ body.arranging .tile-body{opacity:.6}
 .tile-scope .scope-split{flex:0 0 8px}
 .tile-scope #waterfall{flex:1 1 0;min-height:0;height:auto;width:100%}
 .tile-scope .scope-ctl{flex:0 0 auto;margin:0;padding:6px 8px;border-top:1px solid var(--border)}
-/* meter: in a wide tile the selector sits beside the bar (one line), so 4 rows fit even at 22-26 px cells */
-.tile-meter{container-type:inline-size}
-@container (min-width:560px){
-  .meter{grid-template-columns:1fr auto auto}
-  .meter-val{grid-column:2}
-  .meter-sel{grid-column:3;grid-row:1/3;margin-top:0;flex-wrap:nowrap;align-self:center}
-}
 /* audio: tighter rows when its desktop tile is short */
 body[data-device=desktop] .tile-audio{container-type:size}
 @container (max-height:90px){
@@ -1392,10 +1420,9 @@ body.tr-nogrid .ui-resizable-handle{display:none!important}
 .screen .band-freq{font-style:italic;font-weight:800;letter-spacing:.01em}
 .screen .bandrow.active .band-freq{color:#fff;text-shadow:none}
 .screen .bandrow.active .b-center .band-freq{align-self:flex-start;padding-bottom:2px;border-bottom:2px solid #fff}
-.screen .band-freq .fd[data-place="10"],.screen .band-freq .fd[data-place="1"]{font-size:.62em}
+.screen .band-freq .fd-lo,.screen .band-freq .fdsep.lo{font-size:.62em}
 .screen .band-freq .fdsep{opacity:1}
 .screen .band-freq.tunable .fd:hover{background:rgba(255,255,255,.16);box-shadow:0 0 0 1px rgba(255,255,255,.5) inset}
-.screen .band-freq.tunable .fd:hover::before,.screen .band-freq.tunable .fd:hover::after{color:#fff}
 .screen .band-mode{background:transparent;color:#fff;border-radius:0;box-shadow:inset 0 0 0 1.5px #fff}
 .screen .bandrow:not(.active) .band-mode,.screen .bandrow:not(.active) .b-vfo{background:transparent;color:var(--tft-digit-dim);
   box-shadow:inset 0 0 0 1.5px #46506a}
@@ -1414,7 +1441,12 @@ body.tr-nogrid .ui-resizable-handle{display:none!important}
 .screen .meter-fill{background:linear-gradient(90deg,#fff 0 50cqw,#ff4d3d 50cqw 100cqw);background-size:100cqw 100%;
   -webkit-mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px);
   mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px)}
+.screen .meter.tx .meter-fill{background:linear-gradient(90deg,#fff 0 var(--m-warn,100%),var(--warn) var(--m-warn,100%) var(--m-bad,100%),
+  #ff4d3d var(--m-bad,100%) 100%);background-size:100cqw 100%}
 .screen .meter-val{font:italic 800 18px/1 var(--font-ui)}
+.screen .meter-tx-scale{height:14px;font:italic 700 11px/1.2 var(--font-ui)}
+.screen .vfo-entry{border-radius:0;border-color:#fff;box-shadow:none;background:rgba(0,0,0,.35)}
+.screen .vfo-entry input{font-style:italic;color:#fff;caret-color:#fff}
 .screen .mic-bar{border:0;border-radius:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,0) 0 2px,#000 2px 5px),#343a4c}
 .screen .mic-bar-fill{background:#fff;-webkit-mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px);
   mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px)}

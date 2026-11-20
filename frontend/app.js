@@ -412,15 +412,93 @@
   }
 
   // ---- state -> UI ----
-  // Meter render reads the live `state`; driven both by full-state frames and the fast
-  // 'meter' channel (which carries only meter/meter_val/smeter/smeter_s between full frames).
+  // The meter, along the bottom of the VFO tile. On receive the bar is the S-meter (0..240, S9 in the middle,
+  // its scale above the bar). On transmit it is the TX meter picked with the keys (state.meter, PO unless
+  // the radio has none), 0..255, on its own scale under the bar from the radio's CI-V reference
+  // (profile.meter_marks); a meter with no marks shows the radio's raw reading on an unmarked bar. A mark on the
+  // bar holds the highest reading for PEAK_HOLD_MS, then falls back at PEAK_FALL % of the bar a second; the
+  // reading itself stays where it is (nothing beside it comes and goes). Driven by full-state frames and by
+  // the fast 'meter' channel (which carries only meter / meter_val / smeter / smeter_s between them).
+  const METER_LABEL = { PO: "Po", SWR: "SWR", ALC: "ALC", COMP: "COMP", Vd: "Vd", Id: "Id" };
+  const PEAK_HOLD_MS = 1000, PEAK_FALL = 40;
+  const meterPeak = { pct: 0, at: 0, kind: "" };
+  function meterMarks(key) { const mm = currentRadio && currentRadio.meter_marks; return (mm && mm[key]) || null; }
+  function meterValue(pts, raw) {               // the reference's points, joined by straight lines (the last one runs on)
+    if (raw <= pts[0][0]) return pts[0][1];
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1], b = pts[i];
+      if (raw <= b[0]) return a[1] + (b[1] - a[1]) * (raw - a[0]) / ((b[0] - a[0]) || 1);
+    }
+    const a = pts[pts.length - 2] || [0, 0], b = pts[pts.length - 1];
+    return b[1] + (b[1] - a[1]) * (raw - b[0]) / ((b[0] - a[0]) || 1);
+  }
+  function meterText(key, raw) {
+    const lab = METER_LABEL[key] || key, mk = meterMarks(key);
+    if (!mk || !Array.isArray(mk.pts) || mk.pts.length < 2) return lab + " " + raw;
+    const last = mk.pts[mk.pts.length - 1];
+    if (key === "SWR") return lab + " " + (raw > last[0] ? ">" + last[1].toFixed(1) : meterValue(mk.pts, raw).toFixed(1));
+    const v = meterValue(mk.pts, raw), n = mk.unit === "%" ? Math.round(v) : Math.round(v * 10) / 10;
+    return lab + " " + n + (mk.unit === "%" ? "%" : mk.unit ? " " + mk.unit : "");
+  }
+  // the TX scale under the bar: the picked meter's name, its marks at their readings (0..255), the unit on the
+  // last; ALC's zone as a red line; the bar's amber / red from the meter's warn / bad readings
+  function renderTxScale() {
+    const el = $("meterTxScale"), blk = $("meterBlock");
+    if (!el) return;
+    const st = state || {}, key = st.meter && st.meter !== "S" ? st.meter : "PO";
+    const mk = meterMarks(key), at = (raw) => Math.max(0, Math.min(100, raw / 255 * 100));
+    el.textContent = "";
+    const add = (text, pct, align) => {
+      const sp = document.createElement("span");
+      sp.textContent = text;
+      sp.style.left = pct + "%";
+      sp.style.transform = align === "start" ? "none" : align === "end" ? "translateX(-100%)" : "translateX(-50%)";
+      el.appendChild(sp);
+    };
+    add(METER_LABEL[key] || key, 0, "start");
+    if (mk && Array.isArray(mk.pts) && mk.pts.length > 1) {
+      if (key === "ALC") {
+        const z = document.createElement("span");
+        z.className = "zone";
+        z.style.left = "0"; z.style.width = at(mk.pts[mk.pts.length - 1][0]) + "%";
+        el.appendChild(z);
+      } else {
+        let lastPct = 0;
+        const pts = mk.pts.filter((pt) => pt[0] > 0);
+        pts.forEach((pt, i) => {
+          const pct = at(pt[0]);
+          if (pct - lastPct < 8) return;                     // too close to the one before (Vd's 10 V at 5 %)
+          const unit = i === pts.length - 1 ? (mk.unit === "%" ? "%" : mk.unit ? " " + mk.unit : "") : "";
+          add(String(pt[1]) + unit, pct, pct > 92 ? "end" : "");
+          lastPct = pct;
+        });
+      }
+    }
+    if (blk) {
+      blk.style.setProperty("--m-warn", mk && mk.warn ? at(mk.warn) + "%" : "100%");
+      blk.style.setProperty("--m-bad", mk && mk.bad ? at(mk.bad) + "%" : "100%");
+    }
+  }
   function renderMeter() {
-    const s = state || {};
-    const isS = (s.meter || "S") === "S";
-    const mmax = isS ? 240 : (s.meter_max || 255);
-    const mf = $("meterFill"), mv = $("meterVal");
-    if (mf) mf.style.width = Math.min(100, (s.meter_val || 0) / mmax * 100) + "%";
-    if (mv) mv.textContent = isS ? (s.smeter_s || "S0") : (s.meter + " " + (s.meter_val || 0));
+    const s = state || {}, blk = $("meterBlock");
+    const tx = !!s.ptt && !!s.meter && s.meter !== "S";
+    const kind = tx ? s.meter : "S";
+    const pct = tx ? Math.min(100, (s.meter_val || 0) / 255 * 100) : Math.min(100, (s.smeter || 0) / 240 * 100);
+    const text = tx ? meterText(kind, s.meter_val || 0) : (s.smeter_s || "S0");
+    if (blk) {
+      blk.classList.toggle("tx", tx);
+      const scaleKey = (s.meter || "") + "|" + ((currentRadio && currentRadio.id) || "");
+      if (blk.dataset.scale !== scaleKey) { blk.dataset.scale = scaleKey; renderTxScale(); }
+    }
+    const mf = $("meterFill"), mv = $("meterVal"), pk = $("meterPeak");
+    if (mf) mf.style.width = pct + "%";
+    if (mv) mv.textContent = text;
+    // the peak mark: the highest reading holds, then falls back; it starts over when the meter shown changes
+    const now = Date.now();
+    if (meterPeak.kind !== kind) { meterPeak.kind = kind; meterPeak.pct = pct; meterPeak.at = now; }
+    let mark = meterPeak.pct - Math.max(0, now - meterPeak.at - PEAK_HOLD_MS) / 1000 * PEAK_FALL;
+    if (pct >= mark) { meterPeak.pct = mark = pct; meterPeak.at = now; }
+    if (pk) { pk.hidden = !(mark > pct + 0.5); pk.style.left = mark + "%"; }
   }
   function updateMeter(m) {
     state.meter = m.meter; state.meter_val = m.meter_val;
@@ -479,6 +557,13 @@
     $("rowSub").classList.toggle("active", s.active_band === "sub");
     setInd("mainInd", s, s.active_band !== "sub");
     setInd("subInd", s, s.active_band === "sub");
+    setOffs("mainOffs", s, s.active_band !== "sub");
+    setOffs("subOffs", s, s.active_band === "sub");
+    // a frequency being typed: closed once its band is not the operating one, or the radio goes away
+    if (window.FreqEntry && FreqEntry.isOpen()) {
+      const r = FreqEntry.row();
+      if (!s.connected || blanked || !r || !r.classList.contains("active")) FreqEntry.close();
+    }
 
     // multi-meter (S live; TX meters wired for M3). The value also arrives on the fast
     // lightweight 'meter' channel between full-state frames — render via the shared helper.
@@ -585,22 +670,38 @@
     el._hz = hz; el._int = interactive;
     el.classList.toggle("tunable", !!interactive);
     const s = formatFreq(hz), ndig = (s.match(/\d/g) || []).length;
-    let html = "", di = 0;
+    // the operating band's digits are a button: click (or Enter / Space) types a frequency (freqentry.js)
+    if (interactive) {
+      el.tabIndex = 0;
+      el.setAttribute("role", "button");
+      el.setAttribute("aria-label", s + " MHz. Press Enter to type a frequency");
+      el.title = "Click to type a frequency; scroll over a digit to tune it";
+    } else {
+      el.removeAttribute("tabindex"); el.removeAttribute("role"); el.removeAttribute("aria-label"); el.removeAttribute("title");
+    }
+    el.textContent = "";
+    let di = 0;
     for (const ch of s) {
+      const sp = document.createElement("span");
       if (ch >= "0" && ch <= "9") {
-        html += '<span class="fd" data-place="' + Math.pow(10, ndig - 1 - di) + '">' + ch + "</span>";
+        const place = Math.pow(10, ndig - 1 - di);
+        sp.className = "fd" + (place < 1000 ? " fd-lo" : "");   // under the kHz: small
+        sp.dataset.place = String(place);
         di++;
       } else {
-        html += '<span class="fdsep">' + ch + "</span>";
+        sp.className = "fdsep" + (ndig - di <= 3 ? " lo" : "");  // the point before the Hz: small too
       }
+      sp.textContent = ch;
+      el.appendChild(sp);
     }
-    el.innerHTML = html;
   }
   function fillBand(name, b, active, data) {
     if (!b) return;
     renderFreq($(name + "Freq"), b.freq, !!active);
     $(name + "Mode").textContent = (b.mode_name || "") + (data && b.mode_name ? "-D" : "");   // USB-D, like the radio
     $(name + "Fil").textContent = b.filter_name || "";
+    const bw = $(name + "Bw");
+    if (bw) bw.textContent = active && knowsFilterWidth() && state.filter_bw ? fmtBw(state.filter_bw) : "";
     const bn = bandOf(b.freq);
     const lbl = $(name + "Band");
     if (lbl) lbl.textContent = BAND_LABEL[bn] || (bn ? bn + " m" : "");
@@ -610,16 +711,50 @@
   function setInd(elId, s, isActive) {
     const el = $(elId);
     if (!el) return;
-    if (!isActive) { el.innerHTML = ""; return; }
+    if (!isActive) { el.textContent = ""; return; }
+    const yaesu = !!(currentRadio && currentRadio.protocol === "yaesu");
+    const pre = (currentRadio && currentRadio.preamp_labels) || ["OFF", "P.AMP"];
     const inds = [["AGC-" + ({ 1: "F", 2: "M", 3: "S" }[s.agc || 2]), "amber"]];
-    if ((s.preamp || 0) > 0) inds.push(["P.AMP", ""]);
+    if ((s.preamp || 0) > 0) inds.push([pre[s.preamp] || "P.AMP", ""]);     // P.AMP; AMP1 / AMP2 on a Yaesu
     if ((s.att || 0) > 0) inds.push(["ATT", ""]);
     if (s.nb) inds.push(["NB", ""]);
-    if (s.nr) inds.push(["NR", ""]);
-    if (s.anotch) inds.push(["AN", ""]);
+    if (s.nr) inds.push([yaesu ? "DNR" : "NR", ""]);
+    if (s.anotch) inds.push([yaesu ? "DNF" : "AN", ""]);
     if (s.mnotch) inds.push(["MN", ""]);
-    el.innerHTML = inds.map(([t, c]) => '<span class="ind ' + c + '">' + t + "</span>").join("");
+    if (s.narrow) inds.push(["NAR", ""]);
+    if (s.comp) inds.push(["COMP", ""]);
+    if (s.vox) inds.push(["VOX", ""]);
+    if (s.mon) inds.push(["MON", ""]);
+    el.textContent = "";
+    for (const [t, c] of inds) { const sp = document.createElement("span"); sp.className = "ind" + (c ? " " + c : ""); sp.textContent = t; el.appendChild(sp); }
   }
+  // beside the digits: RIT with its offset (kHz), split, duplex with its offset (MHz), the tone, the dial lock
+  function setOffs(elId, s, isActive) {
+    const el = $(elId);
+    if (!el) return;
+    const out = [];
+    if (isActive) {
+      if (s.rit) {
+        const k = (s.rit_freq || 0) / 1000;
+        out.push("RIT " + (k > 0 ? "+" : k < 0 ? "\u2212" : "\u00b1") + Math.abs(k).toFixed(2));
+      }
+      if ((s.split || 0) > 0) out.push("SPLIT");
+      if ((s.duplex || 0) > 0) out.push((s.duplex === 1 ? "DUP\u2212" : "DUP+") + (s.offset ? " " + (s.offset / 1e6).toFixed(3) : ""));
+      else if ((s.rpt_shift || 0) > 0) out.push(s.rpt_shift === 1 ? "DUP+" : "DUP\u2212");
+      const tone = ["", "TSQL", "TONE", "DCS", "DCS"][s.tone_mode || 0];
+      if (tone && /FM/.test(s.mode_name || "")) out.push(tone);
+      if (s.lock) out.push("LOCK");
+    }
+    el.textContent = "";
+    for (const t of out) { const sp = document.createElement("span"); sp.className = "ind amber"; sp.textContent = t; el.appendChild(sp); }
+  }
+  // the Icom CI-V radios report their filter, and the profile's filter table gives its width; a Yaesu's widths are
+  // menu settings TeleRig doesn't read, and the IC-728 has no filter command: no width shown for those
+  function knowsFilterWidth() {
+    const p = currentRadio;
+    return !!p && p.protocol !== "yaesu" && !(p.capabilities && Array.isArray(p.capabilities.meters) && !p.capabilities.meters.length);
+  }
+  const fmtBw = (hz) => (hz >= 1000 ? Math.round(hz / 100) / 10 + " kHz" : Math.round(hz) + " Hz");
 
   const DATA_MODES = ["LSB", "USB", "AM", "FM"];   // the modes with a DATA (-D) variant (backend Radio.DATA_MODES)
   function bandOf(hz) {
@@ -873,9 +1008,12 @@
   // frequency entry
   $("freqSet").onclick = setFreqFromEntry;
   $("freqEntry").addEventListener("keydown", e => { if (e.key === "Enter") setFreqFromEntry(); });
-  function setFreqFromEntry() {
-    const v = parseFloat($("freqEntry").value);
-    if (!isNaN(v)) send({ action: "set_freq", hz: Math.round(v * 1e6) });
+  function setFreqFromEntry() {                 // MHz, kHz, .230 ...: the same rules as typing into the VFO (freqentry.js)
+    const box = $("freqEntry"), F = window.FreqEntry;
+    if (!F) { const v = parseFloat(box.value); if (!isNaN(v)) send({ action: "set_freq", hz: Math.round(v * 1e6) }); return; }
+    const r = F.parse(box.value, state.freq, F.rangesOf(currentRadio));
+    if (r.error) { TR.toast(r.error, "warn"); return; }
+    send({ action: "set_freq", hz: r.hz });
   }
 
   // step select
@@ -1380,35 +1518,43 @@
     scWheelEnd = setTimeout(flushTune, 150);          // the wheel's end: the trailing delta
   }, { passive: false });
 
-  // ---- per-digit VFO tuning (click the readout digits up/down, or scroll them) ----
+  // ---- the VFO digits: click (or Enter / Space) to type a frequency (freqentry.js); scroll a digit to tune it ----
   const bandsEl = $("bands");
   trackHover(bandsEl);
-  function digitDelta(d, up, viaWheel) {
+  function digitDelta(d, up) {                        // the wheel over a digit: +/- that digit's place
     const place = +d.dataset.place || 0;
     if (!place) return;
     const row = d.closest(".bandrow");
-    if (row && !row.classList.contains("active")) {   // clicking the non-operating band selects it first
+    if (row && !row.classList.contains("active")) {   // the non-operating band is selected first
       send({ action: "select_band", band: row.dataset.band });
       return;
     }
     const hz = Math.max(0, (state.freq || 0) + (up ? place : -place));
-    state.freq = hz;                                  // optimistic so rapid clicks/scrolls accumulate
-    if (viaWheel) sendSoon("freq", { action: "set_freq", hz });
-    else sendNow("freq", { action: "set_freq", hz });
+    state.freq = hz;                                  // optimistic so a fast scroll accumulates
+    sendSoon("freq", { action: "set_freq", hz });
+  }
+  // the operating band's digits: type a frequency there (the other band's row selects that band, as before)
+  function typeAt(e) {
+    const f = e.target.closest(".band-freq"), row = f && f.closest(".bandrow");
+    if (!row || !row.classList.contains("active")) return false;
+    e.stopPropagation();                              // don't also fire the row's band-select
+    if (TR.can("operate") && !Layout().arranging() && window.FreqEntry) FreqEntry.open(row);
+    return true;
   }
   if (bandsEl) {
     let digitWheelEnd = 0;
     bandsEl.addEventListener("click", (e) => {
-      const d = e.target.closest(".fd"); if (!d) return;
-      e.stopPropagation();                            // don't also fire the row's band-select
-      if (!TR.can("operate") || Layout().arranging()) return;
-      digitDelta(d, e.offsetY < d.clientHeight / 2, false);
+      if (e.target.closest(".vfo-entry,.ve-hint")) { e.stopPropagation(); return; }   // typing: not a band-select
+      typeAt(e);
+    });
+    bandsEl.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("band-freq") && typeAt(e)) e.preventDefault();
     });
     bandsEl.addEventListener("wheel", (e) => {
       const d = e.target.closest(".fd"); if (!d) return;
       if (!TR.can("operate") || Layout().arranging() || !hoverIntent(bandsEl)) return;
       e.preventDefault();
-      digitDelta(d, e.deltaY < 0, true);
+      digitDelta(d, e.deltaY < 0);
       clearTimeout(digitWheelEnd);
       digitWheelEnd = setTimeout(() => flushKey("freq"), 150);
     }, { passive: false });
@@ -1871,9 +2017,10 @@
       const list = ["nb", "nr", "anotch", "mnotch"].includes(fn) ? cap.rx_dsp : cap.tx_funcs;
       if (Array.isArray(list)) b.style.display = list.includes(fn) ? "" : "none";
     });
-    // meter buttons: only the meters the rig supports
+    // meter buttons: only the meters the rig supports; its own TX scale (meter_marks), the peak starts over
     if (Array.isArray(cap.meters)) document.querySelectorAll('[data-act="meter"][data-meter]')
       .forEach(b => { b.style.display = cap.meters.includes(b.dataset.meter) ? "" : "none"; });
+    meterPeak.kind = ""; renderTxScale();
     // no-scope radios (Yaesu CAT): hide the scope-only controls, show the notice
     const noScope = p.has_scope === false;
     const ns = $("noScope"); if (ns) ns.hidden = !noScope;
@@ -1892,8 +2039,7 @@
     { const mb = $("micBtn"); if (mb) mb.style.display = canPtt ? "" : "none"; }
     { const mid = $("micInDev"); if (mid && mid.closest(".sl")) mid.closest(".sl").style.display = canPtt ? "" : "none"; }
     { const mm = $("micMeter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
-    // meter block: hide entirely when the rig exposes no meters over the control link (S-bar included);
-    // the METER tile itself is gated by layout.js (§3.8)
+    // meter block (in the VFO tile): hidden when the rig exposes no meters over the control link (S-bar included)
     { const mtr = $("meterBlock");
       if (mtr) mtr.style.display = (Array.isArray(cap.meters) && cap.meters.length === 0) ? "none" : ""; }
     // control-panel tabs: hide the ones the rig can't drive + the Settings tab when it has no menu

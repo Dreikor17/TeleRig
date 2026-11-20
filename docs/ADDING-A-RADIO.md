@@ -197,6 +197,17 @@ radio, in `backend/rigctl.py`:
      Take the side and pitch from the manual (the CW pitch / display menus, or the BFO table:
      the IC‑728's 9.01060 MHz CW TX vs 9.00980 MHz CW RX = an LSB‑side 800 Hz). The frequency
      map itself is `AfMap` in `frontend/waterfall.js` (tests: `tests/af_scope_test.js`).
+   - **`rx_ranges`** — what the radio receives, `[(lo_hz, hi_hz), ...]`, from the manual's
+     specifications (every band in `bands` must lie inside it: `backend/vfo_meter_test.py`). A
+     frequency typed into the VFO (or the Controls box) is tuned only inside it, and a bare number
+     counts as MHz where the radio receives there, else as kHz or Hz (`frontend/freqentry.js`): so
+     `7074` is 7.074 MHz on an HF radio, while `1296` on the IC‑9700 is 1296 MHz.
+   - **`meter_marks`** — where each TX meter's raw 0..255 reading means something, from the
+     radio's CI‑V reference (`15 11`..`16`): `{"PO": {"unit": "%", "pts": [[0, 0], [143, 50],
+     [213, 100]]}, "SWR": {..., "warn": 48, "bad": 80}, ...}`. The VFO's meter puts them on its TX
+     scale and in its readout and turns the bar amber / red at `warn` / `bad`. Copy them from the
+     reference exactly (the IC‑9700 and IC‑7300MK2 differ in COMP and Id); a radio whose reference
+     gives only the raw range (the Yaesu CAT `RM`) leaves it empty and shows the raw reading.
 2. **SET‑menu table (recommended)** — to expose the radio's full menu in the Setup tab, add
    `backend/menus/<id>_menu.py`: one `MenuItem` per entry (num, name, group,
    `kind`=enum|int|signed‑int, **`digits` = the manual's exact wire width** — for signed it

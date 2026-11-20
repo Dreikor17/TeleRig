@@ -106,36 +106,55 @@
         <button type="button" class="tile-btn tile-remove" aria-label="Remove VFO panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </header>
+    <!-- The VFO, laid out like an Icom main screen: per band a top line (TX/RX, mode, filter and its width, the
+         VFO, the band), the digits (click them to type a frequency, freqentry.js; scroll a digit to tune it) with
+         the offsets beside them (RIT, split, duplex, lock), and the lit function strip; the meter along the
+         bottom: S on receive, the TX meter picked with its keys on transmit, a peak mark on the bar (app.js
+         renderMeter). -->
     <div class="tile-body tile-vfo" data-gate="operate"><div class="tile-fit">
       <div class="bands tft" id="bands" data-gate="operate">
         <div class="bandrow active" data-act="select_band" data-band="main" id="rowMain" title="Operate the MAIN band">
-          <div class="b-modebox">
+          <div class="b-top">
+            <span class="tx" id="txTag">RX</span>
             <b class="band-mode" id="mainMode">USB</b>
             <i class="band-fil" id="mainFil">FIL1</i>
-          </div>
-          <div class="b-center">
-            <div class="ind-strip" id="mainInd"></div>
-            <div class="band-freq" id="mainFreq">—</div>
-          </div>
-          <div class="b-side">
-            <span class="tx" id="txTag">RX</span>
+            <span class="band-bw" id="mainBw"></span>
             <span class="b-vfo" id="mainVfo">VFO A</span>
             <span class="b-band"><b class="band-tag">MAIN</b><i id="mainBand"></i></span>
           </div>
+          <div class="b-center">
+            <div class="band-freq" id="mainFreq">—</div>
+          </div>
+          <div class="b-offs" id="mainOffs"></div>
+          <div class="ind-strip" id="mainInd"></div>
         </div>
         <div class="bandrow" data-act="select_band" data-band="sub" id="rowSub" title="Operate the SUB band">
-          <div class="b-modebox">
+          <div class="b-top">
             <b class="band-mode" id="subMode">FM</b>
             <i class="band-fil" id="subFil">FIL1</i>
-          </div>
-          <div class="b-center">
-            <div class="ind-strip" id="subInd"></div>
-            <div class="band-freq" id="subFreq">—</div>
-          </div>
-          <div class="b-side">
+            <span class="band-bw" id="subBw"></span>
             <span class="b-vfo" id="subVfo">VFO A</span>
             <span class="b-band"><b class="band-tag">SUB</b><i id="subBand"></i></span>
           </div>
+          <div class="b-center">
+            <div class="band-freq" id="subFreq">—</div>
+          </div>
+          <div class="b-offs" id="subOffs"></div>
+          <div class="ind-strip" id="subInd"></div>
+        </div>
+      </div>
+      <div class="meter" id="meterBlock">
+        <div class="meter-scale"><span>S1</span><span>3</span><span>5</span><span>7</span><span>9</span><span>+20</span><span>+40</span><span>+60</span></div>
+        <div class="meter-track"><div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div><i class="meter-peak" id="meterPeak" aria-hidden="true"></i></div>
+        <div class="meter-tx-scale" id="meterTxScale" aria-hidden="true"></div>
+        <div class="meter-read" aria-live="off"><b class="meter-val" id="meterVal">S0</b></div>
+        <div class="meter-sel" id="meterSel" data-gate="operate" role="group" aria-label="TX meter">
+          <button class="m-btn" data-act="meter" data-meter="PO" title="Power output">Po</button>
+          <button class="m-btn" data-act="meter" data-meter="SWR" title="Standing wave ratio">SWR</button>
+          <button class="m-btn" data-act="meter" data-meter="ALC" title="Automatic level control">ALC</button>
+          <button class="m-btn" data-act="meter" data-meter="COMP" title="Speech compression">COMP</button>
+          <button class="m-btn" data-act="meter" data-meter="Vd" title="Drain voltage">Vd</button>
+          <button class="m-btn" data-act="meter" data-meter="Id" title="Drain current">Id</button>
         </div>
       </div>
     </div></div>
@@ -196,41 +215,6 @@
         <div class="host-audio-info" id="hostAudioInfo" hidden></div>
         <div class="mic-meter" id="micMeter" data-tx><span>MIC</span><div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div></div>
         <label class="sl" title="Volume: 0 dB is the audio as the radio sends it; up to +24 dB more"><span>VOL</span><input type="range" min="0" max="100" step="1" id="vol" value="60"><b class="sl-val" id="volVal">0 dB</b></label>
-      </div>
-    </div></div>
-  </section>
-</div>
-
-<div class="grid-stack-item" gs-id="meter" data-tile="meter">
-  <section class="grid-stack-item-content tile" aria-labelledby="th-meter">
-    <header class="tile-head">
-      <svg class="tile-icon" aria-hidden="true"><use href="#i-gauge"/></svg>
-      <h2 class="tile-title" id="th-meter">METER</h2>
-      <span class="tile-summary" aria-hidden="true"></span>
-      <div class="tile-actions">
-        <button type="button" class="tile-btn tile-up" aria-label="Move Meter up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
-        <button type="button" class="tile-btn tile-down" aria-label="Move Meter down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
-        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Meter" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
-        <button type="button" class="tile-btn tile-remove" aria-label="Remove Meter panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
-      </div>
-    </header>
-    <div class="tile-body tile-meter"><div class="tile-fit">
-      <div class="meter" id="meterBlock">
-        <div class="meter-scale">
-          <span>S1</span><span>3</span><span>5</span><span>7</span><span>9</span>
-          <span>+20</span><span>+40</span><span>+60</span>
-        </div>
-        <div class="meter-bar"><div class="meter-fill" id="meterFill"></div></div>
-        <div class="meter-val" id="meterVal">S0</div>
-        <div class="meter-sel" id="meterSel" data-gate="operate">
-          <button class="m-btn active" data-act="meter" data-meter="S">S</button>
-          <button class="m-btn" data-act="meter" data-meter="PO">PO</button>
-          <button class="m-btn" data-act="meter" data-meter="SWR">SWR</button>
-          <button class="m-btn" data-act="meter" data-meter="ALC">ALC</button>
-          <button class="m-btn" data-act="meter" data-meter="COMP">COMP</button>
-          <button class="m-btn" data-act="meter" data-meter="Vd">Vd</button>
-          <button class="m-btn" data-act="meter" data-meter="Id">Id</button>
-        </div>
       </div>
     </div></div>
   </section>
@@ -761,6 +745,7 @@
 <script src="/static/bandplan.js"></script>
 <script src="/static/layout.js"></script>
 <script src="/static/app.js"></script>
+<script src="/static/freqentry.js"></script>
 <script src="/static/cwtool.js"></script>
 <script src="/static/vendor/lamejs/lame.min.js?v=1.2.1"></script>
 <script src="/static/recorder.js"></script>

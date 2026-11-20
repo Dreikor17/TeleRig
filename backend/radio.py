@@ -139,6 +139,17 @@ def smeter_label(level: int) -> str:
     return f"S9+{db}"
 
 
+# The TX meters PO / SWR / ALC / COMP read 0 on receive (the CI-V references say so), so they are polled
+# only while the radio transmits; Vd and Id mean something on receive too (the supply), so always.
+RX_METERS = ("Vd", "Id")
+
+
+def tx_meter_due(state: dict) -> bool:
+    """Poll the selected TX meter this cycle? (S comes from its own read every cycle.)"""
+    key = state.get("meter", "S")
+    return key != "S" and (bool(state.get("ptt")) or key in RX_METERS)
+
+
 def fresh_state(p) -> dict:
     """Initial UI/state dict for a profile — shared by the CI-V Radio and the
     Yaesu CAT radio so both speak the same shape to the frontend."""
@@ -167,7 +178,8 @@ def fresh_state(p) -> dict:
         "active_band": "main",
         "main": {"freq": p.default_freq, "mode_name": "USB", "filter_name": "FIL1", "smeter": 0, "smeter_s": "S0"},
         "sub":  {"freq": sub_freq, "mode_name": "FM", "filter_name": "FIL1", "smeter": 0, "smeter_s": "S0"},
-        "meter": "S",
+        # the TX meter the VFO shows while transmitting (it shows S on receive): PO, where the radio has it
+        "meter": "PO" if "PO" in ((p.capabilities.meters if p.capabilities else None) or []) else "S",
         "meter_val": 0,
         "meter_max": civ.METER_MAX,
         "meter_keys": civ.METER_KEYS,
@@ -659,7 +671,7 @@ class Radio:
                 if self._cw_deadline and time.monotonic() >= self._cw_deadline:
                     self.stop_cw()
                 self._write(self._b(0x15, 0x02))         # S-meter (active band) — every tick
-                if self.state["meter"] != "S":           # selected TX meter for the big bar
+                if tx_meter_due(self.state):             # the selected TX meter, for the VFO's bar
                     self._write(self._b(0x15, civ.METER_SUBS[self.state["meter"]]))
                 if tick % tx_n == 0:
                     # Is the radio transmitting, whoever keyed it (TeleRig, the front panel, the

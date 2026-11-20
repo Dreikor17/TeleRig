@@ -203,6 +203,16 @@ class RadioProfile:
     # "?" popover. [{"title": str, "items": [str, ...]}, ...]
     connect_help: list = field(default_factory=list)
     preamp_labels: list = field(default_factory=lambda: ["OFF", "P.AMP"])  # preamp states (index = code)
+    # Receive coverage in Hz, [(lo, hi), ...], from the manual's specifications. A frequency typed into
+    # the VFO is tuned only inside it, and a bare number counts as MHz, else kHz, else Hz, whichever
+    # lands inside (7074 -> 7.074 MHz; 1296 on the IC-9700 -> 1296 MHz). [] = the bands' own edges.
+    rx_ranges: list = field(default_factory=list)
+    # Where a TX meter's raw 0..255 reading means something, per meter key, from the radio's CI-V
+    # reference: {"PO": {"unit": "%", "pts": [[0, 0], [143, 50], [213, 100]]}, ...}; optional "warn" /
+    # "bad" = the raw reading where the bar turns amber / red. The VFO's meter puts these values on its
+    # TX scale and in its readout. A meter with no marks shows its raw reading on an unmarked bar (the
+    # Yaesu CAT references give only the 0..255 range). See docs/ADDING-A-RADIO.md.
+    meter_marks: dict = field(default_factory=dict)
     # v2 declarative blocks — synthesized from the flat flags above when not given,
     # so the existing profiles keep working unchanged (see __post_init__).
     transports: Optional["Transports"] = None
@@ -258,6 +268,8 @@ class RadioProfile:
             "has_att": self.has_att,
             "has_tuner": self.has_tuner,
             "preamp_labels": self.preamp_labels,
+            "rx_ranges": [[int(lo), int(hi)] for lo, hi in self.rx_ranges],
+            "meter_marks": self.meter_marks,
             "has_cw_tx": bool(self.cw_send),
             "cw_sides": self.cw_sides, "cw_pitch_hz": self.cw_pitch_hz,
             "transports": asdict(self.transports) if self.transports else None,
@@ -267,6 +279,15 @@ class RadioProfile:
         }
 
 
+# Icom meter readings (CI-V 15 11..16), as the IC-9700 and IC-7300MK2 CI-V references give them; COMP and Id
+# differ between the two (their own tables below).
+_ICOM_METERS = {
+    "PO":  {"unit": "%", "pts": [[0, 0], [143, 50], [213, 100]]},
+    "SWR": {"unit": "", "pts": [[0, 1.0], [48, 1.5], [80, 2.0], [120, 3.0]], "warn": 48, "bad": 80},
+    "ALC": {"unit": "%", "pts": [[0, 0], [120, 100]], "bad": 120},    # 0..120 = the ALC zone (100 %)
+    "Vd":  {"unit": "V", "pts": [[0, 0], [13, 10], [241, 16]]},
+}
+
 _SSB = {1: 3000, 2: 2400, 3: 1800}
 _CW = {1: 1200, 2: 500, 3: 250}
 _RTTY = {1: 2400, 2: 500, 3: 250}
@@ -275,6 +296,10 @@ from .menus.ic9700_menu import IC9700_MENU  # noqa: E402  (after MenuItem is def
 
 IC9700 = RadioProfile(
     id="ic9700", name="IC-9700", civ_addr=0xA2,
+    # receive = transmit, USA version (Basic Manual, specifications); the EUR version is narrower
+    rx_ranges=[(144_000_000, 148_000_000), (430_000_000, 450_000_000), (1_240_000_000, 1_300_000_000)],
+    meter_marks=dict(_ICOM_METERS, COMP={"unit": "dB", "pts": [[0, 0], [130, 15], [210, 25.5]]},
+                     Id={"unit": "A", "pts": [[0, 0], [121, 10], [241, 20]]}),
     modes=["LSB", "USB", "CW", "CW-R", "AM", "FM", "RTTY", "DV"],
     bands=[
         Band("144", 144_000_000, 148_000_000, 144_200_000),
@@ -319,6 +344,9 @@ from .menus.ic7300mk2_menu import IC7300MK2_MENU  # noqa: E402  (after MenuItem 
 
 IC7300MK2 = RadioProfile(
     id="ic7300mk2", name="IC-7300MK2", civ_addr=0xB6,
+    rx_ranges=[(30_000, 74_800_000)],                      # Basic Manual, specifications
+    meter_marks=dict(_ICOM_METERS, COMP={"unit": "dB", "pts": [[0, 0], [130, 15], [210, 30]]},
+                     Id={"unit": "A", "pts": [[0, 0], [97, 10], [146, 15], [241, 25]]}),
     modes=["LSB", "USB", "CW", "CW-R", "RTTY", "RTTY-R", "AM", "FM"],
     bands=[
         Band("160", 1_800_000, 2_000_000, 1_840_000),
@@ -386,6 +414,8 @@ from .menus.ft991a_menu import FT991A_MENU  # noqa: E402  (after MenuItem is def
 # civ_addr / mod_* are unused by the Yaesu path but the dataclass requires them.
 FT991A = RadioProfile(
     id="ft991a", name="FT-991A", civ_addr=0x00,
+    # Operating Manual, specifications (operating range); RM meter readings are 0..255 only: no marks
+    rx_ranges=[(30_000, 56_000_000), (118_000_000, 164_000_000), (420_000_000, 470_000_000)],
     make="Yaesu", protocol="yaesu", has_scope=False, default_baud=38400,
     # mode buttons match the radio's own labels + order (CW-USB=MD3, CW-LSB=MD7,
     # RTTY-LSB=MD6, RTTY-USB=MD9, DATA-LSB=MD8, DATA-USB=MDC, DATA-FM=MDA, C4FM=MDE).
@@ -451,6 +481,7 @@ from .menus.ft891_menu import FT891_MENU  # noqa: E402  (after MenuItem is defin
 # civ_addr / mod_* are unused by the Yaesu path but the dataclass requires them.
 FT891 = RadioProfile(
     id="ft891", name="FT-891", civ_addr=0x00,
+    rx_ranges=[(30_000, 56_000_000)],                      # CAT manual, FA / FB: 000030000 - 056000000 Hz
     make="Yaesu", protocol="yaesu", has_scope=False, has_network=False, default_baud=38400,
     # radio-accurate mode labels (no C4FM / DATA-FM on the FT-891)
     modes=["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",
@@ -524,6 +555,7 @@ FT891 = RadioProfile(
 # (IC-729 = 3Ah + 6 m). civ_addr / mod_* required by the dataclass; mod_* unused (no LAN).
 IC728 = RadioProfile(
     id="ic728", name="IC-728", civ_addr=0x38,
+    rx_ranges=[(500_000, 30_000_000)],                     # general-coverage receive 0.5-30 MHz (connect_help)
     make="Icom", protocol="civ",
     modes=["LSB", "USB", "CW", "CW-NAR", "AM", "FM"],
     bands=[

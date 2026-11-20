@@ -417,7 +417,7 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 
 # -- HTTP routes -------------------------------------------------------------
 # One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15).
-ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "cwtool.js",
+ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "freqentry.js", "cwtool.js",
           "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js", "digital.js",
           "account.js", "bridge.js", "device.js", "admin.js")
 

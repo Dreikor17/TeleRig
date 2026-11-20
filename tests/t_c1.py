@@ -287,6 +287,25 @@ def band_and_mode_keys_lit_after_reload_in_node_vm(ctx):
 
 
 @test("unit")
+def vfo_main_screen_and_typed_frequency_in_node_vm(ctx):
+    """The VFO (look A, an Icom-style main screen with the meter along its bottom) and typing a frequency, on
+    the real tr.js + app.js + freqentry.js in a Node vm (tests/vfo_test.js): the parser (MHz, the VFO's
+    grouping, a leading point, bare numbers by the radio's coverage, units, refusals), the small sub-kHz
+    digits, the filter width, the offsets and the lit strip, click / Enter to type, Enter tunes and Esc
+    cancels, the Controls box reads the same way, the meter (S on receive, the TX meter from the CI-V
+    reference's marks on transmit, a Yaesu's raw reading, the peak). Static: freqentry.js only ever sends
+    set_freq and never parses text as HTML."""
+    r = subprocess.run(["node", str(REPO / "tests" / "vfo_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"vfo_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"vfo_test.js output: {r.stdout}")
+    js = _strip_comments(_read("freqentry.js"))
+    for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", "fetch(", "WebSocket"):
+        check(bad not in js, f"freqentry.js never uses {bad}")
+    eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["set_freq"], "freqentry.js sends only set_freq")
+
+
+@test("unit")
 def recorder_panel_in_node_vm(ctx):
     """recorder.js: MP3 through LAME from the radio's own PCM (RadioAudio.tapPcm, before VOL: mono, the
     radio's 16 kHz, 48 kb/s, dropouts filled with silence), WebM/Opus via MediaRecorder on the pre-volume RX
