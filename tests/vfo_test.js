@@ -11,7 +11,7 @@
  *      or Hz (7074, 14074000), units (k / kHz / M / MHz), and refusals with the reason (144.2 on an HF
  *      radio is not 144.2 kHz); a profile without rx_ranges uses its bands
  *  T2. the digits: the sub-kHz ones small; the operating band's are a button that says what it does; the
- *      filter's width beside the filter on an Icom, none on a Yaesu
+ *      filter's width beside the filter (an Icom's slot; a Yaesu's WIDTH code; none where it isn't known)
  *  T3. beside the digits: RIT with its kHz, split, duplex with its offset, the FM tone, the dial lock; the
  *      lit strip: the radio's own preamp name, AN / DNF, COMP, VOX, MON, NAR; none of it on the other band
  *  T4. typing: a click on the digits (or Enter on them) opens the entry with a hint; Enter tunes (set_freq)
@@ -83,7 +83,6 @@ async function page(opts) {
   const fetch = (url) => Promise.resolve(String(url).split("?")[0] === "/api/radios" ? jsonResponse(200, { radios: PROFILES })
     : jsonResponse(404, { ok: false, error: "not_found" }));
   const e = makeEnv({ WebSocket: FakeWS, fetch });
-  e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };
   for (const id of ["bandRow", "modeRow", "step", "toasts"]) e.el("div", { id });
   e.el("select", { id: "radioSel" });
   const bands = e.el("div", { class: "bands tft", id: "bands" });
@@ -102,6 +101,8 @@ async function page(opts) {
   e.el("input", { id: "freqEntry", class: "freq-entry" });
   e.el("button", { id: "freqSet", class: "key" });
   e.load("tr.js");
+  e.load("waterfall.js");                                  // Passband (the page loads it before app.js)
+  e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };   // no canvas here
   e.load("app.js");
   e.load("freqentry.js");
   e.toasts = [];
@@ -173,7 +174,12 @@ async function main() {
     e.state({ radio: "ft991a", preamp: 1, anotch: 1, nr: 1, narrow: 1 });
     for (let i = 0; i < 4; i++) await e.flush();
     eq(e.inds("mainInd"), ["AGC-M", "AMP1", "DNR", "DNF", "NAR"], "T3 a Yaesu's own names (AMP1, DNR, DNF, NAR)");
-    eq(e.text("mainBw"), "", "T2 no width on a Yaesu (its widths are menu settings TeleRig doesn't read)");
+    e.state({ radio: "ft991a", narrow: 0, width: 10, filter_bw: 2400 });
+    for (let i = 0; i < 2; i++) await e.flush();
+    eq(e.text("mainBw"), "1.95 kHz", "T2 a Yaesu's width from its WIDTH code (not the fixed filter_bw)");
+    e.state({ radio: "ft991a", mode_name: "FM", width: 10 });
+    for (let i = 0; i < 2; i++) await e.flush();
+    eq(e.text("mainBw"), "", "T2 ... none in FM, which it doesn't report");
     e.state({ radio: "ic9700", freq: 144200000, dual_watch: true, subFreq: 432100000, active_band: "main", rit: 1, rit_freq: 120 });
     for (let i = 0; i < 4; i++) await e.flush();
     eq([e.inds("mainOffs"), e.inds("subOffs"), e.inds("subInd")], [["RIT +0.12"], [], []], "T3 none of it on the other band");

@@ -700,8 +700,8 @@
     renderFreq($(name + "Freq"), b.freq, !!active);
     $(name + "Mode").textContent = (b.mode_name || "") + (data && b.mode_name ? "-D" : "");   // USB-D, like the radio
     $(name + "Fil").textContent = b.filter_name || "";
-    const bw = $(name + "Bw");
-    if (bw) bw.textContent = active && knowsFilterWidth() && state.filter_bw ? fmtBw(state.filter_bw) : "";
+    const bw = $(name + "Bw"), hz = active ? passbandHz() : 0;
+    if (bw) bw.textContent = hz ? (window.Passband ? Passband.label(hz) : fmtBw(hz)) : "";
     const bn = bandOf(b.freq);
     const lbl = $(name + "Band");
     if (lbl) lbl.textContent = BAND_LABEL[bn] || (bn ? bn + " m" : "");
@@ -748,11 +748,11 @@
     el.textContent = "";
     for (const t of out) { const sp = document.createElement("span"); sp.className = "ind amber"; sp.textContent = t; el.appendChild(sp); }
   }
-  // the Icom CI-V radios report their filter, and the profile's filter table gives its width; a Yaesu's widths are
-  // menu settings TeleRig doesn't read, and the IC-728 has no filter command: no width shown for those
-  function knowsFilterWidth() {
-    const p = currentRadio;
-    return !!p && p.protocol !== "yaesu" && !(p.capabilities && Array.isArray(p.capabilities.meters) && !p.capabilities.meters.length);
+  // how wide the operating band listens (waterfall.js Passband, the scope's band too): an Icom's filter slot
+  // from the server (filter_bw), a Yaesu's WIDTH code by mode and NAR; 0 = not known (a Yaesu in AM / FM)
+  function passbandHz() {
+    if (window.Passband) return Passband.hz(currentRadio, state) || 0;
+    return currentRadio && currentRadio.protocol !== "yaesu" ? state.filter_bw || 0 : 0;
   }
   const fmtBw = (hz) => (hz >= 1000 ? Math.round(hz / 100) / 10 + " kHz" : Math.round(hz) + " Hz");
 
