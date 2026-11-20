@@ -614,6 +614,8 @@ class YaesuSimTransport(Transport):
         # sim always answered TX0; and the TX arbiter's reconciliation dropped every PTT claim on
         # the FT-991A profile about 2.5 s after keying. Nothing is ever keyed: this is a number.
         self.tx = "0"
+        if getattr(profile, "sh_onoff", False):
+            self._ops["SH0"] = "000"   # the FT-891 form: WIDTH off (the default bandwidth), code 00
 
     @property
     def name(self) -> str:

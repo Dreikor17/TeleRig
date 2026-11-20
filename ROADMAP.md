@@ -46,6 +46,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   band-plan view of a radio with no scope over CAT now shades the passband with its width beside it
   ("2.4 kHz"); a Yaesu's comes from its WIDTH (it always showed 2.4 kHz), none in AM / FM, which it
   doesn't report.
+- **FT-891 WIDTH works.** Its WIDTH command carries the function's on/off before the code (SH0 1 14;),
+  unlike the FT-991A's (SH0 14;); TeleRig sent the FT-991A's, so the FT-891 kept its width (from the WIDTH
+  keys or a spot) and its reading came from the wrong digits. Now each radio gets its own form
+  (profile `sh_onoff`), and WIDTH off reads as the mode's default.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

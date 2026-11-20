@@ -208,6 +208,9 @@ radio, in `backend/rigctl.py`:
      scale and in its readout and turns the bar amber / red at `warn` / `bad`. Copy them from the
      reference exactly (the IC‑9700 and IC‑7300MK2 differ in COMP and Id); a radio whose reference
      gives only the raw range (the Yaesu CAT `RM`) leaves it empty and shows the raw reading.
+   - **`sh_onoff`** (Yaesu) — the radio's WIDTH command (`SH`) carries the WIDTH function's on/off
+     before the code, `SH0 <0|1> <00-21>;` (the FT‑891, its CAT manual p.16), not the FT‑991A's
+     `SH0 <00-21>;`. Check the `SH` page of the radio's CAT manual (`backend/yaesu_width_test.py`).
 2. **SET‑menu table (recommended)** — to expose the radio's full menu in the Setup tab, add
    `backend/menus/<id>_menu.py`: one `MenuItem` per entry (num, name, group,
    `kind`=enum|int|signed‑int, **`digits` = the manual's exact wire width** — for signed it

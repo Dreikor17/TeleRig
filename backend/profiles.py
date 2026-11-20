@@ -213,6 +213,10 @@ class RadioProfile:
     # TX scale and in its readout. A meter with no marks shows its raw reading on an unmarked bar (the
     # Yaesu CAT references give only the 0..255 range). See docs/ADDING-A-RADIO.md.
     meter_marks: dict = field(default_factory=dict)
+    # Yaesu WIDTH (SH, the DSP IF bandwidth code 00-21, the same table on both radios): the FT-991A's is
+    # SH0 P2P2; the FT-891's carries the WIDTH function's on/off first, SH0 P2 P3P3 (CAT manual p.16): ON
+    # with the code, OFF = the mode's default bandwidth (code 00). True = the FT-891 form.
+    sh_onoff: bool = False
     # v2 declarative blocks — synthesized from the flat flags above when not given,
     # so the existing profiles keep working unchanged (see __post_init__).
     transports: Optional["Transports"] = None
@@ -482,6 +486,7 @@ from .menus.ft891_menu import FT891_MENU  # noqa: E402  (after MenuItem is defin
 FT891 = RadioProfile(
     id="ft891", name="FT-891", civ_addr=0x00,
     rx_ranges=[(30_000, 56_000_000)],                      # CAT manual, FA / FB: 000030000 - 056000000 Hz
+    sh_onoff=True,                                         # WIDTH = SH0 <on/off> <code>; (CAT manual p.16)
     make="Yaesu", protocol="yaesu", has_scope=False, has_network=False, default_baud=38400,
     # radio-accurate mode labels (no C4FM / DATA-FM on the FT-891)
     modes=["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",

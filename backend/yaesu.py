@@ -110,6 +110,7 @@ class YaesuRadio:
         self._menu_index = {}     # num -> MenuItem, built on connect
         self._menu_vals = {}      # num -> last decoded menu value (cache)
         self._ex_width = 3        # EX menu-number width (FT-991A NNN=3, FT-891 GGNN=4)
+        self._sh_onoff = bool(getattr(self.profile, "sh_onoff", False))   # FT-891 WIDTH form (profiles.sh_onoff)
         self.state = fresh_state(self.profile)
         self.state["dual_watch"] = False
 
@@ -125,6 +126,7 @@ class YaesuRadio:
         _menu = getattr(self.profile, "menu", None) or []
         self._menu_index = {it.num: it for it in _menu}
         self._ex_width = max((getattr(it, "ex_width", 3) for it in _menu), default=3)
+        self._sh_onoff = bool(getattr(self.profile, "sh_onoff", False))
         self._menu_vals = {}
         transport.start(self._on_bytes)
         self.state["connected"] = True
@@ -333,7 +335,9 @@ class YaesuRadio:
                 self.state["dcs_code"] = int(m[4:7])
         elif m.startswith("OS0") and len(m) >= 4 and m[3] in ("0", "1", "2"):  # repeater shift
             self.state["rpt_shift"] = int(m[3])
-        elif m.startswith("SH0") and len(m) >= 5 and m[3:5].isdigit():   # DSP width code (0-21)
+        elif m.startswith("SH0") and self._sh_onoff and len(m) >= 6 and m[3] in "01" and m[4:6].isdigit():
+            self.state["width"] = int(m[4:6]) if m[3] == "1" else 0   # FT-891: WIDTH OFF = the default (00)
+        elif m.startswith("SH0") and not self._sh_onoff and len(m) >= 5 and m[3:5].isdigit():   # DSP width code (0-21)
             self.state["width"] = int(m[3:5])
         elif m.startswith("CO0") and len(m) >= 8 and m[4:8].isdigit():   # CONTOUR/APF: CO0<p2><nnnn>
             p2, nnnn = m[3], int(m[4:8])
@@ -662,7 +666,8 @@ class YaesuRadio:
     def set_width(self, code: int) -> None:
         code = max(0, min(21, int(code)))                   # SH bandwidth code (per-mode table)
         self.state["width"] = code
-        self._send(f"SH0{code:02d};")
+        # FT-891: the WIDTH function ON with the code, OFF for the default (00); FT-991A: the code alone
+        self._send((f"SH0{1 if code else 0}{code:02d};") if self._sh_onoff else f"SH0{code:02d};")
         self._emit_state()
 
     def set_contour(self, on: bool) -> None:
