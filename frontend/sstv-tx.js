@@ -22,7 +22,8 @@
  *
  * The picture never leaves the page except as the radio's audio. Nothing here parses text as HTML.
  *
- * window.SstvTx = { summary(), modes(), onAirSeconds(mode), encode(mode, imageData, level) }
+ * window.SstvTx = { summary(), busy(), modes(), onAirSeconds(mode), encode(mode, imageData, level) }
+ *   busy(): a picture is under way (digital.js shows no other mode meanwhile)
  */
 (function () {
   "use strict";
@@ -446,6 +447,7 @@
 
   window.SstvTx.summary = () => (phase === "air" && job
     ? "TX " + job.m.name + " " + fmtLeft(job.pcm.length / FS - (performance.now() - job.t0) / 1000) : "");
+  window.SstvTx.busy = () => phase !== "idle";             // digital.js: no other mode while a picture goes out
   setInterval(() => { if (phase === "idle") render(); }, 1000);   // the radio's state changes the hints
   paint();
 })();

@@ -3,3 +3,5 @@
 frontend/vendor/gridstack/** -text
 frontend/vendor/exo2/** -text
 frontend/vendor/lamejs/** -text
+# Test recordings and their reference decodes, byte-for-byte as published (tests/data/*/NOTICE).
+tests/data/** -text

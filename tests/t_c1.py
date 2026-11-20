@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js"):
+              "device.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js", "digital.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -420,6 +420,36 @@ def sstv_transmit_in_node_vm(ctx):
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["ptt"], "sstv-tx.js sends no radio action but ptt")
     eq(js.count('action: "ptt", tx: true'), 1, "sstv-tx.js claims ptt in one place only")
     check('action: "ptt", tx: true, sstv: job.m.id' in js, "sstv-tx.js's claim names the picture's mode")
+
+
+@test("unit")
+def digital_modes_window_in_node_vm(ctx):
+    """The digital modes window (digital.js; the tile id stays "sstv"): one mode shown, every decoder
+    listening, a dot for news in a hidden mode, no other mode while SSTV sends a picture; RTTY (rtty.js:
+    tests/rtty_test.js) and FT8 (ft8-decode.js against a real recording and WSJT-X's own decodes of it:
+    tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). Static: RTTY and
+    FT8 decode only (no radio action, no socket, no fetch) and never parse text as HTML; the decoder carries
+    ft8_lib's MIT notice, and the test recording its own."""
+    for name in ("ft8_test.js", "rtty_test.js", "digital_test.js"):
+        r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=600, cwd=str(REPO))
+        eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
+        check("ALL PASS" in r.stdout, f"{name} output: {r.stdout}")
+    for f in ("digital.js", "rtty.js", "ft8.js", "ft8-decode.js"):
+        js = _strip_comments(_read(f))
+        for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", ".send(", "WebSocket", "fetch(",
+                    "XMLHttpRequest"):
+            check(bad not in js, f"{f} never uses {bad}")
+        check(not re.search(r'action:\s*"', js), f"{f} sends no radio action")
+    dec = _read("ft8-decode.js")
+    check("Copyright (c) 2018 Kārlis Goba" in dec and "MIT License" in dec, "ft8-decode.js carries ft8_lib's MIT notice")
+    notice = (REPO / "tests" / "data" / "ft8" / "NOTICE")
+    check(notice.is_file() and "Kārlis Goba" in notice.read_text(encoding="utf-8"), "tests/data/ft8/NOTICE names the recording's source")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    for must in ('id="dmSstv"', 'id="dmRtty"', 'id="dmFt8"', '<div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv">',
+                 '<div id="dmPaneRtty" role="tabpanel" aria-labelledby="dmRtty" hidden>',
+                 '<div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>', 'gs-id="sstv" data-tile="sstv"',
+                 'id="th-sstv">DIGITAL<'):
+        check(must in html, f"index.html: {must}")
 
 
 @test("unit")

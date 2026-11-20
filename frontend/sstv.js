@@ -349,6 +349,7 @@
       rowsDone = 0; unknown = null; lastNote = "";
       blank(mode.width, mode.height);
       try { TR.srLive("SSTV picture starting, " + mode.name); } catch (_) {}
+      try { document.dispatchEvent(new CustomEvent("tr:digital", { detail: { mode: "sstv" } })); } catch (_) {}   // digital.js: a dot on SSTV's key
       render();
     },
     onRow: ({ y, rgba }) => {

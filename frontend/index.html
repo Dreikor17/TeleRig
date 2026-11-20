@@ -660,18 +660,25 @@
   <section class="grid-stack-item-content tile" aria-labelledby="th-sstv">
     <header class="tile-head">
       <svg class="tile-icon" aria-hidden="true"><use href="#i-tr-sstv"/></svg>
-      <h2 class="tile-title" id="th-sstv">SSTV</h2>
+      <h2 class="tile-title" id="th-sstv">DIGITAL</h2>
       <span class="tile-summary" aria-hidden="true"></span>
       <div class="tile-actions">
-        <button type="button" class="tile-btn tile-up" aria-label="Move SSTV up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
-        <button type="button" class="tile-btn tile-down" aria-label="Move SSTV down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
-        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse SSTV" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
-        <button type="button" class="tile-btn tile-remove" aria-label="Remove SSTV panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+        <button type="button" class="tile-btn tile-up" aria-label="Move Digital up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
+        <button type="button" class="tile-btn tile-down" aria-label="Move Digital down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
+        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Digital" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
+        <button type="button" class="tile-btn tile-remove" aria-label="Remove Digital panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </header>
-    <!-- sstv.js: slow-scan TV pictures decoded in this browser from the radio's audio (Receive);
-         sstv-tx.js: one picture sent through the radio, operator-triggered, on the PTT rules (Send) -->
-    <div class="tile-body tile-sstv"><div class="tile-fit">
+    <!-- digital.js: the digital modes window (its tile id stays "sstv"): one mode shown, all of them listening.
+         SSTV: sstv.js decodes pictures (Receive); sstv-tx.js sends one, operator-triggered, on the PTT rules (Send).
+         RTTY: rtty.js. FT8: ft8.js, its decoder ft8-decode.js in a worker. RTTY and FT8 decode only. -->
+    <div class="tile-body tile-sstv tile-digital"><div class="tile-fit">
+      <div class="dm-modes" role="tablist" aria-label="Digital mode">
+        <button type="button" class="dm-mode on" id="dmSstv" role="tab" aria-selected="true" aria-controls="dmPaneSstv">SSTV</button>
+        <button type="button" class="dm-mode" id="dmRtty" role="tab" aria-selected="false" aria-controls="dmPaneRtty" tabindex="-1">RTTY</button>
+        <button type="button" class="dm-mode" id="dmFt8" role="tab" aria-selected="false" aria-controls="dmPaneFt8" tabindex="-1">FT8</button>
+      </div>
+      <div id="dmPaneSstv" role="tabpanel" aria-labelledby="dmSstv">
       <div class="sstv-tabs" role="tablist" aria-label="SSTV">
         <button type="button" class="sstv-tab on" id="sstvTabRx" role="tab" aria-selected="true" aria-controls="sstvRx">Receive</button>
         <button type="button" class="sstv-tab" id="sstvTabTx" role="tab" aria-selected="false" aria-controls="sstvTx" data-tx>Send</button>
@@ -700,6 +707,28 @@
           <p class="sstv-status sstv-tx-status" id="sstvTxStatus" aria-live="polite">Choose a picture, drop or paste one here, or use the test card.</p>
         </div>
         <p class="sstv-note">A picture is one transmission at full duty, up to three minutes: lower the power if your radio needs it.</p>
+      </div>
+      </div>
+      <div id="dmPaneRtty" role="tabpanel" aria-labelledby="dmRtty" hidden>
+        <canvas class="dm-strip" id="rttyStrip" height="44" tabindex="0"
+                aria-label="The radio's audio from 0 to 3 kHz, with RTTY's mark and space. Click a signal to tune to it; the arrow keys move the tuning by 10 Hz."></canvas>
+        <div class="dm-bar">
+          <select id="rttyMode" aria-label="RTTY speed in baud and shift in Hz" title="Speed (baud) / shift: amateur RTTY is 45.45 / 170 Hz"></select>
+          <button type="button" class="key sm tog" id="rttyRev" aria-pressed="false" title="Swap mark and space (some stations send them the other way round)">Rev</button>
+          <button type="button" class="key sm" id="rttyClear" title="Clear the text">Clear</button>
+        </div>
+        <p class="dm-status" id="rttyStatus" aria-live="polite">Turn on RX in the Audio panel to decode RTTY.</p>
+        <div class="dm-screen rtty-text" id="rttyText" role="log" aria-live="off" aria-label="RTTY text received"></div>
+      </div>
+      <div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>
+        <canvas class="dm-strip" id="ft8Strip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with the last slot's FT8 messages marked"></canvas>
+        <div class="dm-bar">
+          <label class="dm-check"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
+          <button type="button" class="key sm" id="ft8Clear" title="Clear the list">Clear</button>
+        </div>
+        <p class="dm-status" id="ft8Status" aria-live="polite">Turn on RX in the Audio panel to decode FT8.</p>
+        <div class="dm-screen ft8-list" id="ft8List" role="log" aria-live="off" aria-label="FT8 messages decoded: signal to noise in dB, time offset in seconds, audio frequency in Hz, message"></div>
+        <p class="dm-note">Slots follow this computer's clock: keep it right to about a second.</p>
       </div>
     </div></div>
   </section>
@@ -751,6 +780,10 @@
 <script src="/static/spots.js"></script>
 <script src="/static/sstv.js"></script>
 <script src="/static/sstv-tx.js"></script>
+<script src="/static/ft8-decode.js"></script>
+<script src="/static/ft8.js"></script>
+<script src="/static/rtty.js"></script>
+<script src="/static/digital.js"></script>
 <script src="/static/account.js"></script>
 <script src="/static/bridge.js"></script>
 <script src="/static/device.js"></script>

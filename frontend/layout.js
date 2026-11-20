@@ -78,8 +78,9 @@
     recorder: { title: "Recorder", icon: "tr-record",          minW: 2, bodyPx: 80 },
     // spots bodyPx: the filter row (31), the status line (21) and a few two-line spots
     spots:    { title: "Spots",    icon: "globe",              minW: 3, bodyPx: 180 },
-    // sstv bodyPx: the mode row (31), the status line (21) and a 320 x 256 picture at the panel's width
-    sstv:     { title: "SSTV",     icon: "tr-sstv",            minW: 3, bodyPx: 220 },
+    // sstv = the digital modes window (SSTV, RTTY, FT8; digital.js), its id kept so saved layouts keep it.
+    // bodyPx: the mode keys (28), SSTV's tabs and mode row (31 + 31), the status line (21) and a picture
+    sstv:     { title: "Digital",  icon: "tr-sstv",            minW: 3, bodyPx: 250 },
   };
   const GATEABLE = new Set(["ptt", "meter"]);              // the only tiles a gate can park
   const PHONE_RESIZABLE = new Set(["scope", "cw", "spots", "sstv"]); // phone: user-sized (stored h, `s` handle)
@@ -711,7 +712,8 @@
       case "cw": return $("cwDecodeBtn") && $("cwDecodeBtn").getAttribute("aria-pressed") === "true" ? "decoder on" : "decoder off";
       case "recorder": return (window.Recorder && typeof window.Recorder.summary === "function" && window.Recorder.summary()) || "";
       case "spots": return (window.SpotsPanel && typeof window.SpotsPanel.summary === "function" && window.SpotsPanel.summary()) || "";
-      case "sstv": return (window.SstvTx && typeof window.SstvTx.summary === "function" && window.SstvTx.summary()) ||
+      case "sstv": return (window.DigitalPanel && typeof window.DigitalPanel.summary === "function" && window.DigitalPanel.summary()) ||
+        (window.SstvTx && typeof window.SstvTx.summary === "function" && window.SstvTx.summary()) ||
         (window.SstvPanel && typeof window.SstvPanel.summary === "function" && window.SstvPanel.summary()) || "";
       default: return "";
     }

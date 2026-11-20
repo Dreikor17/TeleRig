@@ -77,6 +77,19 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   are the ones whose whole transmission ends inside the radio's own 3-minute TX time-out: Robot 36 /
   72, Martin M1 / M2, Scottie S1 / S2, PD-50, PD-90, PD-120 and PD-160, each with its time on the
   air. Never in CW, RTTY, DV or C4FM; a level control for the ALC.
+- **Digital modes window** (Add panel > Digital; it was the SSTV panel, and a saved layout keeps it): SSTV,
+  RTTY and FT8 in one panel, one shown at a time, every decoder listening while the panel is open, so
+  switching loses nothing; a mode with news while hidden gets a dot, and while SSTV sends a picture the
+  other modes wait (its STOP stays in view). RTTY and FT8 decode only, in the browser, from the radio's
+  audio, under a small waterfall of it (0 to 3 kHz):
+  - **RTTY**: Baudot with US-TTY figures, 45.45 / 50 / 75 baud and 170 / 425 / 850 Hz shifts; mark and
+    space follow the radio's mode (LSB normal, USB reversed) and Rev swaps them; click a signal in the
+    strip to tune to its pair, or nudge with the arrow keys; a squelch keeps noise off the screen.
+  - **FT8**: 15 s slots on UTC, decoded in a background worker by a JavaScript port of ft8_lib's decoder
+    (MIT, Kārlis Goba, YL3JG): the messages per slot with dB, DT and frequency, CQs marked, a CQ only
+    filter. On a real recording it finds 17 of the 22 messages WSJT-X found there, nothing WSJT-X
+    didn't, with the same DT and frequency and an SNR within a few dB. The slots follow this computer's
+    clock, which has to be right to about a second.
 - **TX time-out 3 minutes on every radio.** The radio's own TX time-out, set on connect as the
   backstop if the control link fails, is now 3 minutes on the FT-991A and FT-891 too (it was 2),
   like the Icoms: the 3-minute limit for a remotely commanded station (47 CFR 97.213(b)).
@@ -288,11 +301,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   Scottie DX, PD-180, PD-240 and PD-290 (3:09 to 4:51 on the air) are longer than the 3-minute TX
   time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig
   doesn't send them (decided 2026-11-19: keep every transmission inside the 3 minutes).
-- **More overlay tools** over the waterfall (the framework is in place) — e.g. RTTY/FT8
-  decode, a tuning/zero-beat aid, memory keyer.
+- **Digital window, next steps** — FT8's other message types (DXpedition, Field Day, RTTY Roundup, EU
+  VHF: ft8_lib skips them too), a menu that tunes the radio to a band's FT8 frequency, RTTY's AFC,
+  decoding a saved recording, FT4.
+- **More overlay tools** over the waterfall (the framework is in place) — e.g. a tuning/zero-beat aid,
+  memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).
 - **Memory channels**, band-stacking registers, scan control.
-- **CW** keyer/memories, **RTTY** decode; **DV / D-STAR** (DR, call signs, GPS);
+- **CW** keyer/memories; **DV / D-STAR** (DR, call signs, GPS);
   **satellite** dual-scope.
 - Read **true IF filter widths** (`1A 03`); scope **reference-level / sweep-speed /
   VBW** controls.
@@ -309,7 +325,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   software connects, and for the developer to join their API-consumers group, so it waits for that.
 - **HF conditions**: solar numbers and MUF maps.
 - **Command console**: send a raw CI-V / CAT command and see the answer; a diagnostics panel.
-- **FT8 decoder** in the browser, for a quick look at a band.
+- **FT8 decoder** in the browser, for a quick look at a band — *shipped*, in the Digital window (see Done).
 - **Live CW keying** from a paddle (MIDI adapter), the keyboard or touch.
 - **Video feed** of the radio's own screen.
 - **Packaging**: a desktop app, Docker, installers.

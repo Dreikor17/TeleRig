@@ -586,6 +586,38 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .sstv-note{margin:6px 0 0;font-size:10px;line-height:1.35;color:var(--txt-faint)}
 .grid-stack-item.sstv-on-air .tile{border-color:var(--tx-solid);box-shadow:0 0 0 1px var(--tx-solid)}   /* this panel is keying the radio */
 
+/* ---- the digital modes window (digital.js): the mode keys; RTTY (rtty.js) and FT8 (ft8.js) on an instrument
+   screen under the audio strip, which grows with the panel ---- */
+.tile-digital>.tile-fit{display:flex;flex-direction:column;min-height:100%}
+.dm-modes{display:grid;grid-template-columns:repeat(3,1fr);flex:none;margin:0 0 8px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
+.dm-mode{appearance:none;position:relative;background:var(--key);border:0;border-left:1px solid var(--border);padding:6px 0 5px;
+  font:700 11px/1 var(--font-ui);letter-spacing:.06em;color:var(--txt-dim);cursor:pointer}
+.dm-mode:first-child{border-left:0}
+.dm-mode:hover:not([disabled]){background:var(--key-hi);color:var(--txt)}
+.dm-mode.on{background:var(--accent-tint);color:var(--accent-hi);box-shadow:inset 0 -2px 0 var(--accent)}
+.dm-mode[disabled]{opacity:.45;cursor:not-allowed}
+.dm-mode:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.dm-mode.news::after{content:"";position:absolute;top:4px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--warn)}  /* news while hidden */
+#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+.dm-strip{display:block;flex:none;width:100%;height:44px;background:var(--scope-bg);border:1px solid var(--tft-border);
+  border-radius:var(--r-sm);cursor:crosshair}
+.dm-strip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.dm-bar{display:flex;align-items:center;gap:6px;flex:none;margin-top:6px}
+.dm-bar select{flex:1 1 auto;min-width:0;font-size:11px;padding:3px 5px}
+.dm-check{display:inline-flex;align-items:center;gap:4px;margin-right:auto;font-size:11px;color:var(--txt-dim);white-space:nowrap}
+.dm-status{flex:none;margin:6px 0;font-size:11px;line-height:1.35;color:var(--txt-dim)}
+.dm-note{flex:none;margin:6px 0 0;font-size:10px;line-height:1.35;color:var(--txt-faint)}
+.dm-screen{flex:1 1 auto;min-height:120px;box-sizing:border-box;overflow:auto;padding:5px 7px;background:var(--tft-bg);
+  border:1px solid var(--tft-border);border-radius:var(--r-sm);color:var(--tft-digit);font:12px/1.45 var(--font-ui)}
+.rtty-text{white-space:pre-wrap;overflow-wrap:anywhere}
+.ft8-slot{margin:7px 0 2px;padding-top:3px;border-top:1px solid var(--tft-border);font-size:10px;color:var(--txt-faint)}
+.ft8-slot:first-child{margin-top:0;padding-top:0;border-top:0}
+.ft8-row{display:grid;grid-template-columns:3.5ch 3.5ch 4.5ch minmax(0,1fr);column-gap:1ch;white-space:nowrap;font-variant-numeric:tabular-nums}
+.ft8-row .db,.ft8-row .dt,.ft8-row .hz{text-align:right;color:var(--tft-digit-dim)}
+.ft8-row .msg{overflow:hidden;text-overflow:ellipsis}
+.ft8-row.cq .msg{color:var(--tft-pill-fg)}                        /* a CQ: someone calling */
+.ft8-list.cq-only .ft8-row:not(.cq){display:none}
+
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
   min-width:76px;padding:6px 8px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px}

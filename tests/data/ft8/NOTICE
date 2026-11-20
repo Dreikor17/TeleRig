@@ -1,0 +1,30 @@
+191111_110615.wav and 191111_110615.txt
+
+A 15 s recording of an FT8 band (12 kHz, 16-bit mono) and WSJT-X's decodes of it, from the test set of
+ft8_lib by Kārlis Goba, YL3JG: https://github.com/kgoba/ft8_lib, test/wav/, commit
+9fec6ca39886edbf96f4f5e71edc76da5074e871. tests/ft8_test.js decodes it with TeleRig's port of ft8_lib's
+decoder (frontend/ft8-decode.js) and compares the result with WSJT-X's.
+
+ft8_lib's licence:
+
+MIT License
+
+Copyright (c) 2018 Kārlis Goba
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
