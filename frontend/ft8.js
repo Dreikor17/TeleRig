@@ -8,6 +8,10 @@
  * its messages are listed under the slot's time, newest at the bottom. DT includes the audio's own delay
  * on its way here. The slots follow this computer's clock: it has to be right to about a second.
  *
+ * The status line helps when nothing shows: with RX off it is empty (the window's own line says so,
+ * digital.js); with the radio in a mode FT8 is not heard in, it names the mode (FT8 is sent in USB, so
+ * USB or DATA-USB); after EMPTY_SLOTS slots in a row with nothing decoded it says what to check.
+ *
  * window.Ft8Panel = { summary(), feed(pcm, rate), markers() } (the window; tests)
  */
 (function () {
@@ -23,6 +27,8 @@
   const audio = () => window.RadioAudio || null;
   const rxOn = () => { const A = audio(); try { return !!(A && A.on()); } catch (_) { return false; } };
   const onGrid = () => !!(tile.parentElement && tile.parentElement.id === "grid");
+  const radio = () => { try { return (window.RadioControl && RadioControl.state()) || {}; } catch (_) { return {}; } };
+  const EMPTY_SLOTS = 3;                                    // 45 s with nothing decoded: say what to check
   const pad = (n) => String(n).padStart(2, "0");
   const hms = (ms) => { const d = new Date(ms); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()) + ":" + pad(d.getUTCSeconds()); };
 
@@ -47,7 +53,7 @@
   }
 
   // ---- the slots ----
-  let done = 0, busy = false, lastSlot = null, lastCount = 0, lastFreqs = [], note = "";
+  let done = 0, busy = false, lastSlot = null, lastCount = 0, lastFreqs = [], note = "", empty = 0;
   function schedule(now) {
     if (busy || !ring || !anchors.length) return;
     const start = Math.floor((now - SLOT_MS - LATE_MS) / SLOT_MS) * SLOT_MS;   // the newest slot that has ended
@@ -103,7 +109,10 @@
   function cell(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
   function show(start, decodes) {
     lastSlot = start; lastCount = decodes.length; lastFreqs = decodes.map((d) => d.freq);
-    note = decodes.length ? "" : "Nothing decoded in the " + hms(start) + " slot.";
+    empty = decodes.length ? 0 : empty + 1;
+    note = decodes.length ? ""
+      : empty >= EMPTY_SLOTS ? "Nothing decoded for " + empty * 15 + " s. Check the frequency (Tune to), the mode and this computer's clock."
+      : "Nothing decoded in the " + hms(start) + " slot.";
     if (decodes.length) {
       const atEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 24;
       const sep = document.createElement("div");
@@ -136,10 +145,17 @@
     cqOnly.addEventListener("change", () => { ls(KEY_CQ, cqOnly.checked ? "1" : "0"); list.classList.toggle("cq-only", cqOnly.checked); });
   }
   if (clearBtn) clearBtn.addEventListener("click", () => { while (list.firstChild) list.removeChild(list.firstChild); rows = 0; lastFreqs = []; render(); });
+  // FT8 is sent in USB: heard in USB, or in a data mode on USB (an Icom's DATA is USB with its switch on)
+  const usbMode = (m) => /^(USB|DATA-USB|USB-D)$/.test(String(m || ""));
 
   function say(t) { if (status.textContent !== t) status.textContent = t; }
   function render() {
-    if (!rxOn()) { say("Turn on RX in the Audio panel to decode FT8."); return; }
+    if (!rxOn()) { say(""); return; }                       // RX is off: the window's own line says so (digital.js)
+    const st = radio();
+    if (st.connected && st.mode_name && !usbMode(st.mode_name)) {
+      say("The radio is in " + st.mode_name + ": FT8 is heard in USB or DATA-USB (Tune to sets it).");
+      return;
+    }
     if (note) { say(note); return; }
     const next = (Math.floor(Date.now() / SLOT_MS) + 1) * SLOT_MS;
     say(lastSlot === null ? "Listening: the first slot is decoded after " + hms(next) + " UTC."

@@ -17,6 +17,11 @@
  * it while it sends). CW starts its decoder then (cwtool.js): every mode decodes without being asked.
  * Folding the window and opening it again is not a new view (its modes keep listening while folded).
  *
+ * Every mode decodes the radio's audio, so while RX is off the window says so under its keys, with a key
+ * that turns RX on (the Audio panel's RX key, pressed for the operator). CW, FT8 and SSTV have a "Tune
+ * to" menu in their bar: that mode's frequencies of callfreqs.js on this radio's bands; choosing one
+ * tunes the radio as a click on the Spots panel's CALLING row does (the frequency, the mode, the filter).
+ *
  * The text screens (CW's chat, RTTY's text, FT8's list) scroll inside the window. At the end a screen
  * follows what comes in (cwtool.js, rtty.js and ft8.js scroll it only then); scrolled back it stays where
  * it was left, and it comes back to that place, or to the end it was following, when it is shown again.
@@ -64,8 +69,60 @@
       k.title = off ? WAIT[lock] : "";
       panes[m].hidden = !on;
     }
+    renderRx();
+    renderGo();
     announce();
   }
+
+  // ---- receive audio: every mode decodes the radio's audio, so the window says when RX is off and
+  // offers its key: the Audio panel's own RX key, pressed for the operator (its rules, its errors) ----
+  const rxBar = $("dmRx"), rxKey = $("dmRxOn");
+  const rxOn = () => { const A = window.RadioAudio; try { return !!(A && A.on()); } catch (_) { return false; } };
+  function renderRx() { if (rxBar) rxBar.hidden = rxOn(); }
+  if (rxKey) rxKey.addEventListener("click", () => {
+    const b = $("audioBtn");
+    if (b && !rxOn()) b.click();
+    renderRx();
+  });
+
+  // ---- "Tune to": a mode's frequencies (callfreqs.js) on this radio's bands, as a menu in its bar ----
+  // CW: the CW rows (QRP calling, the beacons), named; FT8 and SSTV: the rows of that name. spots.js
+  // lists them (SpotsPanel.calls) and tunes (SpotsPanel.tuneTo: the frequency, the mode, the filter, as
+  // a click on a CALLING row). Operators only; a radio with no such frequency has no menu.
+  const GO = [
+    { sel: $("cwGo"), pick: (r) => r.mode === "CW", named: true },
+    { sel: $("ft8Go"), pick: (r) => r.name === "FT8" },
+    { sel: $("sstvGo"), pick: (r) => r.name === "SSTV" },
+  ];
+  const mhz = (hz) => { const k = Math.round(hz / 1000); return Math.floor(k / 1000) + "." + String(k % 1000).padStart(3, "0"); };
+  const canOp = () => { try { return !!TR.can("operate"); } catch (_) { return false; } };
+  function renderGo() {
+    const sp = window.SpotsPanel, op = canOp();
+    for (const g of GO) {
+      if (!g.sel) continue;
+      let rows = [];
+      try { rows = (op && sp && typeof sp.calls === "function" && sp.calls(g.pick)) || []; } catch (_) { rows = []; }
+      const sig = rows.map((r) => r.hz).join(",");
+      if (sig !== g.sig) {                                 // another radio, another role: the menu again
+        g.sig = sig; g.rows = rows;
+        while (g.sel.childNodes.length > 1) g.sel.removeChild(g.sel.lastChild);   // the first option is its title
+        rows.forEach((r, i) => {
+          const o = document.createElement("option");
+          o.value = String(i);
+          o.textContent = r.band + "  " + mhz(r.hz) + (g.named ? "  " + r.name : "");
+          g.sel.appendChild(o);
+        });
+        g.sel.value = "";
+      }
+      g.sel.hidden = !rows.length;
+    }
+  }
+  for (const g of GO) if (g.sel) g.sel.addEventListener("change", () => {
+    const v = g.sel.value, r = v === "" ? null : (g.rows || [])[+v];
+    g.sel.value = "";                                      // a menu, not a setting: back to its title
+    const sp = window.SpotsPanel;
+    if (r && sp && typeof sp.tuneTo === "function") sp.tuneTo(r);
+  });
   function show(m) {
     const lock = sending();
     if (!MODES.includes(m) || (lock && m !== lock)) return false;

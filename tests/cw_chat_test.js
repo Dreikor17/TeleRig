@@ -28,6 +28,11 @@
  *      opening on another mode it waits for CW; Decode off, another mode and back: on again; folded and
  *      opened again: still off; the window off the grid: off, brought onto it showing CW: on; removed:
  *      off, added again: on; a layout rebuilt around it: no change
+ *  W10. the line under the bar: the decoder off, loading, listening, copying, a model that can't load;
+ *      with RX off and no audio of the page's own it says nothing (the window's own line does)
+ *  W11. Decode off and on again keeps the chat; what comes next goes into a new bubble; Clear empties it
+ *  W12. WPM and the sidetone's pitch are kept by this browser (only values in range); the pitch is shown
+ *      beside its slider
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -37,7 +42,7 @@ function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
 const SR = 3200, HOP = 48;                                   // == cwtool.js SR / the worker's hop
-const CW_IDS = { button: ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwTx"], div: ["cwHead", "cwHint", "cwOut", "cwStatus", "cwTxHint", "cwTxRow"],
+const CW_IDS = { button: ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwTx"], div: ["cwHead", "cwOut", "cwStatus", "cwTxHint", "cwTxRow", "cwToneVal"],
                  input: ["cwSend", "cwWpmSet", "cwToneSet"] };
 
 // the CW panel's elements, the page's stand-ins (nothing is ever sent), and the page's audio: with
@@ -72,8 +77,10 @@ function cwParts(e, parent, opts) {
   const bus = { connect: (n) => e.bused.push(n) };
   let audio = opts.audio !== false;
   e.makeAudio = () => { audio = true; };
+  e.rxOn = true;                                             // the Audio panel's RX key
   e.ctx.RadioAudio = { ensure() { e.ensured++; audio = true; }, ctx: () => (audio ? actx : null), bus: () => (audio ? bus : null),
-                       on: () => true, state: () => ({}), tapPcm: () => () => {} };
+                       on: () => e.rxOn, state: () => ({}), tapPcm: () => () => {} };
+  e.status = () => e.doc.getElementById("cwStatus").textContent;
   e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
   e.dec = e.doc.getElementById("cwDecodeBtn");
   e.decOn = () => e.dec.getAttribute("aria-pressed") === "true" && e.dec.classList.contains("on");
@@ -84,7 +91,7 @@ function cwParts(e, parent, opts) {
 
 async function page(opts) {
   opts = opts || {};
-  const e = makeEnv();
+  const e = makeEnv({ localStorage: opts.localStorage || {} });
   const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" });   // the Modem window; the panel is its CW pane
   cwParts(e, tile, opts);
   e.load("tr.js");
@@ -293,12 +300,12 @@ function modemPage(opts) {
     e.clock.advance(3000); await e.settle();                 // three ticks while the module still loads
     eq([e.addModules, e.nodes], [1, 0], "W7 the capture's module loading: loaded once, whatever asks meanwhile");
     e.moduleLoaded(); await e.settle();
-    eq([e.addModules, e.nodes, e.doc.getElementById("cwStatus").textContent], [1, 1, "ready"], "W7 ... then one capture, no failure said");
+    eq([e.addModules, e.nodes, e.doc.getElementById("cwStatus").textContent], [1, 1, "Listening for CW."], "W7 ... then one capture, no failure said");
   }
   {
     const e = await page({ decode: false, addModuleFails: true });
     e.modem("cw"); await e.settle();
-    eq([e.doc.getElementById("cwStatus").textContent, e.addModules, e.nodes], ["audio capture unavailable", 1, 0], "W7 the capture can't be made: said");
+    eq([e.doc.getElementById("cwStatus").textContent, e.addModules, e.nodes], ["This browser can't pass the audio to the decoder.", 1, 0], "W7 the capture can't be made: said");
     e.clock.advance(5000); await e.settle();
     eq(e.addModules, 1, "W7 ... not tried again at every tick");
     e.click(e.dec); e.click(e.dec); await e.settle();
@@ -361,6 +368,67 @@ function modemPage(opts) {
     check(!e.decOn(), "W9 ... still off (nothing in view)");
     e.move(e.grid); e.layoutEv();
     check(e.decOn(), "W9 a layout that brings the window onto the grid, showing CW: on");
+  }
+  // W10: the line under the bar
+  {
+    const e = await page({ decode: false, audio: false });
+    eq(e.status(), "The decoder is off.", "W10 Decode off: the line says so");
+    e.rxOn = false;
+    e.click(e.dec); await e.settle();
+    eq(e.status(), "Loading the decoder…", "W10 Decode on, the model still loading");
+    e.ready();
+    eq(e.status(), "", "W10 loaded, RX off, no audio of the page's own: nothing here (the window's own line says RX is off)");
+    e.rxOn = true; e.makeAudio(); e.clock.advance(1000); await e.settle();
+    eq(e.status(), "Listening for CW.", "W10 RX on: listening");
+    e.sec(); e.sec("CQ");
+    eq(e.status(), "Copying.", "W10 text coming in: copying");
+    e.rxOn = false; e.sec("CQ CQ");
+    eq(e.status(), "Copying.", "W10 RX off while the page's own audio is heard (the sidetone): the line still follows it");
+    e.rxOn = true;
+    e.click(e.dec);
+    eq(e.status(), "The decoder is off.", "W10 Decode off again");
+    const f = await page({ decode: false });
+    f.click(f.dec); await f.settle();
+    f.worker.onmessage({ data: { type: "error" } });
+    eq(f.status(), "The decoder could not be loaded.", "W10 the model can't be loaded: said");
+    const g = await page({ decode: false });
+    g.click(g.dec); await g.settle();
+    g.worker.onerror();
+    eq(g.status(), "The decoder could not be loaded.", "W10 ... the worker fails: the same");
+  }
+  // W11: Decode off and on again keeps the chat
+  {
+    const e = await page();
+    e.sec(); e.say("CQ CQ");
+    e.click(e.dec);
+    eq([e.decOn(), e.bubbles()], [false, ["CQ CQ"]], "W11 Decode off: the chat stays");
+    e.click(e.dec); await e.settle();
+    eq([e.decOn(), e.bubbles()], [true, ["CQ CQ"]], "W11 ... and on again: still there");
+    e.sec(); e.say("DE N0CALL");
+    eq(e.bubbles(), ["CQ CQ", "DE N0CALL"], "W11 what is copied next goes into a new bubble");
+    e.click(e.doc.getElementById("cwClear"));
+    eq(e.bubbles(), [], "W11 Clear is what empties it");
+  }
+  // W12: WPM and the sidetone's pitch, kept by this browser
+  {
+    const e = await page({ decode: false, localStorage: { "telerig.cw.wpm": "25", "telerig.cw.tone": "700" } });
+    const wpm = e.doc.getElementById("cwWpmSet"), tone = e.doc.getElementById("cwToneSet"), val = e.doc.getElementById("cwToneVal");
+    const ev = (el, t) => el.dispatchEvent(new e.Event(t, { bubbles: true }));
+    const kept = (k) => e.ctx.localStorage.getItem(k);
+    eq([wpm.value, tone.value, val.textContent], ["25", "700", "700 Hz"], "W12 the kept speed and pitch come back; the pitch is shown");
+    wpm.value = "30"; ev(wpm, "change");
+    eq(kept("telerig.cw.wpm"), "30", "W12 a new speed is kept");
+    wpm.value = "99"; ev(wpm, "change");
+    eq(kept("telerig.cw.wpm"), "30", "W12 a speed out of range is not");
+    tone.value = "850"; ev(tone, "input");
+    eq([val.textContent, kept("telerig.cw.tone")], ["850 Hz", "700"], "W12 the readout follows the slider as it moves");
+    ev(tone, "change");
+    eq(kept("telerig.cw.tone"), "850", "W12 ... and the pitch is kept when it is let go");
+    const d = await page({ decode: false });
+    eq([d.doc.getElementById("cwWpmSet").value, d.doc.getElementById("cwToneSet").value, d.doc.getElementById("cwToneVal").textContent],
+       ["18", "600", "600 Hz"], "W12 nothing kept: the page's own 18 WPM and 600 Hz");
+    const b = await page({ decode: false, localStorage: { "telerig.cw.wpm": "abc", "telerig.cw.tone": "5000" } });
+    eq([b.doc.getElementById("cwWpmSet").value, b.doc.getElementById("cwToneSet").value], ["18", "600"], "W12 kept values that are no speed or pitch are ignored");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

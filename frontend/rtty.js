@@ -184,7 +184,7 @@
   function say(t) { if (status.textContent !== t) status.textContent = t; }
   function render() {
     const tn = tones();
-    if (!rxOn()) { say("Turn on RX in the Audio panel to decode RTTY."); return; }
+    if (!rxOn()) { say(""); return; }                      // RX is off: the window's own line says so (digital.js)
     const lv = dec ? dec.level() : null;
     say("Mark " + Math.round(tn.mark) + " Hz, space " + Math.round(tn.space) + " Hz" + (reversed() ? " (reversed)" : "") +
         (lv && lv.open ? ". Copying." : ". Click a signal in the strip to tune to it."));

@@ -13,6 +13,10 @@
  * audio, which a click makes (RX, the mic, Play): it never makes the audio context itself. One made
  * before any click would stay paused, and the mic would then send silence.
  *
+ * One line under the bar (#cwStatus) says where the decoder stands: off, loading, listening, copying,
+ * or why it can't. With RX off it says nothing: the window's own line does (digital.js). Decode off and
+ * on again keeps the chat (Clear empties it). WPM and the sidetone's pitch are kept by this browser.
+ *
  * Decoder: a NEURAL decoder (DeepCW). It taps the pre-volume RX bus
  * (RadioAudio.bus()), resamples to 3200 Hz, and re-runs the ONNX model in
  * cw-worker.js over a growing window, committing text at pauses. Far more
@@ -192,7 +196,7 @@
   let pendingText = "", lastPeak = 0;
   let messages = [], rxOpen = false;                     // texting chat log: {dir:"rx"|"tx", text, t}
   let inflight = false, analysisLen = 0, reqId = 0;
-  const out = $("cwOut"), hint = $("cwHint"), statusEl = $("cwStatus");
+  const out = $("cwOut"), statusEl = $("cwStatus");
 
   // ---- chat log helpers: decoded RX = grey bubbles left, transmitted = blue bubbles right ----
   function fmtT() { const d = new Date(); return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); }
@@ -229,19 +233,30 @@
     trimMsgs(); render();
   }
 
-  function setStatus(s) { if (statusEl) statusEl.textContent = s; }
+  // The line under the bar: where the decoder stands. RX off and no audio of the page's own to hear
+  // (the sidetone): nothing here, the window's own line says RX is off and has its key.
+  let modelFailed = false;
+  function statusText() {
+    if (!open) return "The decoder is off.";
+    if (modelFailed) return "The decoder could not be loaded.";
+    if (capFailed) return "This browser can't pass the audio to the decoder.";
+    if (!workerReady) return "Loading the decoder…";
+    const ra = RA(), rxOn = !!(ra && ra.on && ra.on());
+    if (!rxOn && !capNode) return "";
+    return pendingText ? "Copying." : "Listening for CW.";
+  }
+  function showStatus() { if (statusEl) { const t = statusText(); if (statusEl.textContent !== t) statusEl.textContent = t; } }
 
   function ensureWorker() {
     if (worker) return;
-    setStatus("loading model…");
     worker = new Worker("/static/cw-worker.js?v=" + CW_WORKER_V);
     worker.onmessage = (e) => {
       const m = e.data;
-      if (m.type === "ready") { workerReady = true; if (m.hop) HOP = m.hop; setStatus("ready"); render(); }
-      else if (m.type === "error") { setStatus("model failed"); }
+      if (m.type === "ready") { workerReady = true; if (m.hop) HOP = m.hop; render(); }
+      else if (m.type === "error") { modelFailed = true; showStatus(); }
       else if (m.type === "result") onResult(m);
     };
-    worker.onerror = () => setStatus("model error");
+    worker.onerror = () => { modelFailed = true; showStatus(); };
   }
 
   // The decoder: the model (its worker) and the 1 s tick start at once; the capture on the RX bus joins
@@ -251,7 +266,7 @@
     ensureWorker();
     stopCapture();
     capFailed = false;
-    pendingLen = 0; pendingText = ""; lastPeak = 0; messages = []; rxOpen = false; lastRxAt = 0; lastPreview = "";
+    pendingLen = 0; pendingText = ""; lastPeak = 0; lastRxAt = 0; lastPreview = "";   // the chat stays: Clear empties it
     inflight = false; analysisLen = 0;
     render();
     if (!ticker) ticker = setInterval(tick, INFER_MS);
@@ -280,8 +295,8 @@
     }
     return Promise.resolve();
   }
-  function failCapture() { capFailed = true; setStatus("audio capture unavailable"); }   // tried again when Decode is next turned on
-  function stopDecoder() { stopCapture(); if (ticker) { clearInterval(ticker); ticker = 0; } }
+  function failCapture() { capFailed = true; showStatus(); }   // tried again when Decode is next turned on
+  function stopDecoder() { stopCapture(); if (ticker) { clearInterval(ticker); ticker = 0; } pendingText = ""; closeRx(); render(); }
   function stopCapture() {
     if (capNode) { try { capNode.disconnect(); capNode.port.onmessage = null; } catch (_) {} capNode = null; }
   }
@@ -377,17 +392,30 @@
         if (atEnd) out.scrollTop = out.scrollHeight;
       }
     }
-    if (hint) {
-      // Drive the prompt off whether RX audio is actually ON — not the audio level, so it never
-      // flashes "turn on RX" mid-decode just because of a momentary gap or a commit.
-      const ra = RA(), rxOn = ra && ra.on ? ra.on() : (lastPeak >= SILENCE);
-      hint.textContent = !workerReady ? "loading neural model…"
-        : (rxOn ? "decoding…" : "turn on RX audio to decode the receiver audio");
-    }
+    showStatus();
   }
   function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
   $("cwClear").addEventListener("click", () => { messages = []; rxOpen = false; pendingText = ""; lastRxAt = 0; lastPreview = ""; render(); });
+
+  // ---- the speed and the sidetone's pitch: kept by this browser; the pitch shown beside its slider ----
+  const KEY_WPM = "telerig.cw.wpm", KEY_TONE = "telerig.cw.tone";
+  const ls = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, String(v)); } catch (_) {} return null; };
+  const wpmSet = $("cwWpmSet"), toneSet = $("cwToneSet"), toneVal = $("cwToneVal");
+  const within = (v, lo, hi, dflt) => (v >= lo && v <= hi ? v : dflt);
+  function showTone() { if (toneVal && toneSet) toneVal.textContent = within(+toneSet.value, 400, 1000, 600) + " Hz"; }
+  if (wpmSet) {
+    const kept = Math.round(+ls(KEY_WPM));
+    if (kept >= 5 && kept <= 40) wpmSet.value = String(kept);
+    wpmSet.addEventListener("change", () => { const v = Math.round(+wpmSet.value); if (v >= 5 && v <= 40) ls(KEY_WPM, v); });
+  }
+  if (toneSet) {
+    const kept = Math.round(+ls(KEY_TONE));
+    if (kept >= 400 && kept <= 1000) toneSet.value = String(kept);
+    toneSet.addEventListener("input", showTone);
+    toneSet.addEventListener("change", () => { showTone(); ls(KEY_TONE, within(Math.round(+toneSet.value), 400, 1000, 600)); });
+    showTone();
+  }
 
   // ---- coder (text -> Morse sidetone; never transmits) ----
   $("cwPlay").addEventListener("click", () => playMorse($("cwSend").value));
@@ -553,6 +581,7 @@
   }
   setInterval(syncTx, 400);
   syncTx();
+  showStatus();                                    // before CW first comes into view: the decoder is off
 
   // the Modem window (digital.js): busy() = this tab's own CW message is on the air (the window stays on
   // CW, its STOP in view); summary() = the collapsed window's line while CW is its mode

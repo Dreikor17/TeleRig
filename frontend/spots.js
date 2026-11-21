@@ -650,5 +650,17 @@
   window.SpotsPanel = {
     summary: () => (filt.view === "live" && lastFetch ? shown().length + " spots" : ""),
     view: () => filt.view,
+    // The Modem window's "Tune to" menus (digital.js): the callfreqs.js rows on this radio's bands that
+    // `pick` accepts, lowest first, and the same tuning a click on such a row does (false: not allowed).
+    calls: (pick) => {
+      const p = profile(), out = [];
+      for (const g of CALLS) for (const r of g.rows) if (bandOf(p, r.hz) && (!pick || pick(r))) out.push({ band: g.band, hz: r.hz, mode: r.mode, name: r.name });
+      return out;
+    },
+    tuneTo: (x) => {
+      if (!x || !(x.hz > 0) || !sendTune(x)) return false;
+      say("Tuned to " + (x.name ? x.name + ", " : "") + fmtFreq(x.hz));
+      return true;
+    },
   };
 })();

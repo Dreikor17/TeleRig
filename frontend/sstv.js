@@ -382,7 +382,7 @@
     if (cur) {
       const st = cur.freqText ? " · " + cur.freqText : "";
       say("Receiving " + cur.mode.name + " · line " + Math.min(rowsDone, cur.mode.height) + " of " + cur.mode.height + st);
-    } else if (!rxOn()) say("Turn on RX in the Audio panel to receive SSTV.");
+    } else if (!rxOn()) say("");                            // RX is off: the window's own line says so (digital.js)
     else if (lastNote) say(lastNote);
     else say(want === "auto" ? "Listening for an SSTV picture (its VIS header picks the mode)."
                              : "Listening for " + BY_ID.get(want).name + ": it starts at the next sync pulse.");

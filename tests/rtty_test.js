@@ -190,7 +190,7 @@ function tab(opts) {
   e.feedAll(signal(MSG, { snr: 10, seed: 3 }));
   eq(e.text.textContent, "", "R5 the window off the grid: nothing decoded");
   const f = tab({ rxOff: true });
-  eq(f.status.textContent, "Turn on RX in the Audio panel to decode RTTY.", "R5 RX off: the tab says to turn it on");
+  eq(f.status.textContent, "", "R5 RX off: nothing here (the window's own line says so)");
 }
 
 console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);

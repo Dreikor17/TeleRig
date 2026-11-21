@@ -105,7 +105,7 @@ function noise(sec, rms) {
   // Q1
   {
     const e = page({ rx: false });
-    eq(e.status(), "Turn on RX in the Audio panel to receive SSTV.", "Q1 RX off: says so");
+    eq(e.status(), "", "Q1 RX off: nothing here (the window's own line says so)");
     e.rx = true; e.tick();
     eq(e.status(), LISTENING, "Q1 RX on: listening for a VIS header");
     eq(e.taps.length, 1, "Q1 it taps the radio's PCM once");

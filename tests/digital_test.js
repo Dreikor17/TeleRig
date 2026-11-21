@@ -25,6 +25,13 @@
  *  T4. a worker error: a note, and the next slot on the page; no Worker: the decoder on the page; RX off: the
  *      hint; off the grid: nothing kept, nothing decoded
  *  T5. end to end: a made FT8 slot through the real decoder (on the page), at the right DT and frequency
+ *  T6. the FT8 status helps when nothing shows: the radio in a mode FT8 is not heard in is named; three
+ *      slots in a row with nothing decoded say what to check; a decode clears that
+ *  D7. receive audio off: the window says so under its keys, and its key presses the Audio panel's RX key
+ *      (never turning RX off); the line follows RX within a second
+ *  D8. "Tune to" in CW, FT8 and SSTV: that mode's frequencies from the Spots panel's list (SpotsPanel.calls),
+ *      band and MHz (CW's named); choosing one tunes (SpotsPanel.tuneTo) and the menu goes back to its
+ *      title; operators only; a radio with no such frequency has no menu; another radio, another menu
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -34,6 +41,7 @@ let failures = 0, checks = 0;
 function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL " + msg); } }
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
+const TUNE_TO = "Tune to" + String.fromCharCode(0x2026);     // a "Tune to" menu's title, as index.html has it
 function page(opts) {
   opts = opts || {};
   const e = makeEnv({ localStorage: opts.localStorage || {} });
@@ -49,10 +57,29 @@ function page(opts) {
     e.ctx.ResizeObserver.prototype.observe = function (el) { this.el = el; };
   }
   const modes = e.el("div", { class: "dm-modes" }, tile);
+  // "receive audio is off" and its key; the Audio panel's RX key, which it presses
+  e.rxBar = e.el("div", { id: "dmRx", hidden: true }, tile);
+  e.rxKey = e.el("button", { id: "dmRxOn", type: "button" }, e.rxBar);
+  e.audioClicks = 0;
+  e.el("button", { id: "audioBtn", type: "button" }).addEventListener("click", () => { e.audioClicks++; e.on = !e.on; });
   e.keys = {};
   for (const [m, id] of [["cw", "dmCw"], ["rtty", "dmRtty"], ["ft8", "dmFt8"], ["sstv", "dmSstv"]]) e.keys[m] = e.el("button", { id, type: "button" }, modes);
   e.panes = { cw: e.el("div", { id: "dmPaneCw" }, tile), rtty: e.el("div", { id: "dmPaneRtty" }, tile), ft8: e.el("div", { id: "dmPaneFt8" }, tile),
               sstv: e.el("div", { id: "dmPaneSstv" }, tile) };
+  // the "Tune to" menus: a select whose first option is its title
+  e.go = {};
+  for (const [m, id] of [["cw", "cwGo"], ["ft8", "ft8Go"], ["sstv", "sstvGo"]]) {
+    e.go[m] = e.el("select", { id, hidden: true }, e.panes[m]);
+    e.el("option", { value: "" }, e.go[m]).textContent = TUNE_TO;
+    e.go[m].value = "";
+  }
+  e.perms = new Set(opts.viewer ? ["view", "listen"] : ["view", "listen", "operate"]);
+  e.ctx.TR = { can: (x) => e.perms.has(x) };
+  e.tuned = [];
+  if (opts.calls) {                                          // spots.js's side of "Tune to"
+    e.callRows = opts.calls;
+    e.ctx.SpotsPanel = { calls: (pick) => e.callRows.filter((r) => !pick || pick(r)), tuneTo: (x) => { e.tuned.push(x); return true; } };
+  }
   e.ft8Strip = e.el("canvas", { id: "ft8Strip" }, e.panes.ft8);
   e.cq = e.el("input", { id: "ft8CqOnly", type: "checkbox" }, e.panes.ft8);
   e.clear = e.el("button", { id: "ft8Clear", type: "button" }, e.panes.ft8);
@@ -64,7 +91,8 @@ function page(opts) {
   e.on = !opts.rxOff;
   e.taps = [];
   e.ctx.RadioAudio = { on: () => e.on, tapPcm: (fn) => { e.taps.push(fn); return () => {}; } };
-  e.ctx.RadioControl = { state: () => ({ connected: true, mode_name: "USB" }) };
+  e.st = { connected: true, mode_name: "USB" };
+  e.ctx.RadioControl = { state: () => e.st };
   e.workers = [];
   if (opts.worker !== false) {
     e.ctx.Worker = function (url) { this.url = url; this.posted = []; e.workers.push(this); };
@@ -326,7 +354,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   f.clock.advance(1);
   eq(f.rows(), ["+1 0.4 1234 K1ABC W9XYZ RR73"], "T4 no Worker in this browser: the decoder on the page");
   const g = page({ rxOff: true });
-  eq(g.status.textContent, "Turn on RX in the Audio panel to decode FT8.", "T4 RX off: the hint");
+  eq(g.status.textContent, "", "T4 RX off: nothing here (the window's own line says so)");
   const h = page();
   h.grid.removeChild(h.tile);
   h.play(ramp(RATE * 40), RATE);
@@ -346,6 +374,90 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq(r.map((x) => x.split(" ").slice(3).join(" ")), ["CQ W9XYZ EN53"], "T5 a made slot, decoded by the real decoder on the page");
   const [db, dt, hz] = (r[0] || "").split(" ").map(Number);
   check(Math.abs(dt) <= 0.15 && Math.abs(hz - 1000) <= 3 && Math.abs(db + 8) <= 4, `T5 ... at DT ${dt}, ${hz} Hz, ${db} dB`);
+}
+
+// ---- T6: the status helps when nothing shows ----
+{
+  const e = page();
+  e.st = { connected: true, mode_name: "FM" };
+  e.clock.advance(500);
+  eq(e.status.textContent, "The radio is in FM: FT8 is heard in USB or DATA-USB (Tune to sets it).", "T6 the radio in FM: said, with what to do");
+  for (const m of ["DATA-USB", "USB"]) {
+    e.st = { connected: true, mode_name: m }; e.clock.advance(500);
+    check(/the first slot is decoded after/.test(e.status.textContent), "T6 in " + m + " it listens: " + e.status.textContent);
+  }
+  e.st = { connected: false, mode_name: "FM" }; e.clock.advance(500);
+  check(/the first slot is decoded after/.test(e.status.textContent), "T6 no radio connected: no word about its mode");
+  e.st = { connected: true, mode_name: "USB" };
+  // slots with nothing decoded
+  const answer = (decodes) => { const w = e.workers[0], j = w.posted[w.posted.length - 1]; w.onmessage({ data: { id: j.m.id, decodes } }); };
+  e.play(ramp(RATE * 20.5), RATE); answer([]);
+  check(/^Nothing decoded in the \d\d:\d\d:\d\d slot\.$/.test(e.status.textContent), "T6 one slot with nothing: said for that slot: " + e.status.textContent);
+  e.play(ramp(RATE * 15), RATE); answer([]);
+  check(/^Nothing decoded in the /.test(e.status.textContent), "T6 two: still only that");
+  e.play(ramp(RATE * 15), RATE); answer([]);
+  eq(e.status.textContent, "Nothing decoded for 45 s. Check the frequency (Tune to), the mode and this computer's clock.", "T6 three in a row: what to check");
+  e.play(ramp(RATE * 15), RATE); answer([]);
+  check(/^Nothing decoded for 60 s\. Check/.test(e.status.textContent), "T6 ... and it keeps counting: " + e.status.textContent);
+  e.play(ramp(RATE * 15), RATE); answer([{ snr: -3, dt: 0.1, freq: 700, text: "CQ K1ABC FN42" }]);
+  check(/^1 message at /.test(e.status.textContent), "T6 a decode: back to the count: " + e.status.textContent);
+  e.play(ramp(RATE * 15), RATE); answer([]);
+  check(/^Nothing decoded in the /.test(e.status.textContent), "T6 ... and the run of empty slots starts again");
+}
+
+// ---- D7: receive audio off ----
+{
+  const e = page({ stubs: true, rxOff: true });
+  eq(e.rxBar.hidden, false, "D7 RX off: the line under the keys shows");
+  e.click(e.rxKey);
+  eq([e.audioClicks, e.on, e.rxBar.hidden], [1, true, true], "D7 its key presses the Audio panel's RX key: RX on, the line gone");
+  e.click(e.rxKey);
+  eq([e.audioClicks, e.on], [1, true], "D7 pressed again with RX on (a double tap): RX is not turned off");
+  e.on = false; e.clock.advance(1000);
+  eq(e.rxBar.hidden, false, "D7 RX turned off elsewhere: the line is back within a second");
+  e.on = true; e.clock.advance(1000);
+  eq(e.rxBar.hidden, true, "D7 RX turned on elsewhere: gone within a second");
+  const f = page({ stubs: true });
+  eq(f.rxBar.hidden, true, "D7 RX on from the start: no line");
+}
+
+// ---- D8: "Tune to" ----
+{
+  const HF = [
+    { band: "40 m", hz: 7030000, mode: "CW", name: "QRP calling" }, { band: "40 m", hz: 7074000, mode: "DIGI", name: "FT8" },
+    { band: "40 m", hz: 7171000, mode: "SSB", name: "SSTV" }, { band: "20 m", hz: 14060000, mode: "CW", name: "QRP calling" },
+    { band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }, { band: "20 m", hz: 14100000, mode: "CW", name: "NCDXF beacons" },
+    { band: "20 m", hz: 14230000, mode: "SSB", name: "SSTV" }, { band: "20 m", hz: 14285000, mode: "SSB", name: "QRP calling" },
+  ];
+  const VHF = [{ band: "2 m", hz: 144174000, mode: "DIGI", name: "FT8" }, { band: "23 cm", hz: 1296174000, mode: "DIGI", name: "FT8" },
+               { band: "2 m", hz: 146520000, mode: "FM", name: "FM calling" }];
+  const e = page({ stubs: true, calls: HF });
+  const T = TUNE_TO;
+  const texts = (m) => e.go[m].options.map((o) => o.textContent);
+  const choose = (m, v) => { e.go[m].value = v; e.go[m].dispatchEvent(new e.Event("change", { bubbles: true })); };
+  eq(texts("ft8"), [T, "40 m  7.074", "20 m  14.074"], "D8 FT8's menu: its title, then each band's FT8 frequency");
+  eq(texts("sstv"), [T, "40 m  7.171", "20 m  14.230"], "D8 SSTV's menu");
+  eq(texts("cw"), [T, "40 m  7.030  QRP calling", "20 m  14.060  QRP calling", "20 m  14.100  NCDXF beacons"], "D8 CW's menu: the CW rows, each named");
+  eq(["cw", "ft8", "sstv"].map((m) => [e.go[m].hidden, e.go[m].value]), [[false, ""], [false, ""], [false, ""]], "D8 the menus show, on their title");
+  choose("ft8", "1");
+  eq([e.tuned, e.go.ft8.value], [[{ band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }], ""], "D8 a choice tunes to that row, and the menu is back on its title");
+  choose("cw", "2");
+  eq(e.tuned.length === 2 && e.tuned[1].hz, 14100000, "D8 CW's third entry: the beacons");
+  choose("sstv", "");
+  eq(e.tuned.length, 2, "D8 the title itself tunes nothing");
+  e.perms.delete("operate"); e.clock.advance(1000);
+  eq(["cw", "ft8", "sstv"].map((m) => e.go[m].hidden), [true, true, true], "D8 a viewer has no menus (within a second of the role)");
+  choose("ft8", "1");
+  eq(e.tuned.length, 2, "D8 ... and nothing to choose");
+  e.perms.add("operate"); e.clock.advance(1000);
+  eq([e.go.ft8.hidden, texts("ft8").length], [false, 3], "D8 an operator again: back");
+  e.callRows = VHF; e.clock.advance(1000);
+  eq([texts("ft8"), e.go.ft8.hidden, e.go.sstv.hidden, e.go.cw.hidden], [[T, "2 m  144.174", "23 cm  1296.174"], false, true, true],
+     "D8 another radio: its own FT8 frequencies, and no menu where it has none");
+  choose("ft8", "1");
+  eq(e.tuned[2] && e.tuned[2].hz, 1296174000, "D8 ... and a choice is the new radio's row");
+  const none = page({ stubs: true });
+  eq(["cw", "ft8", "sstv"].map((m) => none.go[m].hidden), [true, true, true], "D8 no list to choose from (the Spots panel's script missing): no menus");
 }
 
 console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);

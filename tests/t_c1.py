@@ -460,7 +460,7 @@ def spots_panel_in_node_vm(ctx):
                  ".mem-form.naming{flex:1 1 100%}",
                  '.spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}',
                  ".mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}",
-                 ".spots-tab,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:40px}"):
+                 ".spots-tab,.spots-bar select,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:44px}"):
         check(rule in css, f"style.css: {rule}")
     check("[hidden]{display:none!important}" in css, "style.css: a hidden key, form or field takes no room (the views hide what is not theirs)")
 
@@ -486,9 +486,11 @@ def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
     """cwtool.js: received text after a pause of 5 s or more (new characters, committed or in the live
     preview) starts a new RX bubble; text committed later stays where it showed; Clear forgets the pause.
     CW decodes by default (CW coming into view turns Decode on, with the real Modem window too); the
-    chat follows new text only at its end. The real tr.js + cwtool.js (+ digital.js) in a Node vm with a
-    stand-in decoder worker (tests/cw_chat_test.js). Static: the decoder never makes the page's audio
-    context (one made before a click stays paused, and the mic would send silence): only Play does."""
+    chat follows new text only at its end, and stays when Decode is turned off and on again. One line
+    under the bar says where the decoder stands; WPM and the sidetone's pitch are kept by the browser.
+    The real tr.js + cwtool.js (+ digital.js) in a Node vm with a stand-in decoder worker
+    (tests/cw_chat_test.js). Static: the decoder never makes the page's audio context (one made before a
+    click stays paused, and the mic would send silence): only Play does."""
     r = subprocess.run(["node", str(REPO / "tests" / "cw_chat_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"cw_chat_test.js: {r.stdout}{r.stderr}")
@@ -558,9 +560,12 @@ def digital_modes_window_in_node_vm(ctx):
     decoder listening, a dot for news in a hidden mode, no other mode while a picture or a CW message goes
     out; CW is the CW panel moved in (cwtool.js: tests/cw_chat_test.js), the CW tile gone; RTTY (rtty.js:
     tests/rtty_test.js) and FT8 (ft8-decode.js against a real recording and WSJT-X's own decodes of it:
-    tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). Static: RTTY and
-    FT8 decode only (no radio action, no socket, no fetch) and never parse text as HTML; the decoder carries
-    ft8_lib's MIT notice, and the test recording its own."""
+    tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). With RX off the
+    window says so under its keys and has the key that turns it on; CW, FT8 and SSTV have a Tune-to menu
+    (the Spots panel's list tunes); FT8's list has column headings and its status says what to check when
+    nothing decodes. Static: RTTY and FT8 decode only (no radio action, no socket, no fetch) and never
+    parse text as HTML; the decoder carries ft8_lib's MIT notice, and the test recording its own; the
+    page's RX line, menus, headings and touch sizes."""
     for name in ("ft8_test.js", "rtty_test.js", "digital_test.js"):
         r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=600, cwd=str(REPO))
         eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
@@ -586,6 +591,27 @@ def digital_modes_window_in_node_vm(ctx):
     keys = re.findall(r'class="dm-mode[^"]*" id="dm(\w+)"', html)
     eq(keys, ["Cw", "Rtty", "Ft8", "Sstv"], "the mode keys: CW, RTTY, FT8, SSTV")
     check('gs-id="cw"' not in html and 'id="cwClose"' not in html, "the CW panel and its close button are gone")
+    # receive audio off: one line under the keys, with the key that turns RX on (the tools' own lines are empty then)
+    check(re.search(r'<div class="dm-rx" id="dmRx" hidden>\s*<span>[^<]+</span>\s*'
+                    r'<button type="button" class="key sm" id="dmRxOn" title="[^"]+">RX on</button>\s*</div>', html),
+          "index.html: the RX-off line and its key, hidden until RX is off")
+    dig = _strip_comments(_read("digital.js"))
+    check("if (b && !rxOn()) b.click();" in dig, "digital.js: its key presses the Audio panel's RX key only while RX is off (it never turns RX off)")
+    for sid in ("rttyStatus", "ft8Status", "sstvStatus"):
+        check(re.search(r'<p class="[a-z-]+" id="%s"[^>]*></p>' % sid, html), f"index.html: #{sid} starts empty")
+    for f, n in (("rtty.js", 0), ("ft8.js", 0), ("sstv.js", 0), ("cwtool.js", 0)):
+        check("Audio panel" not in _strip_comments(_read(f)), f"{f} no longer sends the operator to the Audio panel for RX")
+    # Tune to: a menu in CW, SSTV and FT8 (the page's order), for operators, hidden until it has entries
+    gos = re.findall(r'<select class="dm-go" id="(\w+)" data-gate="operate" aria-label="[^"]+" title="[^"]+" hidden>'
+                     r'<option value="">Tune to\u2026</option></select>', html)
+    eq(gos, ["cwGo", "sstvGo", "ft8Go"], "index.html: the three Tune-to menus")
+    check("sp.tuneTo(r)" in dig and "sp.calls(g.pick)" in dig, "digital.js: the menus list and tune through the Spots panel")
+    # CW: one status line; FT8: column headings right over its list
+    check('<p class="dm-status" id="cwStatus" aria-live="polite">' in html and 'id="cwHint"' not in html, "index.html: CW has one status line")
+    check(re.search(r'<div class="ft8-row ft8-head" aria-hidden="true"><span class="db"[^>]*>dB</span><span class="dt"[^>]*>DT</span>'
+                    r'<span class="hz"[^>]*>Hz</span><span class="msg">Message</span></div>\s*<div class="dm-screen ft8-list" id="ft8List"', html),
+          "index.html: FT8's column headings sit right over its list")
+    check('<b class="sl-val" id="cwToneVal">600 Hz</b>' in html, "index.html: the sidetone's pitch is shown beside its slider")
     # the window is as tall as its panel, never its text: the text screens take the room left and scroll
     # inside (a window that grew with its text made the whole panel scroll, the keys and controls with it)
     css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
@@ -594,6 +620,13 @@ def digital_modes_window_in_node_vm(ctx):
                  "#dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}"):
         check(rule in css, f"style.css: {rule}")
     check(not re.search(r"\.tile-digital>\.tile-fit\{[^}]*min-height:100%", css), "the Modem window doesn't grow with its content")
+    for rule in (".dm-rx{display:flex;align-items:center;gap:8px;flex:none;",
+                 ".ft8-head{flex:none;padding:0 8px;font:12px/1.45 var(--font-ui)}",
+                 ".dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{min-height:44px}",
+                 ".tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{font-size:16px}"):
+        check(rule in css, f"style.css: {rule}")
+    check(re.search(r"@media \(max-width:680px\),\(hover:none\) and \(pointer:coarse\)\{\s*\.dm-mode,\.sstv-tab,", css),
+          "style.css: thumb-high mode keys, tabs, menus and fields on a phone and on any touch screen")
     for sel, scroll in ((".dm-screen", "overflow:auto"), (".cw-out", "overflow-y:auto")):
         m = re.search(r"(?:^|\})\s*" + re.escape(sel) + r"\{([^}]*)\}", css)
         check(m and "flex:1 1 auto" in m.group(1) and scroll in m.group(1) and re.search(r"min-height:\d+px", m.group(1)),

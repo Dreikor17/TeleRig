@@ -35,6 +35,9 @@
  *  P21. delete: the X arms at the first tap and deletes at the second
  *  P22. the two filters      P23. operators only      P24. when the memories are read; a failed read
  *  P25. the mark follows the radio in place; a row drawn for another radio tunes nothing
+ *  P26. SpotsPanel.calls / tuneTo, for the Modem window's "Tune to" menus: the list's rows on this radio's
+ *       bands that a test accepts, and the tuning a click on such a row does (not for a viewer, not off
+ *       the radio's bands)
  */
 "use strict";
 const fs = require("fs");
@@ -1016,6 +1019,34 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     v.perms.delete("operate");                              // made a viewer; the list is not drawn again yet
     v.click(mine);
     eq(v.sent, [], "P25 a row drawn for an operator tunes nothing once they are a viewer");
+  }
+  // P26: the Modem window's "Tune to" menus ask the panel for a mode's frequencies and have it tune
+  {
+    const e = page();                                        // on LIVE: the menus don't depend on the view
+    await settle(e);
+    const SP = e.ctx.SpotsPanel;
+    const ft8 = SP.calls((r) => r.name === "FT8");
+    eq(ft8.map((r) => r.band + " " + r.hz), ["160 m 1840000", "80 m 3573000", "60 m 5357000", "40 m 7074000", "30 m 10136000", "20 m 14074000",
+       "17 m 18100000", "15 m 21074000", "12 m 24915000", "10 m 28074000", "6 m 50313000", "2 m 144174000", "70 cm 432174000"],
+       "P26 FT8 on an FT-991A: each of its bands' dial frequency, lowest first, none of 23 cm");
+    eq(ft8[5], { band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }, "P26 a row: its band, Hz, a spot's mode and its name");
+    eq(SP.calls((r) => r.name === "SSTV").map((r) => r.hz), [3845000, 7171000, 14230000, 21340000, 28680000], "P26 SSTV's frequencies");
+    check(SP.calls((r) => r.mode === "CW").every((r) => r.mode === "CW") && SP.calls((r) => r.mode === "CW").length >= 10, "P26 the CW rows");
+    eq(SP.calls().length, callsOf(FT991A).reduce((n, g) => n + g.rows.length, 0), "P26 no test: every row on the radio's bands");
+    eq(SP.calls(() => false), [], "P26 a test nothing passes: none");
+    e.sent.length = 0;
+    eq([SP.tuneTo(ft8[3]), e.sent], [true, [F(7074000), M("DATA-USB"), NAR, W(17)]], "P26 tuneTo tunes as a click on the row does: the freq, DATA-USB, 3 kHz");
+    e.clock.advance(20);
+    eq(e.doc.getElementById("srLive").textContent, "Tuned to FT8, 7.074.0", "P26 ... and a screen reader hears it");
+    e.sent.length = 0;
+    eq([SP.tuneTo({ hz: 1296174000, mode: "DIGI", name: "FT8" }), SP.tuneTo(null), SP.tuneTo({ mode: "CW" }), e.sent], [false, false, false, []],
+       "P26 off the radio's bands, or no frequency: nothing sent");
+    e.perms.delete("operate");
+    eq([SP.tuneTo(ft8[3]), e.sent], [false, []], "P26 a viewer: nothing sent");
+    const i = page({ radio: R("ic9700") });
+    await settle(i);
+    eq([i.ctx.SpotsPanel.calls((r) => r.name === "FT8").map((r) => r.hz), i.ctx.SpotsPanel.calls((r) => r.name === "SSTV")],
+       [[144174000, 432174000, 1296174000], []], "P26 an IC-9700: its own FT8 frequencies, no SSTV ones");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

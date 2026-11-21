@@ -102,6 +102,20 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   not the radio's own memory channels: the server keeps them per account and per radio
   (`/api/me/memories`, up to 100 a radio), so every device you sign in on has them. Repeater shift and
   tone are not kept. Operators only.
+- **The Modem window, easier to get going.** Every mode decodes the radio's audio, so with RX off the
+  window now says so under its mode keys, with an **RX on** key right there (it presses the Audio
+  panel's RX key; no more "turn on RX in the Audio panel" in each mode). CW, FT8 and SSTV have a **Tune
+  to** menu: that mode's frequencies on the radio's bands (each band's FT8 dial frequency, the SSTV
+  frequencies, the QRP CW calling frequencies and the beacons), from the same list as the Spots panel's
+  CALLING view; a choice sets the frequency, the mode and the filter. CW: one line under the bar says
+  where the decoder stands (off, loading, listening, copying, or why it can't) in place of "ready" and a
+  hint under the chat; turning Decode off and on keeps the chat (Clear empties it); the speed and the
+  sidetone's pitch are remembered per browser, and the pitch is shown beside its slider. FT8: the list has
+  column headings (dB, DT, Hz, Message); the status names the radio's mode when FT8 can't be heard in it,
+  and after 45 s with nothing decoded says what to check; the note says it is receive only and that WSJT-X
+  works FT8 through the bridge. On a phone or any touch screen the mode keys, SSTV's Receive / Send tabs,
+  the menus and the text fields are as tall as the keys (44 px; the Spots panel's too), and a Modem window
+  added to a phone layout starts taller.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

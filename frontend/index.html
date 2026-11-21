@@ -634,6 +634,13 @@
         <button type="button" class="dm-mode" id="dmFt8" role="tab" aria-selected="false" aria-controls="dmPaneFt8" tabindex="-1">FT8</button>
         <button type="button" class="dm-mode" id="dmSstv" role="tab" aria-selected="false" aria-controls="dmPaneSstv" tabindex="-1">SSTV</button>
       </div>
+      <!-- every mode decodes the radio's audio: while RX is off this says so, and its key turns RX on (the Audio
+           panel's own RX key, pressed for the operator). The "Tune to" menu in CW, FT8 and SSTV lists that mode's
+           frequencies of callfreqs.js on this radio's bands and tunes as the Spots panel's CALLING rows do. -->
+      <div class="dm-rx" id="dmRx" hidden>
+        <span>RX is off: nothing is decoded.</span>
+        <button type="button" class="key sm" id="dmRxOn" title="Turn on receive audio (the Audio panel's RX key)">RX on</button>
+      </div>
       <div id="dmPaneCw" role="tabpanel" aria-labelledby="dmCw">
         <!-- the CW decoder / coder (cwtool.js), shown by the mode keys: no hidden attribute on #cwTool (AR-27) -->
         <div class="tool-panel" id="cwTool">
@@ -642,27 +649,26 @@
           </div>
           <div class="tp-body">
             <div class="dm-bar cw-bar">
-              <button type="button" class="key sm tog" id="cwDecodeBtn" aria-pressed="false" title="The neural CW decoder on or off">Decode</button>
-              <span class="cw-status" id="cwStatus">neural</span>
+              <button type="button" class="key sm tog" id="cwDecodeBtn" aria-pressed="false" title="The CW decoder on or off">Decode</button>
+              <select class="dm-go" id="cwGo" data-gate="operate" aria-label="Tune the radio to a CW frequency" title="Tune the radio to a CW frequency on one of its bands" hidden><option value="">Tune to…</option></select>
+              <button type="button" class="key sm" id="cwClear" title="Clear the text">Clear</button>
             </div>
+            <p class="dm-status" id="cwStatus" aria-live="polite">Loading the decoder…</p>
             <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
             <div class="cw-row">
-              <span class="cw-hint" id="cwHint">turn on RX audio to decode the receiver audio</span>
-              <button class="key sm" id="cwClear">Clear</button>
-            </div>
-            <div class="cw-row">
-              <input id="cwSend" class="cw-send" placeholder="type &rarr; Morse &mdash; &#9654; sidetone &middot; TX keys the radio" maxlength="160">
-              <button class="key sm" id="cwPlay" title="Play locally as a sidetone — does NOT key the radio">&#9654;</button>
-              <button class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
+              <input id="cwSend" class="cw-send" placeholder="Message: &#9654; hear, TX send" maxlength="160" aria-label="CW message: the play key sounds it here, TX sends it on the radio">
+              <button type="button" class="key sm" id="cwPlay" aria-label="Play as a sidetone here" title="Hear the message here as a sidetone. This does not key the radio.">&#9654;</button>
+              <button type="button" class="key sm cw-tx" id="cwTx" title="Transmit this message as CW on the radio" hidden data-tx>TX</button>
             </div>
             <div class="cw-row cw-txrow" id="cwTxRow" hidden data-tx>
               <span class="cw-txhint" id="cwTxHint"></span>
             </div>
             <div class="cw-row">
               <span class="cw-lbl">WPM</span>
-              <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" title="CW speed (words per minute)">
+              <input type="number" id="cwWpmSet" min="5" max="40" value="18" class="cw-wpm" aria-label="CW speed in words per minute" title="CW speed (words per minute), for the sidetone and for TX">
               <span class="cw-lbl">Tone</span>
-              <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" title="Sidetone pitch">
+              <input type="range" id="cwToneSet" min="400" max="1000" step="10" value="600" aria-label="Sidetone pitch in Hz" title="Sidetone pitch">
+              <b class="sl-val" id="cwToneVal">600 Hz</b>
             </div>
             <div class="cw-credit">neural decode: <a href="https://github.com/e04/deepcw-engine" target="_blank" rel="noopener">DeepCW</a> (AGPL-3.0) ·
               <a href="https://github.com/Dreikor17/TeleRig" target="_blank" rel="noopener">source</a></div>
@@ -677,9 +683,10 @@
       <div id="sstvRx" role="tabpanel" aria-labelledby="sstvTabRx">
         <div class="sstv-bar">
           <select id="sstvMode" aria-label="SSTV mode"><option value="auto">Auto (VIS)</option></select>
+          <select class="dm-go" id="sstvGo" data-gate="operate" aria-label="Tune the radio to an SSTV frequency" title="Tune the radio to a band's SSTV frequency" hidden><option value="">Tune to…</option></select>
           <button type="button" class="key sm" id="sstvClear" title="Stop this picture and listen again">Clear</button>
         </div>
-        <p class="sstv-status" id="sstvStatus">Turn on RX in the Audio panel to receive SSTV.</p>
+        <p class="sstv-status" id="sstvStatus"></p>
         <canvas class="sstv-canvas" id="sstvCanvas" width="320" height="256" aria-label="The SSTV picture being received"></canvas>
         <div class="sstv-gallery" id="sstvGallery" role="list" aria-label="Pictures received"></div>
       </div>
@@ -708,18 +715,20 @@
           <button type="button" class="key sm tog" id="rttyRev" aria-pressed="false" title="Swap mark and space (some stations send them the other way round)">Rev</button>
           <button type="button" class="key sm" id="rttyClear" title="Clear the text">Clear</button>
         </div>
-        <p class="dm-status" id="rttyStatus" aria-live="polite">Turn on RX in the Audio panel to decode RTTY.</p>
+        <p class="dm-status" id="rttyStatus" aria-live="polite"></p>
         <div class="dm-screen rtty-text" id="rttyText" role="log" aria-live="off" aria-label="RTTY text received"></div>
       </div>
       <div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>
         <canvas class="dm-strip" id="ft8Strip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with the last slot's FT8 messages marked"></canvas>
         <div class="dm-bar">
-          <label class="dm-check"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
+          <label class="dm-check" title="Show only stations calling CQ"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
+          <select class="dm-go" id="ft8Go" data-gate="operate" aria-label="Tune the radio to a band's FT8 frequency" title="Tune the radio to a band's FT8 frequency, in its data mode" hidden><option value="">Tune to…</option></select>
           <button type="button" class="key sm" id="ft8Clear" title="Clear the list">Clear</button>
         </div>
-        <p class="dm-status" id="ft8Status" aria-live="polite">Turn on RX in the Audio panel to decode FT8.</p>
+        <p class="dm-status" id="ft8Status" aria-live="polite"></p>
+        <div class="ft8-row ft8-head" aria-hidden="true"><span class="db" title="Signal to noise, dB">dB</span><span class="dt" title="Time offset, seconds">DT</span><span class="hz" title="Audio frequency, Hz">Hz</span><span class="msg">Message</span></div>
         <div class="dm-screen ft8-list" id="ft8List" role="log" aria-live="off" aria-label="FT8 messages decoded: signal to noise in dB, time offset in seconds, audio frequency in Hz, message"></div>
-        <p class="dm-note">Slots follow this computer's clock: keep it right to about a second.</p>
+        <p class="dm-note">Receive only: for contacts, use WSJT-X through the bridge. Slots follow this computer's clock: keep it right to about a second.</p>
       </div>
     </div></div>
   </section>

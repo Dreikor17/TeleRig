@@ -487,10 +487,6 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .cw-row input[type=range]{flex:1 1 auto;min-width:0;accent-color:var(--accent)}
 .cw-send{flex:1 1 auto;min-width:0}
 .key.sm{flex:0 0 auto;min-width:0;padding:5px 9px;font-size:12px}
-.cw-hint{font-size:10px;color:var(--txt-dim)}
-.cw-row .cw-hint{flex:1 1 auto}
-.cw-hint.cw-on{color:var(--accent-hi)}
-.cw-status{color:var(--txt-dim);font-family:var(--font-ui);font-size:10px}
 .cw-row input.cw-wpm{flex:0 0 52px;min-width:52px}
 /* CW transmit button — amber (it keys the radio), red + pulse while on air */
 .key.sm.cw-tx,.key.sstv-send{border-color:var(--warn);color:var(--warn-hi);background:var(--warn-tint);font-weight:700;min-width:34px}
@@ -602,11 +598,13 @@ a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decorat
 .mem-del:hover{background:var(--key-hi);border-color:var(--border-strong);color:var(--txt)}
 .mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}
 .mem-del:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
-@media (hover:none) and (pointer:coarse){            /* a touch screen: thumb-high keys and memories; the name in 16 px (iOS zooms the page into a smaller field) */
-  .spots-tab,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:40px}
-  .mem-form input{font-size:16px}
-  .mem-del{min-width:40px}
+/* a phone, or any touch screen: thumb-high keys, menu and memories, as the page's other keys are there;
+   on a touch screen the name is in 16 px (iOS zooms the page into a smaller field) */
+@media (max-width:680px),(hover:none) and (pointer:coarse){
+  .spots-tab,.spots-bar select,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:44px}
+  .mem-del{min-width:44px}
 }
+@media (hover:none) and (pointer:coarse){ .mem-form input{font-size:16px} }
 .spots-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .spots-bar .spots-src{padding:5px 8px;font-size:11px}
 .spots-bar select{flex:1 1 84px;min-width:0;font-size:11px;padding:3px 5px}
@@ -697,7 +695,12 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 #dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}
 #dmPaneCw .tp-body{padding:0}
 .dm-bar.cw-bar{margin-top:0}
-.cw-bar .cw-status{font-size:11px}
+#dmPaneCw .dm-status{margin:0}                                    /* the pane's own gaps space it */
+.cw-row .sl-val{flex:0 0 auto;min-width:44px;font-weight:400;color:var(--txt-dim)}   /* the sidetone's pitch, beside its slider */
+/* receive audio is off: the window says so under its mode keys, with the key that turns RX on */
+.dm-rx{display:flex;align-items:center;gap:8px;flex:none;margin:0 0 8px;padding:4px 4px 4px 9px;border:1px solid var(--warn);
+  border-radius:var(--r-ctl);background:var(--warn-tint);font-size:11px;line-height:1.3;color:var(--warn-hi)}
+.dm-rx span{flex:1 1 auto;min-width:0}
 .dm-strip{display:block;flex:none;width:100%;height:44px;background:var(--scope-bg);border:1px solid var(--tft-border);
   border-radius:var(--r-sm);cursor:crosshair}
 .dm-strip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -716,6 +719,18 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .ft8-row .msg{overflow:hidden;text-overflow:ellipsis}
 .ft8-row.cq .msg{color:var(--tft-pill-fg)}                        /* a CQ: someone calling */
 .ft8-list.cq-only .ft8-row:not(.cq){display:none}
+/* the list's column headings: the rows' own grid (their font, so the ch columns line up), in small type */
+.ft8-head{flex:none;padding:0 8px;font:12px/1.45 var(--font-ui)}
+.ft8-head span,.ft8-head .db,.ft8-head .dt,.ft8-head .hz{font-size:10px;color:var(--txt-faint)}
+/* a phone, or any touch screen: the mode keys, SSTV's two tabs, the menus and the text fields are
+   thumb-high, as the keys already are; on a touch screen a text field is in 16 px (iOS zooms the page
+   into a smaller one) */
+@media (max-width:680px),(hover:none) and (pointer:coarse){
+  .dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{min-height:44px}
+}
+@media (hover:none) and (pointer:coarse){
+  .tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{font-size:16px}
+}
 
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */
 .atas-tune{flex:0 0 auto;display:flex;flex-direction:column;justify-content:center;gap:4px;
