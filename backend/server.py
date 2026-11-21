@@ -5,8 +5,8 @@ ASGI app (Starlette on uvicorn). Everyone signs in (per-user accounts, backend/a
 every route declares its policy (@requires, backend/policy.py) and the Gate middleware checks
 locked mode, Host, Origin, JSON bodies and the session before any route runs (§2.9).
   GET  /              -> the radio UI (+ the bootstrap JSON incl. the user's layout, §3.15)
-  /login, /change-password, /api/login|logout|auth_status|me* (incl. /api/me/layout)
-                      -> backend/account_api.py
+  /login, /change-password, /api/login|logout|auth_status|me* (incl. /api/me/layout and the
+                      operator's own /api/me/memories) -> backend/account_api.py
   /api/admin/*        -> backend/admin_api.py (users, sessions, lockouts, allowed hosts, audio and
                          transport pins, Tailscale Serve, audit)
   GET  /api/status    -> radio/connection status for this role (+ the TX owner)
@@ -418,8 +418,8 @@ def _pack_scope(sweep: civ.ScopeSweep, state: dict) -> bytes:
 # -- HTTP routes -------------------------------------------------------------
 # One list feeds both the cache-busting token and the ?v= rewrite in index() (§3.15).
 ASSETS = ("style.css", "tr.js", "waterfall.js", "bandplan.js", "layout.js", "app.js", "freqentry.js", "cwtool.js",
-          "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js", "digital.js",
-          "account.js", "bridge.js", "device.js", "admin.js")
+          "recorder.js", "callfreqs.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js",
+          "digital.js", "account.js", "bridge.js", "device.js", "admin.js")
 
 
 def _asset_version():
@@ -1798,6 +1798,9 @@ routes = [
     Route("/api/me/layout", account_api.api_me_layout_get, methods=["GET"]),
     Route("/api/me/layout", account_api.api_me_layout_put, methods=["PUT"]),
     Route("/api/me/layout", account_api.api_me_layout_delete, methods=["DELETE"]),
+    Route("/api/me/memories", account_api.api_me_memories_get, methods=["GET"]),
+    Route("/api/me/memories", account_api.api_me_memories_post, methods=["POST"]),
+    Route("/api/me/memories", account_api.api_me_memories_delete, methods=["DELETE"]),
     *admin_api.routes(),
     Route("/api/status", api_status),
     Route("/api/radios", api_radios),

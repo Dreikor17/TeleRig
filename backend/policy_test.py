@@ -369,8 +369,10 @@ C("public routes are exactly /login, /api/login, /api/auth_status",
   sorted(p for p, pol in pols.items() if pol.public), ["GET /api/auth_status", "GET /login", "POST /api/login"])
 C("restricted_ok routes", sorted(p for p, pol in pols.items() if pol.restricted_ok),
   ["GET /change-password", "POST /api/logout", "POST /api/me/password"])
-C("operator routes (incl. HTTP STOP, AR-15)", sorted(p for p, pol in pols.items() if pol.min_role == "operator"),
-  ["GET /api/ports", "POST /api/connect", "POST /api/disconnect", "POST /api/tx_stop"])
+C("operator routes (incl. HTTP STOP, AR-15, and the operator's own memories)",
+  sorted(p for p, pol in pols.items() if pol.min_role == "operator"),
+  ["DELETE /api/me/memories", "GET /api/me/memories", "GET /api/ports", "POST /api/connect", "POST /api/disconnect",
+   "POST /api/me/memories", "POST /api/tx_stop"])
 ADMIN_ROUTES = {   # §2.17: (sudo, local)
     "POST /api/admin/reauth": (False, False), "GET /api/admin/users": (False, False),
     "POST /api/admin/users": (True, False), "PATCH /api/admin/users/{uid}": (True, False),
@@ -395,6 +397,9 @@ C("every /api/admin/ route is admin", sorted(p for p, pol in pols.items()
 C("/api/me/layout GET/PUT/DELETE: viewer, not while restricted (T34)",
   [(pols[f"{m} /api/me/layout"].min_role, pols[f"{m} /api/me/layout"].restricted_ok) for m in ("GET", "PUT", "DELETE")],
   [("viewer", False)] * 3)
+C("/api/me/memories GET/POST/DELETE: operator (a viewer cannot tune), not while restricted; no sudo, not local-only",
+  [dataclasses.astuple(pols[f"{m} /api/me/memories"]) for m in ("GET", "POST", "DELETE")],
+  [("operator", False, False, False, False)] * 3)
 C("removed routes are gone (404): set_password, audio_devices, the old Tailscale routes",
   sorted(p for p in ("/api/set_password", "/api/audio_devices", "/api/remote_status", "/api/tailscale_serve",
                      "/api/tailscale_serve_off") if p in paths), [])

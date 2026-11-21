@@ -40,7 +40,7 @@ def c1_ui_fixes_in_node_vm(ctx):
     eq(r.returncode, 0, f"c1_ui_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"c1_ui_test.js output: {r.stdout}")
     for f in ("account.js", "admin.js", "app.js", "tr.js", "waterfall.js", "cwtool.js", "layout.js", "bridge.js",
-              "device.js", "recorder.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js", "digital.js"):
+              "device.js", "recorder.js", "callfreqs.js", "spots.js", "sstv.js", "sstv-tx.js", "ft8-decode.js", "ft8.js", "rtty.js", "digital.js"):
         rr = subprocess.run(["node", "--check", str(FRONT / f)], capture_output=True, text=True, timeout=60)
         eq(rr.returncode, 0, f"node --check {f}: {rr.stderr}")
 
@@ -396,9 +396,18 @@ def spots_panel_in_node_vm(ctx):
     SSB by band, CW / CW-USB, DATA-USB / USB with the Icom DATA switch, FM, AM; and the filter for it: an
     Icom FIL slot, a Yaesu NAR off + WIDTH, nothing on the IC-728; each only when the radio isn't there
     yet; an unknown mode tunes the frequency only); spots off the radio's bands, or for a viewer, can't be
-    clicked; the filters work and are kept; a silent source is named. The real tr.js + spots.js in a
-    Node vm (tests/spots_ui_test.js), on its own profiles and again on the real ones (to_json() of every
-    profile in backend/profiles.py). Static: no HTML parsing, only the tuning actions are sent."""
+    clicked; the filters work and are kept; a silent source is named. Its two other views (the keys):
+    CALLING lists callfreqs.js on the radio's bands, by band, tunes like a spot, marks the row the radio is
+    on in place and asks the server nothing; the list itself is well-formed, inside the US bands, in order
+    and short enough for the narrowest panel, and every radio tunes every row it lists. MEMORY reads the
+    account's memories (/api/me/memories) when it is shown, lists this radio's, brings one back with the
+    mode by its name and the filter as kept (a Yaesu's NAR + WIDTH code, an Icom's FIL slot + DATA), saves
+    the radio as it is under a name (the frequency, selected; SAVE again or Enter), deletes at the second
+    tap, and is for operators only. The real tr.js + waterfall.js + freqentry.js + callfreqs.js + spots.js
+    in a Node vm (tests/spots_ui_test.js), on its own profiles and again on the real ones (to_json() of
+    every profile in backend/profiles.py). Static: no HTML parsing, only the tuning actions are sent, the
+    server is asked only for the spots and the memories; callfreqs.js is data; the page's keys, SAVE form
+    and styles."""
     import json
     import sys
     if str(REPO) not in sys.path:
@@ -417,6 +426,43 @@ def spots_panel_in_node_vm(ctx):
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))),
        ["data_mode", "narrow", "set_filter", "set_freq", "set_mode", "width"],
        "spots.js sends only the tuning actions: freq, mode, DATA, filter, NAR, WIDTH")
+    # the server is asked through TR.api only, for the spots and for the account's memories
+    check("fetch(" not in js and "XMLHttpRequest" not in js and "WebSocket" not in js, "spots.js asks the server through TR.api only")
+    eq(sorted(set(re.findall(r'"(/api/[a-z_/]+)', js))), ["/api/me/memories", "/api/spots"], "spots.js asks for the spots and the memories, nothing else")
+    eq(len(re.findall(r"TR\.api\(", js)), 4, "spots.js: four requests (the spots; the memories read, one saved, one deleted)")
+    eq(re.findall(r'method: "([A-Z]+)"', js), ["DELETE"], "spots.js: a memory is deleted with DELETE (saved with TR.api's POST)")
+    # callfreqs.js is a list and nothing else
+    cf = _strip_comments(_read("callfreqs.js"))
+    for bad in ("document", "localStorage", "fetch(", "send(", "innerHTML", "WebSocket", "eval(", "setTimeout", "addEventListener"):
+        check(bad not in cf, f"callfreqs.js is data only: no {bad}")
+    check(re.search(r"global\.CALL_FREQS = \[", cf), "callfreqs.js defines CALL_FREQS")
+    # the page: the three keys (a tablist over the one list), the Memory view's SAVE form, the two credits
+    html = _read("index.html")
+    spots = html.split('<div class="tile-body tile-spots">', 1)[1].split("</section>", 1)[0]
+    tabs = re.findall(r'<button type="button" class="(spots-tab[^"]*)" id="(\w+)" role="tab" aria-selected="(\w+)" aria-controls="spotsList"( tabindex="-1")? title="[^"]+">(\w+)</button>', spots)
+    eq(tabs, [("spots-tab on", "spotsTabLive", "true", "", "LIVE"), ("spots-tab", "spotsTabCall", "false", ' tabindex="-1"', "CALLING"),
+              ("spots-tab", "spotsTabMem", "false", ' tabindex="-1"', "MEMORY")], "index.html: the three view keys, LIVE chosen")
+    check('<div class="spots-tabs" role="tablist" aria-label="Spots view">' in spots, "index.html: the keys are a tablist")
+    check('<div class="spots-list" id="spotsList" role="tabpanel" aria-labelledby="spotsTabLive"></div>' in spots, "index.html: the list is their panel")
+    m = re.search(r'<form class="mem-form" id="memForm" data-gate="operate" autocomplete="off" hidden>(.*?)</form>', spots, re.S)
+    check(m, "index.html: the Memory view's form: operators only, hidden until its view shows")
+    form = m.group(1)
+    check(re.search(r'<button type="submit" class="key sm" id="memSave"[^>]*>SAVE</button>', form), "index.html: SAVE submits the form (so Enter in the name does too)")
+    check(re.search(r'<input type="text" id="memName" maxlength="32" aria-label="Name for this memory"[^>]* hidden>', form), "index.html: the name field: 32 characters, hidden until SAVE")
+    check(re.search(r'<button type="button" class="key sm" id="memCancel" aria-label="Cancel"[^>]* hidden>', form), "index.html: the X: not a submit, hidden until SAVE")
+    check(form.index('id="memSave"') < form.index('id="memName"') < form.index('id="memCancel"'), "index.html: SAVE, the name, the X, in that order")
+    check('<p class="spots-credit" id="spotsCredit">' in spots and '<p class="spots-credit" id="callCredit" hidden>' in spots, "index.html: the spots' credit and the calling list's")
+    check(html.index("/static/freqentry.js") < html.index("/static/callfreqs.js") < html.index("/static/spots.js"), "index.html: freqentry.js and callfreqs.js load before spots.js")
+    css = re.sub(r"/\*.*?\*/", "", _read("style.css"), flags=re.S)
+    for rule in (".spots-tabs{display:grid;grid-template-columns:repeat(3,1fr);",
+                 ".spots-tab.on{background:var(--accent-tint);color:var(--accent-hi);box-shadow:inset 0 -2px 0 var(--accent)}",
+                 '.spot-call{grid-template-areas:"freq mode call call" "ref ref ref src"}',
+                 ".mem-form.naming{flex:1 1 100%}",
+                 '.spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}',
+                 ".mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}",
+                 ".spots-tab,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:40px}"):
+        check(rule in css, f"style.css: {rule}")
+    check("[hidden]{display:none!important}" in css, "style.css: a hidden key, form or field takes no room (the views hide what is not theirs)")
 
 
 @test("unit")

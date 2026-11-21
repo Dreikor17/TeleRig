@@ -42,7 +42,7 @@ _CACHED: Optional[Path] = None
 
 
 def config_dir(*, migrate: bool = False) -> Path:
-    """The folder holding config.json, auth.json, layouts/ and the audit logs.
+    """The folder holding config.json, auth.json, layouts/, memories/ and the audit logs.
 
     TELERIG_CONFIG (or the old RADIO_WEBOP_CONFIG) names config.json; its folder is the config
     folder. Otherwise ~/.telerig. When only an old ~/.radio-webop exists, a read-only caller gets

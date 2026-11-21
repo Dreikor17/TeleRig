@@ -13,7 +13,7 @@ which cannot ride in a path segment). Errors are {ok:false, error, message[, fie
   POST   /api/admin/users/{uid}/reset_password  sudo  {password?, must_change=true}
   POST   /api/admin/users/{uid}/signout   sudo    -> {ok, kicked}
   POST   /api/admin/users/{uid}/unlock            rate-limit keys K2 + K3
-  DELETE /api/admin/users/{uid}           sudo    user + layout file
+  DELETE /api/admin/users/{uid}           sudo    user + layout and memories files
   DELETE /api/admin/users/{uid}/layout            reset that user's layout
   GET    /api/admin/sessions                      live WebSocket connections
   GET    /api/admin/lockouts · POST /api/admin/lockouts/unlock_ip {ip}
@@ -50,7 +50,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Route
 
-from . import __version__, accounts, audit, auth, hostaudio, layout_store, policy, profiles, settings, tailscale
+from . import (__version__, accounts, audit, auth, hostaudio, layout_store, memory_store, policy, profiles, settings,
+               tailscale)
 from . import bridge as bridge_mod
 from .account_api import (NO_STORE, _layout_write, _record_failure, _sem, err, hash_async, rate_limited,
                           read_json, source, verify_async)
@@ -247,6 +248,10 @@ async def api_user_create(request):
         await run_in_threadpool(layout_store.delete_file, name)
     except Exception as e:
         console(f"TeleRig: could not remove an old layout of {name}: {e!r}")
+    try:                                             # ... and with no memories
+        await run_in_threadpool(memory_store.delete_file, name)
+    except Exception as e:
+        console(f"TeleRig: could not remove the old memories of {name}: {e!r}")
     try:
         async with _sem():                           # scrypt: at most 2 at a time (R9)
             res, fail = await _write(accounts.create_user, name, role, pw, must_change=mc, created_by=p.user)
@@ -383,6 +388,10 @@ async def api_user_delete(request):
         await run_in_threadpool(layout_store.delete_file, name)
     except Exception as e:                           # the account is gone; a stale layout is cosmetic
         console(f"TeleRig: could not delete the layout of {name}: {e!r}")
+    try:
+        await run_in_threadpool(memory_store.delete_file, name)
+    except Exception as e:                           # nobody can read it; creating the callsign again removes it
+        console(f"TeleRig: could not delete the memories of {name}: {e!r}")
     audit.log("user_deleted", user=name, role=role, by=p.user)
     return _ok()
 

@@ -544,9 +544,10 @@ def t29b_deeply_nested_json_body_is_a_400_with_headers(ctx):
                          ("POST", "/api/disconnect"), ("POST", "/api/tx_stop"), ("POST", "/api/admin/reauth"),
                          ("POST", "/api/admin/users"), ("PUT", "/api/admin/allowed_hosts"),
                          ("POST", "/api/admin/lockouts/unlock_ip"), ("PUT", "/api/admin/audio"),
-                         ("PUT", "/api/admin/radio_transport")):
+                         ("PUT", "/api/admin/radio_transport"), ("POST", "/api/me/memories")):
         r = c.raw(method, path, body=nested, headers=o)
-        want = (413, "too_large") if path == "/api/me/layout" else (400, "invalid_json")   # its cap is 16 KB
+        small = path in ("/api/me/layout", "/api/me/memories")              # their caps are 16 KB and 2 KB
+        want = (413, "too_large") if small else (400, "invalid_json")
         eq((r.status, _err(r)), want, f"{method} {path} nested body")
         eq([h for h in HDRS if not r.headers.get(h)], [], f"{method} {path}: security headers")
     r = c.raw("PUT", "/api/me/layout", body=b'{"a":' + b"[" * 8000 + b"]" * 8000 + b"}", headers=o)

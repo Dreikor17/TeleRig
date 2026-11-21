@@ -1,6 +1,6 @@
 """Account routes (spec §2.9-§2.10, §2.16, §3.14): /login, /change-password, /api/login,
-/api/logout, /api/auth_status, /api/me, /api/me/password, /api/me/signout_all, /api/me/layout —
-plus read_json() and the session-cookie helpers the other routes share.
+/api/logout, /api/auth_status, /api/me, /api/me/password, /api/me/signout_all, /api/me/layout,
+/api/me/memories — plus read_json() and the session-cookie helpers the other routes share.
 
 Login verification is READ-ONLY (AR-53): the cookie is issued first; last_login and an scrypt
 re-hash are best-effort writes after the response. scrypt always runs in the threadpool under a
@@ -18,7 +18,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from . import accounts, audit, auth, layout_store
+from . import accounts, audit, auth, layout_store, memory_store
 from .policy import requires
 from .ratelimit import DIRECT_LOCAL, limiter
 from .store import StoreBusy, StoreError, console
@@ -421,6 +421,71 @@ async def api_me_layout_delete(request):
     if fail is not None:
         return fail
     return JSONResponse({"ok": True, "rev": rev}, headers=NO_STORE)
+
+
+MEMORY_POST_KEYS = frozenset({"radio", "item"})
+
+
+@requires("operator")
+async def api_me_memories_get(request):
+    """{rev, radios, max, memories_error}: the caller's own memories (backend/memory_store.py), a list
+    per radio in id order. Operators and admins: a viewer cannot tune, so has no memories."""
+    p = request.state.principal
+    data, bad = await run_in_threadpool(memory_store.get, p.user)
+    return JSONResponse({"rev": data["rev"], "radios": data["radios"], "max": memory_store.MAX_PER_RADIO,
+                         "memories_error": bad}, headers=NO_STORE)
+
+
+@requires("operator")
+async def api_me_memories_post(request):
+    """POST {radio, item: {hz, mode, name, data?, filter?, narrow?, width?}} -> {ok, rev, id, items}:
+    one more memory for that radio; `items` is the radio's whole list afterwards. Every shape, type
+    and range error -> 400 {error:"invalid", field} (nothing is clamped); a radio that already holds
+    memory_store.MAX_PER_RADIO -> 409 {error:"full"}. Body > 2 KB -> 413."""
+    p = request.state.principal
+    body = await read_json(request, max_bytes=memory_store.BODY_MAX)
+    if not isinstance(body, dict):
+        return body
+    for k in body:
+        if k not in MEMORY_POST_KEYS:
+            key = memory_store.key_name(k)
+            return err(400, "invalid", f"Unknown field {key!r}.", field=key)
+    res, fail = await _memory_write(memory_store.add, p.user, body.get("radio"), body.get("item"))
+    if fail is not None:
+        return fail
+    return JSONResponse({"ok": True, **res}, headers=NO_STORE)
+
+
+async def _memory_write(fn, *a):
+    """A memories file write in the threadpool -> (result, None) or (None, 400/409/503/500). The
+    store validates before it touches the file. Like a layout, the file is the user's own data: its
+    errors never lock the server."""
+    try:
+        return await run_in_threadpool(fn, *a), None
+    except memory_store.MemoryInvalid as e:
+        return None, err(400, "invalid", e.message, field=e.field)
+    except memory_store.MemoryFull as e:
+        return None, err(409, "full", e.message)
+    except StoreBusy:
+        return None, err(503, "store_busy", "The memories file is busy; try again.")
+    except (StoreError, OSError, ValueError) as e:
+        console(f"TeleRig: memories write failed: {e!r}")
+        return None, err(500, "store_error", "The memories file could not be written; nothing changed.")
+
+
+@requires("operator")
+async def api_me_memories_delete(request):
+    """DELETE ?radio=<radio id>&id=<n> -> {ok, rev, items}: forget that memory; `items` is the radio's
+    list afterwards. An id that is not there is not an error: the same answer, the rev as it was,
+    nothing written. A missing or non-numeric id, or an unknown radio -> 400 {error:"invalid", field}."""
+    p = request.state.principal
+    raw = request.query_params.get("id") or ""
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 16:      # an id a browser holds exactly: 16 digits at most
+        return err(400, "invalid", "id must be a whole number.", field="id")
+    res, fail = await _memory_write(memory_store.delete, p.user, request.query_params.get("radio"), int(raw))
+    if fail is not None:
+        return fail
+    return JSONResponse({"ok": True, **res}, headers=NO_STORE)
 
 
 @requires("viewer")

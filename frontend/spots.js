@@ -1,7 +1,8 @@
 /* TeleRig Spots panel: POTA activators, WWFF activators and DX cluster spots (HamQTH), newest first; a
  * click tunes the radio. The server fetches the sources (backend/spots.py: only while a page asks,
  * never more often than each source allows); this page asks GET /api/spots every POLL_MS while the
- * panel is on the grid and the page is visible, and filters the list itself.
+ * live list is in view (the panel on the grid, the page visible, the LIVE key chosen), and filters the
+ * list itself.
  *
  *   tune: set_freq, then the spot's mode in this radio's own names (CW -> CW or CW-USB, SSB -> USB /
  *   LSB by band, digital -> DATA-USB, or USB with the Icom DATA switch on, FM / AM) and the filter
@@ -13,7 +14,27 @@
  *   by a viewer, is shown but cannot be clicked. The spot clicked stays at the top ("Tuned"), whatever
  *   the filters and after the sources drop it, until the radio is tuned more than 3 kHz away from it.
  *
- * Text from the sources is shown with textContent only. window.SpotsPanel = { summary() } (layout.js).
+ * Three views, the keys at the top (this browser keeps the choice with the filters):
+ *   LIVE     the spots, as above.
+ *   CALLING  the fixed frequencies of callfreqs.js (each band's calling frequencies and FT8 dial
+ *            frequency, SSTV, a few things to listen to) that are on this radio's bands, by band, lowest
+ *            first. A click tunes as a spot's does. Nothing is asked of the server while it shows.
+ *   MEMORY   the operator's own frequencies for this radio, lowest first, kept by the server for the
+ *            account (GET / POST / DELETE /api/me/memories), so every device has them. SAVE takes the
+ *            radio as it is (frequency, the mode by its own name, the filter as the radio says it: an
+ *            Icom's FIL slot and DATA switch, a Yaesu's NAR and WIDTH) and asks for a name: the
+ *            frequency is filled in and selected, so typing replaces it; SAVE again (or Enter) keeps
+ *            it, Esc or the X drops it. A click on a memory brings all of that back, with the same
+ *            actions a spot sends, each only when the radio is not there already; a memory may be
+ *            anywhere the radio receives (freqentry.js's coverage), not only on its ham bands. Its X
+ *            deletes it at the second tap (the first arms it for 4 s). Repeater shift and tone are not
+ *            kept. Operators only: a viewer has no memories.
+ *   In CALLING and MEMORY the two filters (mode, this band) apply, and the row the radio is on (within
+ *   ON_HZ) is marked "Tuned", however it got there. The mark follows the radio in place: nothing is
+ *   pinned or moved, and a row with the keyboard focus keeps it.
+ *
+ * Text from the sources and the names of memories are shown with textContent only.
+ * window.SpotsPanel = { summary(), view() } (layout.js).
  */
 (function () {
   "use strict";
@@ -21,6 +42,12 @@
   const list = $("spotsList"), status = $("spotsStatus"), modeSel = $("spotsMode"), bandChk = $("spotsBand");
   if (!list || !status) return;
   const srcBtns = [...document.querySelectorAll(".spots-src[data-src]")];
+  const VIEWS = ["live", "call", "mem"];                    // the keys' order; the first is the default
+  const tabs = { live: $("spotsTabLive"), call: $("spotsTabCall"), mem: $("spotsTabMem") };
+  const hasTabs = VIEWS.every((v) => tabs[v]);
+  const credits = { live: $("spotsCredit"), call: $("callCredit") };
+  const memForm = $("memForm"), memName = $("memName"), memSave = $("memSave"), memCancel = $("memCancel");
+  const body = list.closest(".tile-body");                  // the panel's scrolling body
 
   const POLL_MS = 30000;
   const KEY = "telerig.spots";
@@ -28,13 +55,13 @@
   let data = { spots: [], sources: {}, now: 0 };
   let timer = 0, inflight = false, lastFetch = 0;
 
-  // ---- the filters, kept by this browser ----
+  // ---- the view and the filters, kept by this browser ----
   const filt = (function () {
     let f = null;
     try { f = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (_) { f = null; }
     const src = f && Array.isArray(f.src) ? f.src.filter((s) => s in SRC_LABEL) : ["pota", "wwff", "dx"];
     return { src: src.length ? src : ["pota", "wwff", "dx"], mode: f && typeof f.mode === "string" ? f.mode : "",
-             band: !!(f && f.band) };
+             band: !!(f && f.band), view: hasTabs && f && VIEWS.includes(f.view) ? f.view : VIEWS[0] };
   })();
   function keep() { try { localStorage.setItem(KEY, JSON.stringify(filt)); } catch (_) {} }
 
@@ -51,6 +78,8 @@
   }
   const bandOf = (p, hz) => (p && Array.isArray(p.bands) ? p.bands.find((b) => hz >= b.lo && hz <= b.hi) : null) || null;
   const canTune = () => { try { return !!TR.can("operate"); } catch (_) { return false; } };
+  const toast = (msg, kind) => { try { TR.toast(msg, kind); } catch (_) {} };
+  const say = (msg) => { try { TR.srLive(msg); } catch (_) {} };
   // the spot's mode in this radio's names; "" = leave the mode alone
   function radioMode(p, spot) {
     const have = (p && Array.isArray(p.modes)) ? p.modes : [];
@@ -97,18 +126,23 @@
     }
     return out;
   }
-  function tune(spot) {
+  // A spot or a calling frequency ({hz, mode}): the frequency, then what its mode needs. False when this
+  // page may not tune there (a viewer, a frequency off the radio's bands): nothing is sent.
+  function sendTune(x) {
     const c = ctl(), p = profile();
-    if (!c || !canTune() || !bandOf(p, spot.hz)) return;
+    if (!c || !canTune() || !bandOf(p, x.hz)) return false;
     const st = radioState();
-    c.send({ action: "set_freq", hz: spot.hz });
-    for (const m of settings(p, spot, st)) c.send(m);
+    c.send({ action: "set_freq", hz: x.hz });
+    for (const m of settings(p, x, st)) c.send(m);
+    return true;
+  }
+  function tune(spot) {
+    if (!sendTune(spot)) return;
     picked = { key: keyOf(spot), spot, hz: spot.hz, at: Date.now() };
     try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
-    try { TR.srLive("Tuned to " + spot.call + ", " + fmtFreq(spot.hz)); } catch (_) {}
+    say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz));
     render();
-    const body = list && list.closest(".tile-body");         // the panel back at its top, where the pin is
-    if (body) body.scrollTop = 0;
+    if (body) body.scrollTop = 0;                           // the panel back at its top, where the pin is
   }
 
   // ---- the spot you are on: the one clicked, pinned at the top until the radio is tuned away from it
@@ -146,24 +180,21 @@
     return s < 60 ? "now" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h";
   }
   const modeLabel = (m) => (m === "DIGI" ? "DATA" : m || "?");
-
-  // ---- the list ----
-  function shown() {
-    const p = profile(), st = radioState();
-    const here = filt.band && st.freq ? bandOf(p, st.freq) : null;
-    return (data.spots || []).filter((s) => filt.src.includes(s.src)
-      && (!filt.mode || (filt.mode === "FMAM" ? (s.mode === "FM" || s.mode === "AM") : s.mode === filt.mode))
-      && (!filt.band || (here && s.hz >= here.lo && s.hz <= here.hi)));
-  }
   function cell(cls, text) { const e = document.createElement("span"); e.className = cls; e.textContent = text; return e; }
-  function render() {
-    for (const b of srcBtns) {
-      const on = filt.src.includes(b.dataset.src);
-      b.classList.toggle("on", on);
-      b.setAttribute("aria-pressed", on ? "true" : "false");
-    }
-    if (modeSel && modeSel.value !== filt.mode) modeSel.value = filt.mode;
-    if (bandChk) bandChk.checked = filt.band;
+
+  // ---- the two filters every view has ----
+  const modeOk = (m) => !filt.mode || (filt.mode === "FMAM" ? (m === "FM" || m === "AM") : m === filt.mode);
+  // "this band": the band of the radio's frequency, or null (no radio, off its bands): nothing matches then
+  function bandHere(p, st) { return filt.band && st.freq ? bandOf(p, st.freq) : null; }
+  const bandOk = (here, hz) => !filt.band || !!(here && hz >= here.lo && hz <= here.hi);
+  const bandSig = (here) => (filt.band ? (here ? here.lo + "-" + here.hi : "none") : "all");
+
+  // ---- the live list ----
+  function shown() {
+    const here = bandHere(profile(), radioState());
+    return (data.spots || []).filter((s) => filt.src.includes(s.src) && modeOk(s.mode) && bandOk(here, s.hz));
+  }
+  function renderLive() {
     const pin = current(), pinKey = pin ? keyOf(pin) : null;
     let rows = shown();
     if (pin) rows = [pin].concat(rows.filter((s) => keyOf(s) !== pinKey));   // first, whatever the filters
@@ -194,12 +225,358 @@
     if (status.textContent !== msg) status.textContent = msg;
   }
 
-  // ---- polling: only while the panel is on the grid and the page is visible ----
-  function visible() {
+  // ---- CALLING and MEMORY: a list that stays put, with the row the radio is on marked ----
+  // A row is {hz, el, src, on, title(on)}. The list is built again only when what it shows changes (the
+  // radio, its band under "this band", the filters, the role, the memories); otherwise only the mark moves.
+  const ON_HZ = 100, FOLLOW_MS = 500;                       // "on" a row: within 100 Hz; the radio is looked at twice a second
+  function markRows(rows) {
+    const st = radioState(), f = st.connected ? st.freq || 0 : 0;
+    for (const c of rows) {
+      const on = !!f && Math.abs(f - c.hz) <= ON_HZ;
+      if (on === c.on) continue;
+      c.on = on;
+      c.el.classList.toggle("picked", on);
+      if (on) c.el.setAttribute("aria-current", "true"); else c.el.removeAttribute("aria-current");
+      c.src.textContent = on ? "Tuned" : "";
+      c.el.title = c.title(on);
+    }
+  }
+  function setStatus(msg) { if (status.textContent !== msg) status.textContent = msg; }
+
+  // ---- the Calling view: callfreqs.js, the bands this radio has ----
+  const CALLS = (Array.isArray(window.CALL_FREQS) ? window.CALL_FREQS : []).map((g) => ({
+    band: String(g.band),
+    rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note]) => ({ hz: Math.round(khz * 1000), mode, name: String(name), note: String(note || "") })),
+  }));
+  let callSig = null, callRows = [];
+  function renderCall() {
+    const p = profile(), op = canTune(), here = bandHere(p, radioState());
+    const sig = [p ? p.id : "", op ? 1 : 0, filt.mode, bandSig(here)].join("|");
+    if (sig !== callSig) {
+      callSig = sig;
+      callRows = [];
+      list.textContent = "";
+      for (const g of CALLS) {
+        const rows = g.rows.filter((r) => bandOf(p, r.hz) && modeOk(r.mode) && bandOk(here, r.hz));
+        if (!rows.length) continue;
+        const h = document.createElement("h3");
+        h.className = "spots-bandh";
+        h.textContent = g.band;
+        list.appendChild(h);
+        for (const r of rows) {
+          const row = document.createElement(op ? "button" : "div"), src = cell("sp-src", "");
+          const title = (on) => (on ? "Tuned to " : op ? "Tune to " : "") + r.name + " " + fmtFreq(r.hz) + " " + modeLabel(r.mode) + (r.note ? " · " + r.note : "");
+          row.className = "spot spot-call";
+          if (op) {
+            row.type = "button";
+            row.addEventListener("click", () => { if (sendTune(r)) say("Tuned to " + r.name + ", " + fmtFreq(r.hz)); });
+          }
+          row.title = title(false);
+          row.append(cell("sp-freq", fmtFreq(r.hz)), cell("sp-mode", modeLabel(r.mode)), cell("sp-call", r.name), cell("sp-ref", r.note), src);
+          list.appendChild(row);
+          callRows.push({ hz: r.hz, el: row, src, on: false, title });
+        }
+      }
+      const n = callRows.length;
+      setStatus((n ? n + (n === 1 ? " frequency" : " frequencies")
+        : !p ? "Loading the radio's bands…"
+        : (filt.mode || filt.band) ? "No calling frequencies match the filters." : "No calling frequencies on this radio's bands.")
+        + (!op && n ? " Operators can click one to tune." : ""));
+    }
+    markRows(callRows);
+  }
+
+  // ---- the Memory view: this account's own frequencies for this radio (/api/me/memories) ----
+  const MEM_API = "/api/me/memories", MEM_FRESH_MS = 30000, NAME_MAX = 32, ARM_MS = 4000;
+  // radios: {radio id: [{id, hz, mode, name, data?, filter?, narrow?, width?}]}; seq counts every change
+  // of it here; draft: the radio as it was when SAVE was pressed, waiting for its name
+  const mem = { radios: {}, max: 100, seq: 0, at: 0, loaded: false, error: false, loading: false, busy: false, draft: null };
+  function adopt(radio, j) {                                // a write's answer carries that radio's whole list
+    if (!j || !Array.isArray(j.items)) return;
+    mem.radios[radio] = j.items;
+    mem.seq++;
+  }
+  async function loadMem(force) {
+    if (mem.loading || !canTune()) return;
+    if (!force && mem.at && Date.now() - mem.at < MEM_FRESH_MS) return;
+    mem.loading = true;
+    try {
+      const j = await TR.api(MEM_API, { noRedirect: true });
+      mem.radios = (j && j.radios && typeof j.radios === "object") ? j.radios : {};
+      if (j && j.max > 0) mem.max = j.max;
+      mem.error = !!(j && j.memories_error);
+      mem.loaded = true;
+      mem.at = Date.now();
+    } catch (_) {
+      mem.error = true;                                     // what was read before stays; asked again when next shown
+      mem.at = 0;
+    } finally {
+      mem.loading = false;
+      mem.seq++;
+      if (filt.view === "mem") render();
+    }
+  }
+  function memList(p) {                                     // this radio's, lowest first
+    const l = p && Array.isArray(mem.radios[p.id]) ? mem.radios[p.id] : [];
+    return l.filter((m) => m && typeof m.hz === "number" && typeof m.mode === "string" && typeof m.name === "string")
+      .slice().sort((a, b) => a.hz - b.hz || (a.id || 0) - (b.id || 0));
+  }
+  // a memory's mode as the mode filter knows modes (a spot's), and as its row says it (an Icom's DATA: USB-D)
+  function memFamily(m) {
+    const n = m.mode;
+    if (/^CW/.test(n)) return "CW";
+    if (/^(FM|C4FM|DV|DATA-FM|WFM)/.test(n)) return "FM";
+    if (/^AM/.test(n)) return "AM";
+    if (m.data || /^(DATA|RTTY|PSK)/.test(n)) return "DIGI";
+    return n === "USB" || n === "LSB" ? "SSB" : "";
+  }
+  const memMode = (m) => m.mode + (m.data ? "-D" : "");
+  function memFilter(p, m) {                                // the filter it keeps, for its title: " · FIL2", " · NAR · 500 Hz"
+    if (p.protocol !== "yaesu") return typeof m.filter === "number" ? " · FIL" + m.filter : "";
+    const PB = window.Passband;
+    const hz = PB && typeof m.width === "number" ? PB.hz(p, { mode_name: m.mode, narrow: m.narrow ? 1 : 0, width: m.width }) : 0;
+    return (m.narrow ? " · NAR" : "") + (hz ? " · " + PB.label(hz) : "");
+  }
+  // may the radio be tuned there: its receive coverage (freqentry.js: the profile's rx_ranges, else its bands)
+  function covers(p, hz) {
+    let r = [];
+    try { r = (p && window.FreqEntry && FreqEntry.rangesOf(p)) || []; } catch (_) { r = []; }
+    return r.length ? r.some((x) => Array.isArray(x) && hz >= x[0] && hz <= x[1]) : !!bandOf(p, hz);
+  }
+  // a Yaesu reports narrow FM / AM as a mode of its own (FM-N): the mode of the radio's list, narrow
+  function plainMode(p, st) {
+    const modes = p && Array.isArray(p.modes) ? p.modes : [];
+    let mode = String(st.mode_name || ""), narrow = (st.narrow || 0) > 0;
+    if (!modes.includes(mode) && /-N$/.test(mode) && modes.includes(mode.slice(0, -2))) { mode = mode.slice(0, -2); narrow = true; }
+    return { mode, narrow, known: modes.includes(mode) };
+  }
+  // What a memory keeps of the radio as it is: the frequency, the mode by its own name, and the filter as
+  // the radio says it (an Icom's FIL slot and DATA switch; a Yaesu's NAR, and its WIDTH code in the modes
+  // that have one). null: nothing to keep (no radio connected, a mode that is not in the radio's list).
+  function capture(p, st) {
+    if (!p || !st.connected || !(st.freq > 0)) return null;
+    const cur = plainMode(p, st), caps = p.capabilities || {}, PB = window.Passband;
+    if (!cur.known) return null;
+    const m = { hz: st.freq, mode: cur.mode };
+    if (p.protocol === "yaesu") {
+      if (caps.narrow) m.narrow = cur.narrow;
+      const code = st.width || 0;
+      if (caps.ext_ops && PB && PB.hz(p, { mode_name: cur.mode, narrow: cur.narrow ? 1 : 0, width: code }) > 0) m.width = code;
+    } else {
+      if (caps.tab_rx !== false && [1, 2, 3].includes(st.filter)) m.filter = st.filter;
+      if (caps.data_mode) m.data = (st.data || 0) > 0;
+    }
+    return m;
+  }
+  // What brings the radio back to a memory after set_freq, each only when the radio is not there already.
+  // A changed mode has its own filter on the radio, so the filter is sent again with it.
+  function recall(p, m, st) {
+    const cur = plainMode(p, st), caps = p.capabilities || {}, out = [];
+    const moved = m.mode !== cur.mode;
+    if (moved && p.modes.includes(m.mode)) out.push({ action: "set_mode", mode: m.mode });
+    if (p.protocol === "yaesu") {
+      const nar = typeof m.narrow === "boolean" && (moved || m.narrow !== cur.narrow);
+      if (caps.narrow && nar) out.push({ action: "narrow", on: m.narrow });
+      if (caps.ext_ops && typeof m.width === "number" && (moved || nar || m.width !== (st.width || 0))) out.push({ action: "width", code: m.width });
+    } else if (caps.tab_rx !== false) {
+      const on = (st.data || 0) > 0, want = !!m.data;
+      // DATA off before the filter (a new mode already turned it off), on after it (on the new slot)
+      if (caps.data_mode && !want && on && !moved) out.push({ action: "data_mode", on: false });
+      if (typeof m.filter === "number" && (moved || st.filter !== m.filter)) out.push({ action: "set_filter", filter: m.filter });
+      if (caps.data_mode && want && (moved || !on)) out.push({ action: "data_mode", on: true });
+    }
+    return out;
+  }
+  function tuneMem(radio, m) {
+    const c = ctl(), p = profile();
+    if (!c || !canTune() || !p || p.id !== radio) return;   // a row drawn for another radio tunes nothing
+    const st = radioState();
+    c.send({ action: "set_freq", hz: m.hz });
+    for (const x of recall(p, m, st)) c.send(x);
+    say("Tuned to " + m.name + ", " + fmtFreq(m.hz));
+  }
+
+  // delete: the X arms at the first tap ("Delete?"), deletes at the second; it lets go after ARM_MS or
+  // when the focus leaves it
+  let armed = null;                                         // {btn, name, t}
+  function setDel(btn, name, arm) {
+    const label = arm ? "Delete " + name + "? Tap again" : "Delete " + name;
+    btn.classList.toggle("arm", arm);
+    btn.textContent = arm ? "Delete?" : "×";
+    btn.setAttribute("aria-label", label);
+    btn.title = label;
+  }
+  function disarm() {
+    if (!armed) return;
+    const a = armed;
+    armed = null;
+    clearTimeout(a.t);
+    setDel(a.btn, a.name, false);
+  }
+  async function delMem(radio, m) {
+    if (mem.busy) return;
+    const at = memRows.findIndex((r) => r.id === m.id);
+    mem.busy = true;
+    try {
+      adopt(radio, await TR.api(MEM_API + "?radio=" + encodeURIComponent(radio) + "&id=" + encodeURIComponent(m.id), { method: "DELETE" }));
+      say("Deleted " + m.name);
+    } catch (e) {
+      toast((e && e.message) || "The memory could not be deleted.", "error");
+    } finally {
+      mem.busy = false;
+      if (filt.view === "mem") {
+        render();
+        const next = memRows[at] || memRows[at - 1];        // the focus goes to the row that took its place
+        if (next) next.del.focus(); else if (memSave) memSave.focus();
+      }
+    }
+  }
+
+  let memSig = null, memRows = [];                          // rows as markRows wants them, plus {id, del}
+  function renderMem() {
+    const p = profile(), op = canTune(), here = bandHere(p, radioState());
+    const sig = [p ? p.id : "", op ? 1 : 0, filt.mode, bandSig(here), mem.seq].join("|");
+    if (sig !== memSig) {
+      memSig = sig;
+      disarm();
+      memRows = [];
+      list.textContent = "";
+      const all = op ? memList(p) : [];
+      for (const m of all) {
+        if (!modeOk(memFamily(m)) || !bandOk(here, m.hz)) continue;
+        const ok = covers(p, m.hz), radio = p.id;
+        const wrap = document.createElement("div"), row = document.createElement(ok ? "button" : "div");
+        const del = document.createElement("button"), src = cell("sp-src", "");
+        const title = (on) => (on ? "Tuned to " : ok ? "Tune to " : "Not on this radio: ") + m.name + " " + fmtFreq(m.hz) + " " + memMode(m) + memFilter(p, m);
+        wrap.className = "spot-mem";
+        row.className = "spot spot-call" + (ok ? "" : " off");
+        if (ok) { row.type = "button"; row.addEventListener("click", () => tuneMem(radio, m)); }
+        row.title = title(false);
+        row.append(cell("sp-freq", fmtFreq(m.hz)), cell("sp-mode", memMode(m)), cell("sp-call", m.name), src);
+        del.type = "button";
+        del.className = "mem-del";
+        setDel(del, m.name, false);
+        del.addEventListener("click", () => {
+          if (armed && armed.btn === del) { disarm(); delMem(radio, m); return; }
+          disarm();
+          setDel(del, m.name, true);
+          armed = { btn: del, name: m.name, t: setTimeout(disarm, ARM_MS) };
+        });
+        del.addEventListener("blur", () => { if (armed && armed.btn === del) disarm(); });
+        wrap.append(row, del);
+        list.appendChild(wrap);
+        memRows.push({ hz: m.hz, el: row, src, on: false, title, id: m.id, del });
+      }
+      const n = memRows.length;
+      setStatus(!op ? "Operators can save and recall memories."
+        : !p ? "Loading the radio's bands…"
+        : n ? n + (n === 1 ? " memory" : " memories")
+        : all.length ? "No memories match the filters."
+        : mem.error ? "The memories can't be read right now."
+        : !mem.loaded ? "Loading memories…"
+        : "No memories for this radio yet. SAVE keeps the frequency it is on.");
+    }
+    markRows(memRows);
+  }
+  // SAVE: the first press takes the radio as it is and asks for the name (the frequency, selected, so
+  // typing replaces it); the second, or Enter, keeps it
+  function openDraft() {
+    const p = profile(), st = radioState();
+    if (!canTune() || !memName) return;
+    const item = capture(p, st);
+    if (!item) { toast(st.connected ? "This mode can't be kept as a memory." : "Connect a radio first: a memory keeps the frequency it is on.", "warn"); return; }
+    if (memList(p).length >= mem.max) { toast("This radio's memories are full (" + mem.max + "). Delete one first.", "warn"); return; }
+    mem.draft = { radio: p.id, item };
+    memName.value = fmtFreq(item.hz);
+    syncBar();
+    memName.focus();
+    try { memName.select(); memName.setSelectionRange(0, memName.value.length); } catch (_) {}
+  }
+  function closeDraft(focus) {
+    if (!mem.draft) return;
+    mem.draft = null;
+    if (memName) memName.value = "";
+    syncBar();
+    if (focus && memSave) memSave.focus();
+  }
+  async function saveDraft() {
+    const d = mem.draft;
+    if (!d || mem.busy) return;
+    const typed = String(memName.value || "").replace(/[\u0000-\u001f\u007f]+/g, " ").trim();
+    // at most NAME_MAX characters, whole ones (half of an emoji is no character: the server refuses it);
+    // nothing left: the frequency
+    const name = Array.from(typed).slice(0, NAME_MAX).join("").trim() || fmtFreq(d.item.hz);
+    mem.busy = true;
+    syncBar();
+    try {
+      adopt(d.radio, await TR.api(MEM_API, { json: { radio: d.radio, item: Object.assign({}, d.item, { name }) } }));
+      mem.busy = false;
+      closeDraft(true);
+      say("Saved " + name + ", " + fmtFreq(d.item.hz));
+    } catch (e) {
+      toast((e && e.message) || "The memory could not be saved.", "error");   // the name stays, to try again
+    } finally {
+      mem.busy = false;
+      syncBar();
+      if (filt.view === "mem") render();
+    }
+  }
+  if (memForm) memForm.addEventListener("submit", (e) => { e.preventDefault(); if (mem.draft) saveDraft(); else openDraft(); });
+  if (memCancel) memCancel.addEventListener("click", () => closeDraft(true));
+  if (memName) memName.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    e.preventDefault(); e.stopPropagation();
+    closeDraft(true);
+  });
+
+  // ---- the keys and the filters as they are set; what only one view has is hidden in the others ----
+  function syncBar() {
+    const live = filt.view === "live", memView = filt.view === "mem", naming = memView && !!mem.draft;
+    for (const b of srcBtns) {
+      const on = filt.src.includes(b.dataset.src);
+      b.classList.toggle("on", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+      b.hidden = !live;                                     // the sources are the live list's
+    }
+    if (modeSel && modeSel.value !== filt.mode) modeSel.value = filt.mode;
+    if (bandChk) bandChk.checked = filt.band;
+    if (hasTabs) {
+      for (const v of VIEWS) {
+        const on = v === filt.view, k = tabs[v];
+        k.classList.toggle("on", on);
+        k.setAttribute("aria-selected", on ? "true" : "false");
+        k.tabIndex = on ? 0 : -1;
+      }
+      list.setAttribute("aria-labelledby", tabs[filt.view].id);
+    }
+    if (credits.live) credits.live.hidden = !live;
+    if (credits.call) credits.call.hidden = filt.view !== "call";
+    if (memForm) {
+      memForm.hidden = !memView || !canTune();              // SAVE and the name: operators, in the Memory view
+      memForm.classList.toggle("naming", naming);
+      if (memName) memName.hidden = !naming;
+      if (memCancel) memCancel.hidden = !naming;
+      if (memSave) {
+        memSave.disabled = mem.busy;
+        memSave.title = naming ? "Keep it under this name" : "Save the frequency the radio is on";
+      }
+    }
+  }
+  function render() {
+    syncBar();
+    if (filt.view === "call") { callSig = null; renderCall(); }
+    else if (filt.view === "mem") { memSig = null; renderMem(); }
+    else renderLive();
+  }
+
+  // ---- asking the server: the spots only while the live list is in view (the panel on the grid, the
+  // page visible); the memories when their view comes into view and what was read is 30 s old ----
+  function onPage() {
     let v = false;
     try { v = !!(window.RadioLayout && RadioLayout.visible && RadioLayout.visible("spots")); } catch (_) { v = false; }
     return v && !document.hidden;
   }
+  const visible = () => onPage() && filt.view === "live";
   async function poll(force) {
     if (inflight || !visible()) return;
     if (!force && Date.now() - lastFetch < POLL_MS - 500) return;
@@ -212,12 +589,36 @@
     } finally {
       inflight = false;
       lastFetch = Date.now();
-      render();
+      if (filt.view === "live") render();                   // an answer that comes after the view changed waits there
     }
   }
   function schedule() {
     if (timer) { clearInterval(timer); timer = 0; }
     if (visible()) { poll(false); timer = setInterval(() => poll(false), 5000); }
+    if (filt.view === "mem" && onPage()) loadMem(false);
+  }
+
+  // ---- the view keys (a tablist: the arrow keys too); each view keeps its place in the panel ----
+  const scrollAt = { live: 0, call: 0, mem: 0 };
+  function show(v) {
+    if (!hasTabs || !VIEWS.includes(v)) return false;
+    if (v === filt.view) return true;
+    if (body) scrollAt[filt.view] = body.scrollTop;
+    mem.draft = null;                                       // a name being typed belongs to the view left
+    filt.view = v;
+    keep(); render(); schedule();
+    if (body) body.scrollTop = scrollAt[v];
+    return true;
+  }
+  if (hasTabs) for (const v of VIEWS) {
+    tabs[v].addEventListener("click", () => show(v));
+    tabs[v].addEventListener("keydown", (e) => {
+      const d = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      const n = VIEWS[(VIEWS.indexOf(v) + d + VIEWS.length) % VIEWS.length];
+      if (show(n)) tabs[n].focus();
+    });
   }
 
   for (const b of srcBtns) b.addEventListener("click", () => {
@@ -230,11 +631,24 @@
   document.addEventListener("tr:tile", (e) => { if (e.detail && e.detail.id === "spots") schedule(); });
   document.addEventListener("tr:layout", schedule);
   document.addEventListener("visibilitychange", schedule);
-  setInterval(render, 30000);                               // the ages move on
+  setInterval(() => { if (filt.view === "live") render(); }, 30000);   // the ages move on
   // tuned away from the pinned spot? (redrawn only then, so keyboard focus in the list stays put)
-  setInterval(() => { if (picked) { current(); if (!picked) render(); } }, 2000);
+  setInterval(() => { if (picked) { current(); if (!picked && filt.view === "live") render(); } }, 2000);
+  // CALLING and MEMORY follow the radio: its frequency, its band, another radio, the role
+  setInterval(() => {
+    if (!onPage()) return;
+    if (filt.view === "call") renderCall();
+    else if (filt.view === "mem") {
+      if (memForm && memForm.hidden === canTune()) syncBar();    // the role changed: SAVE comes or goes
+      if (!mem.loaded && !mem.error) loadMem(false);             // an operator now: their memories
+      renderMem();
+    }
+  }, FOLLOW_MS);
   render();
   schedule();
 
-  window.SpotsPanel = { summary: () => (lastFetch ? shown().length + " spots" : "") };
+  window.SpotsPanel = {
+    summary: () => (filt.view === "live" && lastFetch ? shown().length + " spots" : ""),
+    view: () => filt.view,
+  };
 })();

@@ -85,6 +85,23 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   sliding along the waterfall no longer tune: scrolling the page past the scope used to retune the radio,
   and a slide was far too coarse to tune with on a phone. A tap or a click on a signal still tunes to
   it, a mouse drag still pans, and the wheel still tunes over a VFO digit.
+- **Calling frequencies in the Spots panel.** The panel has three views now, picked with the keys at its
+  top: LIVE (the spots), CALLING and MEMORY. CALLING lists the fixed frequencies worth a click on the
+  bands the radio has, band by band: the calling frequencies (SSB / CW and FM simplex on 6 m and up, QRP
+  CW and SSB on HF), each band's FT8 dial frequency, SSTV, and a few things to listen to (the NCDXF
+  beacons, the 14.300 nets, APRS, the space station). A click tunes as a spot's does (frequency, mode,
+  filter), and the row the radio is on is marked Tuned however it got there. The list ships with TeleRig
+  (`frontend/callfreqs.js`: United States, each entry from its source: the ARRL band plan and frequency
+  guide, QRP ARCI, WSJT-X, NCDXF, ARISS), so it needs no internet, and the spots are fetched only while
+  LIVE shows.
+- **Memories.** MEMORY holds your own frequencies for the radio you are on. SAVE takes the radio as it is
+  and asks for a name, with the frequency filled in and selected: type over it, or don't, then SAVE again
+  (or Enter). A click on a memory brings back the frequency, the mode and the filter (an Icom's FIL slot
+  and DATA, a Yaesu's NAR and WIDTH); the X beside it deletes it at the second tap. A memory can be
+  anywhere the radio receives (WWV, an airband channel), not only on its ham bands. They are TeleRig's,
+  not the radio's own memory channels: the server keeps them per account and per radio
+  (`/api/me/memories`, up to 100 a radio), so every device you sign in on has them. Repeater shift and
+  tone are not kept. Operators only.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

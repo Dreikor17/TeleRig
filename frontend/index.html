@@ -580,18 +580,32 @@
         <button type="button" class="tile-btn tile-remove" aria-label="Remove Spots panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
       </div>
     </header>
-    <!-- spots.js: POTA / WWFF / DX spots, fetched by the server only while this panel is shown (backend/spots.py); a click tunes -->
+    <!-- spots.js, three views (the keys): LIVE = POTA / WWFF / DX spots, fetched by the server only while that list is
+         shown (backend/spots.py); CALLING = the US calling frequencies of callfreqs.js on this radio's bands; MEMORY =
+         the operator's own frequencies for this radio, kept by the server (/api/me/memories). A click tunes. -->
     <div class="tile-body tile-spots"><div class="tile-fit">
+      <div class="spots-tabs" role="tablist" aria-label="Spots view">
+        <button type="button" class="spots-tab on" id="spotsTabLive" role="tab" aria-selected="true" aria-controls="spotsList" title="Spots from POTA, WWFF and the DX cluster">LIVE</button>
+        <button type="button" class="spots-tab" id="spotsTabCall" role="tab" aria-selected="false" aria-controls="spotsList" tabindex="-1" title="Calling frequencies on this radio's bands">CALLING</button>
+        <button type="button" class="spots-tab" id="spotsTabMem" role="tab" aria-selected="false" aria-controls="spotsList" tabindex="-1" title="Frequencies you saved for this radio">MEMORY</button>
+      </div>
       <div class="spots-bar" role="group" aria-label="Spot sources and filters">
         <button type="button" class="key sm tog spots-src on" data-src="pota" aria-pressed="true" title="Parks on the Air activators">POTA</button>
         <button type="button" class="key sm tog spots-src on" data-src="wwff" aria-pressed="true" title="World Wide Flora and Fauna activators">WWFF</button>
         <button type="button" class="key sm tog spots-src on" data-src="dx" aria-pressed="true" title="DX cluster spots from HamQTH.com">DX</button>
+        <!-- MEMORY: SAVE takes the radio as it is and asks for the name (the frequency, selected); SAVE again, or Enter, keeps it -->
+        <form class="mem-form" id="memForm" data-gate="operate" autocomplete="off" hidden>
+          <button type="submit" class="key sm" id="memSave" title="Save the frequency the radio is on">SAVE</button>
+          <input type="text" id="memName" maxlength="32" aria-label="Name for this memory" enterkeyhint="done" autocapitalize="off" spellcheck="false" hidden>
+          <button type="button" class="key sm" id="memCancel" aria-label="Cancel" title="Cancel" hidden>&times;</button>
+        </form>
         <select id="spotsMode" aria-label="Mode"><option value="">All modes</option><option value="CW">CW</option><option value="SSB">SSB</option><option value="DIGI">Data</option><option value="FMAM">FM / AM</option></select>
         <label class="spots-band"><input type="checkbox" id="spotsBand"> This band</label>
       </div>
       <p class="spots-status" id="spotsStatus" aria-live="polite">Loading spots…</p>
-      <div class="spots-list" id="spotsList"></div>
-      <p class="spots-credit">Spots from POTA and WWFF. DX spots: <a href="https://www.hamqth.com/" target="_blank" rel="noopener">data provided by HamQTH.com</a>; register there and keep your profile current.</p>
+      <div class="spots-list" id="spotsList" role="tabpanel" aria-labelledby="spotsTabLive"></div>
+      <p class="spots-credit" id="spotsCredit">Spots from POTA and WWFF. DX spots: <a href="https://www.hamqth.com/" target="_blank" rel="noopener">data provided by HamQTH.com</a>; register there and keep your profile current.</p>
+      <p class="spots-credit" id="callCredit" hidden>United States frequencies, from the ARRL band plan and frequency guide, QRP ARCI, WSJT-X, NCDXF and ARISS. A click only tunes.</p>
     </div></div>
   </section>
 </div>
@@ -755,6 +769,7 @@
 <script src="/static/cwtool.js"></script>
 <script src="/static/vendor/lamejs/lame.min.js?v=1.2.1"></script>
 <script src="/static/recorder.js"></script>
+<script src="/static/callfreqs.js"></script>
 <script src="/static/spots.js"></script>
 <script src="/static/sstv.js"></script>
 <script src="/static/sstv-tx.js"></script>

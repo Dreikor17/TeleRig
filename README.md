@@ -200,10 +200,10 @@ backend/
   audio_router.py RX/TX audio routing (only the TX owner's mic reaches the radio)
   rigctl.py       Hamlib's rigctld text protocol (parsing, replies, mode tables), I/O-free
   bridge.py       the WSJT-X bridge: a rigctld-compatible TCP server through policy + TX arbiter
-  account_api.py  sign-in, password change, sign-out, per-user layouts
+  account_api.py  sign-in, password change, sign-out, per-user layouts and memories
   admin_api.py    Administration: users, access lists, remote, pins, activity, lockouts
-  hub.py, store.py, settings.py, layout_store.py, audit.py, ratelimit.py
-                  connections, atomic JSON stores, config.json, layouts, audit logs, lockouts
+  hub.py, store.py, settings.py, layout_store.py, memory_store.py, audit.py, ratelimit.py
+                  connections, atomic JSON stores, config.json, layouts, memories, audit logs, lockouts
   tailscale.py    Tailscale Serve helper for Administration → Remote
   server.py       Starlette/uvicorn — /api/radios, connect/ports, WebSocket
 frontend/         adaptive multi-radio panel; controls render from the profile

@@ -577,7 +577,36 @@ a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decorat
 .rec-credit{margin:8px 0 0;font-size:9.5px;color:var(--txt-faint)}
 .rec-credit a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 
-/* ---- spots (spots.js): the filters, then one two-line row per spot (a button when it can be tuned) ---- */
+/* ---- spots (spots.js): the view keys, the filters, then one two-line row per spot (a button when it can
+   be tuned). The view keys (LIVE / CALLING / MEMORY) are the Modem window's mode keys. ---- */
+.spots-tabs{display:grid;grid-template-columns:repeat(3,1fr);margin:0 0 6px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
+.spots-tab{appearance:none;background:var(--key);border:0;border-left:1px solid var(--border);padding:6px 0 5px;
+  font:700 11px/1 var(--font-ui);letter-spacing:.06em;color:var(--txt-dim);cursor:pointer}
+.spots-tab:first-child{border-left:0}
+.spots-tab:hover{background:var(--key-hi);color:var(--txt)}
+.spots-tab.on{background:var(--accent-tint);color:var(--accent-hi);box-shadow:inset 0 -2px 0 var(--accent)}
+.spots-tab:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.spots-bandh{margin:6px 0 1px;font:700 10px/1.2 var(--font-ui);letter-spacing:.08em;color:var(--txt-dim)}   /* CALLING: a band's name over its rows */
+.spots-bandh:first-child{margin-top:1px}
+/* CALLING and MEMORY rows have no age: the name takes the rest of the first line ("Tuned" ends the second) */
+.spot-call{grid-template-areas:"freq mode call call" "ref ref ref src"}
+/* MEMORY: SAVE, then (while it asks for the name) the field and the X on a line of their own; a memory is
+   one line, with its delete key beside it: an X that turns into "Delete?" for the second tap */
+.mem-form{display:flex;align-items:stretch;gap:4px;flex:0 0 auto;min-width:0;margin:0}
+.mem-form.naming{flex:1 1 100%}
+.mem-form input{flex:1 1 auto;min-width:0;font-size:12px;padding:4px 8px}
+.spot-mem{display:flex;align-items:stretch;gap:3px}
+.spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}
+.mem-del{flex:0 0 auto;min-width:28px;padding:0 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);
+  color:var(--txt-dim);font:700 14px/1 var(--font-ui);cursor:pointer}
+.mem-del:hover{background:var(--key-hi);border-color:var(--border-strong);color:var(--txt)}
+.mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}
+.mem-del:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+@media (hover:none) and (pointer:coarse){            /* a touch screen: thumb-high keys and memories; the name in 16 px (iOS zooms the page into a smaller field) */
+  .spots-tab,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:40px}
+  .mem-form input{font-size:16px}
+  .mem-del{min-width:40px}
+}
 .spots-bar{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
 .spots-bar .spots-src{padding:5px 8px;font-size:11px}
 .spots-bar select{flex:1 1 84px;min-width:0;font-size:11px;padding:3px 5px}

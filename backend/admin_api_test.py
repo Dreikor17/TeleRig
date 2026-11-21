@@ -84,7 +84,7 @@ tailscale.cli_path = lambda: "C:/fake/tailscale.exe"
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 import harness  # noqa: E402  (asgi_request only: no I/O, no backend import)
 
-from backend import accounts, admin_api, audit, auth, layout_store, server, settings  # noqa: E402
+from backend import accounts, admin_api, audit, auth, layout_store, memory_store, server, settings  # noqa: E402
 
 accounts.ensure_initialized(reconcile_mode="skip")
 PW = "Admin#Test-2026"
@@ -499,17 +499,24 @@ C("audit jsonl: an attachment of JSON lines (TX log only)",
 r = call("GET", "/api/admin/audit", None, ADM, query=b"limit=999999")
 C("audit json limit is capped at 1000", (r.status, len(r.json()["entries"]) <= 1000), (200, True))
 
-# ---- layout reset + delete of a user removes the layout file -------------------------------------
+# ---- layout reset + delete of a user removes the layout and memories files ------------------------
 accounts.create_user("OP7", "operator", "Op7#Test-2026", must_change=False)
 layout_store.put("OP7", "desktop", {"column": 12, "items": [{"id": "vfo", "x": 0, "y": 0, "w": 4, "h": 5}]}, 0.4)
 r = call("DELETE", "/api/admin/users/4f5037/layout", None, ADM)
 C("admin layout reset -> {ok, rev}; both devices gone", (r.status, r.json().get("rev"), "desktop" in layout_store.get("OP7")[0]),
   (200, 2, False))
 C("layout reset of an unknown user -> 404", e(call("DELETE", "/api/admin/users/4e4f424f4459/layout", None, ADM)), (404, "not_found"))
+memory_store.add("OP7", "ic9700", {"hz": 145500000, "mode": "FM", "name": "Calling"})
+C("OP7 has a memories file", memory_store.path_for("OP7").exists(), True)
 r = call("DELETE", "/api/admin/users/4f5037", None, ADM)
 C("delete OP7 -> ok; account and layout file gone", (r.status, accounts.get("OP7"), layout_store.path_for("OP7").exists()),
   (200, None, False))
+C("... and the memories file", memory_store.path_for("OP7").exists(), False)
 C("user_deleted audited", [x.get("user") for x in audit_events("user_deleted")], ["OP7"])
+memory_store.add("OP8", "ic9700", {"hz": 145500000, "mode": "FM", "name": "left behind"})   # no such user (yet)
+r = call("POST", "/api/admin/users", {"user": "OP8", "role": "operator", "password": "Op8#Test-2026", "must_change": False}, ADM)
+C("a callsign created again starts with no memories: a file left behind is removed",
+  (r.status, memory_store.path_for("OP8").exists(), memory_store.get("OP8")), (200, False, ({"rev": 0, "radios": {}}, False)))
 
 # ---- sessions (no sockets in-process) + lockouts ----------------------------------------------------
 s = call("GET", "/api/admin/sessions", None, ADM).json()
