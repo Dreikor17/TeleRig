@@ -246,7 +246,8 @@
         </div>
         <div class="no-scope" id="noScope" hidden>No band scope over CAT — turn on RX audio for an audio spectrum, or just use frequency &amp; mode control</div>
         <div class="af-badge" id="afBadge" hidden><svg class="i" aria-hidden="true"><use href="#i-audio-waveform"/></svg> audio spectrum (RX passband)</div>
-        <div class="scope-tunehint" id="scopeTuneHint">click or drag the waterfall to tune</div>
+        <!-- a mouse clicks or drags; a finger taps (a swipe scrolls the page, it tunes nothing) -->
+        <div class="scope-tunehint" id="scopeTuneHint"><span class="sth-mouse">click or drag the waterfall to tune</span><span class="sth-touch">tap the waterfall to tune</span></div>
       </div>
       <div class="scope-ctl">
         <span id="scopeOnlyCtl" data-gate="operate">
@@ -261,8 +262,13 @@
         <button class="sc-btn" id="bandPlanBtn" title="Overlay the ARRL band plan (VHF/UHF) or FCC license-class sub-bands (HF)">BAND PLAN</button>
         <button class="sc-btn" id="cwToolBtn" title="CW in the Modem window: show it and start the decoder">CW</button>
         <span class="bandlegend" id="bandLegend" hidden></span>
-        <span class="sep"></span>
-        <span class="hint" id="scopeHint">Click a freq digit to tune (scroll it too) · tap / drag the waterfall</span>
+        <!-- the step keys (app.js stepKey): a tap is one step of the frequency, a held key keeps going. They
+             send the frequency's own `tune` delta and nothing else: no key here can key the radio. -->
+        <span class="sc-step" id="scopeStepCtl" data-gate="operate" role="group" aria-label="Tune by steps">
+          <button type="button" class="sc-btn sc-step-key" id="stepDn" aria-label="Tune down one step" title="Down one step. Hold to keep going.">&minus;</button>
+          <select id="scopeStep" class="sc-step-sel" aria-label="Tuning step" title="Tuning step"></select>
+          <button type="button" class="sc-btn sc-step-key" id="stepUp" aria-label="Tune up one step" title="Up one step. Hold to keep going.">+</button>
+        </span>
       </div>
     </div></div>
   </section>

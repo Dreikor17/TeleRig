@@ -37,7 +37,7 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
 TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
-B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose"
+B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint"   # scopeHint: the bar's hint gave way to the step keys
 # The page Phase 1 started from: v0.2.25. The audit used to read `dev`, which was that page until the
 # v0.3.0 release moved dev to v0.3.0 itself; pinned so the Phase 1 audit keeps its meaning.
 PHASE1_BASE_REF = "1d6ea32"

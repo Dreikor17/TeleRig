@@ -395,7 +395,10 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .scope{position:relative;border:1px solid var(--tft-border);border-radius:var(--r-ctl);overflow:hidden;background:var(--scope-bg)}
 #spectrum{display:block;width:100%;height:150px}
 #waterfall{display:block;width:100%;height:240px;image-rendering:crisp-edges;image-rendering:pixelated}
-#scopeWrap{touch-action:pan-y}   /* horizontal drag tunes; vertical scrolls the page */
+/* a finger on the scope: a tap tunes to that signal; a swipe up or down scrolls the page and a swipe
+   sideways does nothing (it used to tune; only a mouse drag pans now, app.js). pan-y only, so a sideways
+   swipe can't start the browser's own back / forward gesture either. */
+#scopeWrap{touch-action:pan-y}
 .overlay-canvas{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none}
 /* the band plan's own strip, just above the scope (waterfall.js drawBandplan): never over the trace */
 .band-strip{display:block;width:100%;height:18px;margin-bottom:2px;background:var(--scope-bg);cursor:help}
@@ -414,6 +417,8 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .af-badge svg.i{width:12px;height:12px}
 .scope-tunehint{position:absolute;left:0;right:0;bottom:3px;text-align:center;z-index:3;
   font-size:10px;letter-spacing:.04em;color:#7fb4d6;opacity:.7;pointer-events:none;text-shadow:0 0 4px #000}
+.sth-touch{display:none}                     /* the hint for a finger: a touch screen with no mouse */
+@media (hover:none){.sth-mouse{display:none}.sth-touch{display:inline}}
 /* draggable split between spectrum and waterfall */
 .scope-split{flex:0 0 8px;cursor:ns-resize;background:rgba(255,255,255,.05);position:relative;z-index:3}
 .scope-split:hover,.scope-split.drag{background:rgba(52,211,153,.30)}
@@ -427,7 +432,18 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .sc-btn.active{background:var(--sel-bg);color:var(--sel-fg);border-color:var(--sel-bg);font-weight:700}
 .span-val{font-family:var(--font-ui);color:var(--num);min-width:54px;text-align:center;font-variant-numeric:tabular-nums}
 .scope-ctl .sep{flex:0 0 1px;height:18px;background:var(--border);margin:0 4px}
-.scope-ctl .hint{color:var(--txt-dim);font-size:11px;margin-left:auto}
+/* the step keys at the bar's end: - [step] + (app.js stepKey). A held key keeps tuning, so a finger resting
+   on one must not scroll the page under it, select its label or open the long-press menu. */
+.sc-step{display:inline-flex;align-items:stretch;gap:4px;margin-left:auto}
+.scope-ctl .bandlegend{flex:1 1 200px;min-width:0}   /* the legend takes the room beside the step keys, wrapping its own items */
+.sc-step-key{min-width:30px;padding:3px 8px;font-size:15px;font-weight:700;line-height:1;touch-action:none;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.sc-step-sel{min-width:0;font-size:11px;padding:3px 5px}
+/* any touch screen (a tablet is wider than the phone rules below): thumb-sized step keys */
+@media (hover:none) and (pointer:coarse){
+  .sc-step .sc-step-key{min-width:44px;min-height:44px;font-size:20px}
+  .sc-step .sc-step-sel{min-height:44px;font-size:13px}
+}
 .bandlegend{display:inline-flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--txt-dim)}
 .bandlegend .lg{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .bandlegend .lg-sw{width:11px;height:11px;border-radius:2px;border:1px solid var(--border-strong);flex:0 0 auto}
@@ -1104,9 +1120,14 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .lan-host{flex:1 1 100%}
   .lan-user,.lan-pass{flex:1 1 45%}
   .ctl-btn{flex:1 1 auto;min-height:44px}
-  .scope-ctl .hint{display:none}
   .key{min-height:44px;padding:11px 6px}
   .sc-btn{min-height:38px;padding:8px 11px}
+  /* the step keys: thumb-sized, beside BAND PLAN and CW where they fit, else a row of their own that they
+     fill; the band plan's legend goes under them */
+  .sc-step{flex:1 1 172px;gap:6px}
+  .sc-step .sc-step-key{flex:1 1 38px;min-height:44px;padding:8px 6px;font-size:20px}
+  .sc-step .sc-step-sel{flex:0 1 84px;min-height:44px;font-size:13px}
+  .scope-ctl .bandlegend{order:2;flex:1 1 100%}
   .freq-entry,#step,#freqSet{min-height:42px}
   .sl{grid-template-columns:34px 1fr 44px}
   .sl input[type=range]{height:30px}

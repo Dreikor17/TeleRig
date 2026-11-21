@@ -1011,8 +1011,25 @@
     send({ action: "set_freq", hz: r.hz });
   }
 
-  // step select
-  $("step").onchange = () => { step = +$("step").value; };
+  // ---- the tuning step ----
+  // One setting with two pickers: STEP in the Controls panel and the one between the step keys under the
+  // scope. The step picked is kept per radio on this device (telerig.step.<radio id>), so after a reload
+  // the keys tune by it, not by the profile's default (the IC-9700's is its 25 kHz FM channel step).
+  const STEP_KEY = "telerig.step.";
+  const stepSels = () => [$("step"), $("scopeStep")].filter(Boolean);
+  function keptStep(p) {                              // the kept step, if it is still one of this radio's
+    let v = 0;
+    try { v = +localStorage.getItem(STEP_KEY + p.id); } catch (_) {}
+    return (p.steps || []).some((s) => s.v === v) ? v : 0;
+  }
+  function setStep(v, keep) {
+    v = +v;
+    if (!(v > 0)) return;
+    step = v;
+    for (const s of stepSels()) s.value = String(v);
+    if (keep && currentRadio) { try { localStorage.setItem(STEP_KEY + currentRadio.id, String(v)); } catch (_) {} }
+  }
+  for (const s of stepSels()) s.addEventListener("change", () => setStep(s.value, true));
 
   // level sliders (power shown as %, others 0–255)
   function fmtLevel(t, v) {
@@ -1443,7 +1460,8 @@
     return se && se.scrollHeight > se.clientHeight + 1 ? se : null;
   }
   // Inside something that scrolls, the wheel tunes only after the pointer rested 400 ms on the
-  // element with no scrolling, so a quick wheel over the scope keeps scrolling the page.
+  // element with no scrolling, so a quick wheel over the VFO's digits keeps scrolling the page. (The
+  // digits are the only place the wheel tunes: over the scope it never does.)
   function hoverIntent(el) {
     if (!scrollableAncestor(el)) return true;
     const t = performance.now();
@@ -1456,11 +1474,14 @@
     el.addEventListener("pointerleave", () => { el._hoverSince = 0; });
   }
 
-  // ---- tuning on the scope: tap to select a frequency, drag/slide to spin ----
+  // ---- tuning on the scope: a click or a tap picks a frequency; a mouse drag pans ----
+  // Nothing that scrolls tunes here: not the wheel (there is no wheel handler on the scope), and not a
+  // finger or a pen moving across it, which scrolls the page (style.css #scopeWrap) and never pans.
+  // Scrolling the page with the pointer or a thumb over the scope used to retune the radio; stepping
+  // the frequency is the step keys' job (below).
   // Positions are scaled from CSS pixels to the scope's drawing width (scope.W), and a tap uses the
   // scope's own pixel->frequency map, so the edges tune to exactly the edge labels.
   const wrap = $("scopeWrap");
-  trackHover(wrap);
   let scDown = false, scStartPx = 0, scLastPx = 0, scLastCss = 0, scMoved = 0, scAccum = 0;
   let scDownAt = 0, scType = "mouse";
   function scopePos(e) {
@@ -1483,7 +1504,7 @@
     const dx = p.px - scLastPx;
     scMoved += Math.abs(p.css - scLastCss);
     scLastPx = p.px; scLastCss = p.css;
-    if (scMoved > 6) {                                // a drag -> pan the frequency
+    if (scMoved > 6 && scType === "mouse") {          // a mouse drag -> pan the frequency
       const [lo, hi] = scope.visibleRange();
       scAccum += -(dx / scope.W) * (hi - lo);         // drag right -> tune down (content follows finger)
       const n = (scAccum / step) | 0;
@@ -1493,7 +1514,7 @@
   function scEnd(e) {
     if (!scDown) return; scDown = false;
     try { wrap.releasePointerCapture(e.pointerId); } catch (_) {}
-    if (scMoved > 6) { flushTune(); return; }         // the trailing drag delta
+    if (scMoved > 6) { flushTune(); return; }         // moved: not a tap (a mouse drag's trailing delta goes out)
     // A touch tap must be short (a long press is not a tap); mouse and pen keep any duration (AR-59).
     if (scType === "touch" && performance.now() - scDownAt >= 600) return;
     // Fine snap (10 Hz on a narrow view): lands where you tapped. On the AF scope in CW, `retune`
@@ -1504,14 +1525,66 @@
   }
   wrap.addEventListener("pointerup", scEnd);
   wrap.addEventListener("pointercancel", () => { scDown = false; flushTune(); });
-  let scWheelEnd = 0;
-  wrap.addEventListener("wheel", (e) => {
-    if (!TR.can("operate") || Layout().arranging() || !hoverIntent(wrap)) return;   // the page scrolls
-    e.preventDefault();
-    queueTune((e.deltaY < 0 ? 1 : -1) * step);
-    clearTimeout(scWheelEnd);
-    scWheelEnd = setTimeout(flushTune, 150);          // the wheel's end: the trailing delta
-  }, { passive: false });
+
+  // ---- the step keys in the scope's bar: - and +, one step of the frequency each (#stepDn, #stepUp) ----
+  // A tap is one step, taken when the tap ENDS (its click), never when the finger lands: a finger that
+  // lands on a key and then moves on tunes nothing. A key held HOLD_MS keeps stepping, REPEAT_MS apart,
+  // until the pointer is lifted or cancelled, slides off the key, the key or the window loses the focus,
+  // the page is hidden, or HOLD_MAX_MS is up (a pointerup that never arrives can't tune for ever). The
+  // click that ends a hold is not one more step. Enter / Space on a focused key is a click. As with every
+  // way to tune: operators only, and not while panels are being arranged. The keys send the frequency's
+  // `tune` delta (queueTune) and nothing else.
+  const HOLD_MS = 400, REPEAT_MS = 100, HOLD_SLOP = 24, HOLD_MAX_MS = 30000, HOLD_CLICK_MS = 500;
+  const stepHolds = [];                               // each key's stop(): the page hidden, the window blurred
+  function stepKey(btn, dir) {
+    if (!btn) return;
+    let holdT = 0, repT = 0, pid = null, x0 = 0, y0 = 0, since = 0, heldUntil = 0;
+    const may = () => TR.can("operate") && !Layout().arranging() && !btn.disabled;
+    function stop() {
+      if (holdT) { clearTimeout(holdT); holdT = 0; }
+      if (repT) {                                     // a hold ends: its last steps go out, its click is not a step
+        clearInterval(repT); repT = 0;
+        flushTune();
+        heldUntil = performance.now() + HOLD_CLICK_MS;
+      }
+      pid = null;
+    }
+    function holdStep() {
+      if (!may() || performance.now() - since > HOLD_MAX_MS) { stop(); return; }
+      queueTune(dir * step);
+    }
+    btn.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || e.isPrimary === false || !may()) return;
+      stop();
+      heldUntil = 0;
+      pid = e.pointerId; x0 = e.clientX; y0 = e.clientY;
+      holdT = setTimeout(() => {
+        holdT = 0; since = performance.now();
+        repT = setInterval(holdStep, REPEAT_MS);
+        holdStep();
+      }, HOLD_MS);
+    });
+    btn.addEventListener("pointermove", (e) => {      // slid off the key (a finger keeps its key's events)
+      if (pid === null || e.pointerId !== pid) return;
+      if (Math.abs(e.clientX - x0) > HOLD_SLOP || Math.abs(e.clientY - y0) > HOLD_SLOP) stop();
+    });
+    for (const t of ["pointerup", "pointercancel", "pointerleave", "lostpointercapture"]) {
+      btn.addEventListener(t, (e) => { if (pid !== null && e.pointerId === pid) stop(); });
+    }
+    btn.addEventListener("blur", stop);
+    btn.addEventListener("contextmenu", (e) => e.preventDefault());   // a phone's long-press menu
+    btn.addEventListener("click", () => {
+      if (performance.now() < heldUntil) { heldUntil = 0; return; }   // the end of a hold
+      if (!may()) return;
+      queueTune(dir * step);
+      flushSoon();
+    });
+    stepHolds.push(stop);
+  }
+  stepKey($("stepDn"), -1);
+  stepKey($("stepUp"), 1);
+  document.addEventListener("visibilitychange", () => { if (document.hidden) for (const s of stepHolds) s(); });
+  window.addEventListener("blur", () => { for (const s of stepHolds) s(); });
 
   // ---- the VFO digits: click (or Enter / Space) to type a frequency (freqentry.js); scroll a digit to tune it ----
   const bandsEl = $("bands");
@@ -1677,11 +1750,11 @@
     if (!btn || !ov || !wrap) return;
     scope.bandplan = (window.BANDPLAN || []).map((s) => ({ ...s, lo: s.lo * 1e6, hi: s.hi * 1e6 }));
     const colors = window.BANDPLAN_COLORS || {}, klabel = window.BANDPLAN_KIND_LABEL || {};
-    const legend = $("bandLegend"), hint = $("scopeHint");
+    const legend = $("bandLegend");
 
     function updateLegend() {
       if (!legend) return;
-      if (!scope.showBandplan) { legend.hidden = true; legend._sig = null; if (hint) hint.hidden = false; return; }
+      if (!scope.showBandplan) { legend.hidden = true; legend._sig = null; return; }
       const kinds = scope.visibleKinds(), sig = kinds.join(",");
       if (sig === legend._sig) return;            // unchanged -> skip re-render
       legend._sig = sig;
@@ -1689,7 +1762,6 @@
         '<span class="lg"><span class="lg-sw" style="background:' + ((colors[k] || "rgba(150,160,180,") + "0.85)") +
         '"></span>' + (klabel[k] || k) + "</span>").join("");
       legend.hidden = kinds.length === 0;
-      if (hint) hint.hidden = kinds.length > 0;   // swap the hint out for the legend when we have one
     }
 
     function apply(on) {
@@ -1977,12 +2049,13 @@
       btn.className = "key mode"; btn.dataset.act = "mode"; btn.dataset.mode = name;
       btn.textContent = name; mr.appendChild(btn);
     }
-    const st = $("step"); st.innerHTML = "";
-    for (const s of p.steps) {
-      const o = document.createElement("option"); o.value = s.v; o.textContent = s.label;
-      if (s.v === p.default_step) o.selected = true; st.appendChild(o);
+    for (const st of stepSels()) {                     // both step pickers: this radio's steps
+      st.innerHTML = "";
+      for (const s of p.steps) {
+        const o = document.createElement("option"); o.value = s.v; o.textContent = s.label; st.appendChild(o);
+      }
     }
-    step = p.default_step;
+    setStep(keptStep(p) || p.default_step);            // the step kept for this radio, else its default
     // capability-driven gating: show only what the radio supports (falls back to flat flags)
     const cap = p.capabilities || {};
     const capHas = (k, flat) => (k in cap ? cap[k] : flat);

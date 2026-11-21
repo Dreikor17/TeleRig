@@ -21,7 +21,7 @@ from harness import check, eq, test
 REPO = Path(__file__).resolve().parent.parent
 FRONT = REPO / "frontend"
 REMOTE_IDS = ("remoteBtn", "remoteModal", "remoteClose", "remoteBody")
-B4_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose"   # cwClose: the CW panel is a Modem mode
+B4_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint"   # cwClose: the CW panel is a Modem mode; scopeHint: the step keys took its place
 
 
 def _read(name: str) -> str:

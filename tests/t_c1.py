@@ -306,6 +306,52 @@ def vfo_main_screen_and_typed_frequency_in_node_vm(ctx):
 
 
 @test("unit")
+def scope_never_tunes_by_scrolling_and_step_keys_in_node_vm(ctx):
+    """Tuning from the Scope window (tests/scope_tune_test.js, the real tr.js + app.js in a Node vm): nothing
+    that scrolls tunes on the scope (no wheel, no finger or pen moving across it: scrolling the page over
+    the scope used to retune the radio); a tap or a click still goes to the frequency under it and a mouse
+    drag still pans; the step keys in the scope's bar step the frequency (a tap one step at its click, a
+    held key every 100 ms until it is let go, cancelled, slid off, hidden, or 30 s are up); operators only,
+    not while arranging; the step is one setting with two pickers, kept per radio. Static: the scope has no
+    wheel listener and pans for the mouse only; the step keys queue the frequency's tune and send nothing
+    themselves; the page and the styles carry what the script relies on."""
+    r = subprocess.run(["node", str(REPO / "tests" / "scope_tune_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"scope_tune_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"scope_tune_test.js output: {r.stdout}")
+    js = _strip_comments(_read("app.js"))
+    eq(re.findall(r'(\w+)\.addEventListener\("wheel"', js), ["el", "bandsEl"],
+       "app.js: the wheel acts on a focused slider and on the VFO's digits only, never on the scope")
+    check('if (scMoved > 6 && scType === "mouse") {' in js, "app.js: only a mouse drag pans the scope")
+    key = js.split("function stepKey(btn, dir) {", 1)
+    check(len(key) == 2, "app.js stepKey()")
+    body = key[1].split("\n  stepKey($(\"stepDn\"), -1);", 1)[0]
+    check("queueTune(dir * step)" in body and "send(" not in body and "action:" not in body,
+          "the step keys queue the frequency's tune delta and send nothing themselves")
+    check('stepKey($("stepDn"), -1);' in js and 'stepKey($("stepUp"), 1);' in js, "- steps down, + up")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    m = re.search(r'<span class="sc-step" id="scopeStepCtl" data-gate="operate"[^>]*>(.*?)</span>', html, re.S)
+    check(m, "index.html: the step keys, operators only (data-gate)")
+    ids = re.findall(r'<(button|select)\b[^>]*\bid="(\w+)"', m.group(1) if m else "")
+    eq(ids, [("button", "stepDn"), ("select", "scopeStep"), ("button", "stepUp")], "... -, the step, +")
+    for bid in ("stepDn", "stepUp"):
+        tag = re.search(r'<button\b[^>]*\bid="' + bid + r'"[^>]*>', html).group(0)
+        check('type="button"' in tag and "aria-label=" in tag and "data-act" not in tag and "data-tx" not in tag,
+              f"#{bid}: a plain labelled button (no radio action of its own): {tag}")
+    check('id="scopeHint"' not in html and "scroll it too" not in html, "the bar's old hint (scroll to tune) is gone")
+    check('<span class="sth-mouse">click or drag the waterfall to tune</span><span class="sth-touch">tap the waterfall to tune</span>' in html,
+          "the waterfall's hint: a mouse clicks or drags, a finger taps")
+    css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
+    check("#scopeWrap{touch-action:pan-y}" in css, "style.css: a swipe up or down over the scope scrolls the page")
+    k = re.search(r"\.sc-step-key\{([^}]*)\}", css)
+    check(k and "touch-action:none" in k.group(1) and "user-select:none" in k.group(1) and "-webkit-touch-callout:none" in k.group(1),
+          f"style.css: a held step key doesn't scroll the page, select its label or open the long-press menu: {k and k.group(1)}")
+    check("@media (hover:none){.sth-mouse{display:none}.sth-touch{display:inline}}" in css, "style.css: the finger's hint on a touch screen")
+    phone = css.split("@media (max-width:680px){", 1)[1]
+    check(re.search(r"\.sc-step \.sc-step-key\{[^}]*min-height:44px", phone), "style.css: thumb-sized step keys on a phone")
+
+
+@test("unit")
 def recorder_panel_in_node_vm(ctx):
     """recorder.js: MP3 through LAME from the radio's own PCM (RadioAudio.tapPcm, before VOL: mono, the
     radio's 16 kHz, 48 kb/s, dropouts filled with silence), WebM/Opus via MediaRecorder on the pre-volume RX

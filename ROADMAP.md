@@ -78,6 +78,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   CW is next shown. The decoder starts listening once the page has its audio (RX, or the sidetone's ▶);
   it never starts the audio itself, so a page that opens on CW doesn't leave the browser's audio paused
   (which would have made the mic send silence).
+- **Step keys under the scope, and nothing there tunes by scrolling.** The scope's bar has **−** and
+  **+** with the tuning step between them: a tap is one step, a held key keeps going (ten a second)
+  until you let go. On a phone they are thumb-sized. The step is the Controls panel's STEP (either picker
+  sets both) and is now remembered per radio on each device. The mouse wheel over the scope and a finger
+  sliding along the waterfall no longer tune: scrolling the page past the scope used to retune the radio,
+  and a slide was far too coarse to tune with on a phone. A tap or a click on a signal still tunes to
+  it, a mouse drag still pans, and the wheel still tunes over a VFO digit.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
