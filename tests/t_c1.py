@@ -393,11 +393,18 @@ def sstv_receive_in_node_vm(ctx):
 def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
     """cwtool.js: received text after a pause of 5 s or more (new characters, committed or in the live
     preview) starts a new RX bubble; text committed later stays where it showed; Clear forgets the pause.
-    The real tr.js + cwtool.js in a Node vm with a stand-in decoder worker (tests/cw_chat_test.js)."""
+    CW decodes by default (CW coming into view turns Decode on, with the real Modem window too); the
+    chat follows new text only at its end. The real tr.js + cwtool.js (+ digital.js) in a Node vm with a
+    stand-in decoder worker (tests/cw_chat_test.js). Static: the decoder never makes the page's audio
+    context (one made before a click stays paused, and the mic would send silence): only Play does."""
     r = subprocess.run(["node", str(REPO / "tests" / "cw_chat_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"cw_chat_test.js: {r.stdout}{r.stderr}")
     check("ALL PASS" in r.stdout, f"cw_chat_test.js output: {r.stdout}")
+    js = _strip_comments(_read("cwtool.js"))
+    eq(js.count(".ensure()"), 1, "cwtool.js makes the page's audio in one place")
+    play = js.split("function playMorse(text) {", 1)
+    check(len(play) == 2 and ".ensure()" in play[1].split("\n  }\n", 1)[0], "... Play's click (playMorse), never the decoder")
 
 
 @test("unit")
@@ -487,6 +494,18 @@ def digital_modes_window_in_node_vm(ctx):
     keys = re.findall(r'class="dm-mode[^"]*" id="dm(\w+)"', html)
     eq(keys, ["Cw", "Rtty", "Ft8", "Sstv"], "the mode keys: CW, RTTY, FT8, SSTV")
     check('gs-id="cw"' not in html and 'id="cwClose"' not in html, "the CW panel and its close button are gone")
+    # the window is as tall as its panel, never its text: the text screens take the room left and scroll
+    # inside (a window that grew with its text made the whole panel scroll, the keys and controls with it)
+    css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
+    for rule in (".tile-digital>.tile-fit{display:flex;flex-direction:column;height:100%}",
+                 "#dmPaneCw:not([hidden]),#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}",
+                 "#dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}"):
+        check(rule in css, f"style.css: {rule}")
+    check(not re.search(r"\.tile-digital>\.tile-fit\{[^}]*min-height:100%", css), "the Modem window doesn't grow with its content")
+    for sel, scroll in ((".dm-screen", "overflow:auto"), (".cw-out", "overflow-y:auto")):
+        m = re.search(r"(?:^|\})\s*" + re.escape(sel) + r"\{([^}]*)\}", css)
+        check(m and "flex:1 1 auto" in m.group(1) and scroll in m.group(1) and re.search(r"min-height:\d+px", m.group(1)),
+              f"{sel}: takes the room left, scrolls inside, keeps a usable height: {m and m.group(1)}")
 
 
 @test("unit")

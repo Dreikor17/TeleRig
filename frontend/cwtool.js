@@ -2,9 +2,16 @@
  * old overlay tool that popped up over the waterfall.
  *
  * In the window: the decoder runs while its Decode key is on and the window is on the grid, whichever
- * mode is shown (collapsed too, like the window's other modes); new text puts a dot on the CW key. The
- * scope's CW button brings CW into view and starts the decoder. While this tab sends a CW message the
- * window stays on CW, its STOP in view (CwPanel.busy()).
+ * mode is shown (collapsed too, like the window's other modes); new text puts a dot on the CW key. It
+ * decodes without being asked, as the window's other modes do: CW coming into view (the page opening on
+ * it, the window brought onto the grid showing it, the CW key; digital.js's tr:modem) turns Decode on.
+ * Decode turns it off, until CW next comes into view. The scope's CW button brings CW into view and
+ * starts the decoder. While this tab sends a CW message the window stays on CW, its STOP in view
+ * (CwPanel.busy()).
+ *
+ * The decoder starts at once (the model loads in its worker) but listens only once the page has its
+ * audio, which a click makes (RX, the mic, Play): it never makes the audio context itself. One made
+ * before any click would stay paused, and the mic would then send silence.
  *
  * Decoder: a NEURAL decoder (DeepCW). It taps the pre-volume RX bus
  * (RadioAudio.bus()), resamples to 3200 Hz, and re-runs the ONNX model in
@@ -83,6 +90,10 @@
   document.addEventListener("tr:tile", (e) => {
     const d = e.detail || {};
     if (d.id === WIN && d.visible === false && open) setOpen(false);
+  });
+  // CW came into view (digital.js): it decodes by default
+  document.addEventListener("tr:modem", (e) => {
+    if (inTile && e && e.detail && e.detail.mode === "cw" && !open) setOpen(true);
   });
 
   // ---- drag the panel by its header (floating mode only) ----
@@ -233,28 +244,43 @@
     worker.onerror = () => setStatus("model error");
   }
 
-  async function startDecoder() {
+  // The decoder: the model (its worker) and the 1 s tick start at once; the capture on the RX bus joins
+  // when the page has its audio (attach(): now, at each tick, and before Play's sidetone).
+  let moduleLoading = null, capFailed = false;           // the capture worklet's module loading; the capture failed
+  function startDecoder() {
     ensureWorker();
-    const ra = RA(); if (!ra) return;
-    ra.ensure();
-    const ctx = ra.ctx(), bus = ra.bus();
-    if (!ctx || !bus) return;
     stopCapture();
+    capFailed = false;
     pendingLen = 0; pendingText = ""; lastPeak = 0; messages = []; rxOpen = false; lastRxAt = 0; lastPreview = "";
     inflight = false; analysisLen = 0;
     render();
+    if (!ticker) ticker = setInterval(tick, INFER_MS);
+    attach();
+  }
+  // the capture, if the decoder is on and the page has its audio; the promise settles once it is in (or
+  // can't be). The worklet's module loads once: calls meanwhile wait for it, then check again.
+  function attach() {
+    const ra = RA(), ctx = ra && ra.ctx(), bus = ra && ra.bus();
+    if (!open || capNode || capFailed || !ctx || !bus) return Promise.resolve();   // no audio yet: never made here
+    if (!workletReady) {
+      if (!moduleLoading) {
+        let p;
+        try { p = ctx.audioWorklet.addModule("/static/cw-capture-worklet.js?v=" + CW_WORKER_V); } catch (err) { p = Promise.reject(err); }
+        moduleLoading = p.then(() => { workletReady = true; moduleLoading = null; },
+                               () => { moduleLoading = null; failCapture(); });
+      }
+      return moduleLoading.then(() => attach());
+    }
     try {
-      if (!workletReady) { await ctx.audioWorklet.addModule("/static/cw-capture-worklet.js?v=" + CW_WORKER_V); workletReady = true; }
-      if (!open) return;                                  // panel was closed while the module loaded
       capNode = new AudioWorkletNode(ctx, "cw-capture", { processorOptions: { targetSR: SR } });
       capNode.port.onmessage = (e) => appendSamples(e.data);
       bus.connect(capNode); capNode.connect(ctx.destination);   // worklet emits no output -> silent
     } catch (err) {
-      setStatus("audio capture unavailable");
-      return;
+      stopCapture(); failCapture();
     }
-    if (!ticker) ticker = setInterval(tick, INFER_MS);
+    return Promise.resolve();
   }
+  function failCapture() { capFailed = true; setStatus("audio capture unavailable"); }   // tried again when Decode is next turned on
   function stopDecoder() { stopCapture(); if (ticker) { clearInterval(ticker); ticker = 0; } }
   function stopCapture() {
     if (capNode) { try { capNode.disconnect(); capNode.port.onmessage = null; } catch (_) {} capNode = null; }
@@ -269,6 +295,7 @@
   }
 
   function tick() {
+    if (!capNode) attach();                       // the page's audio may have started (RX, the mic)
     if (!workerReady) { render(); return; }
     if (inflight) return;
     if (pendingLen < MIN_PENDING) { render(); return; }
@@ -327,6 +354,10 @@
     render();
   }
 
+  // The chat scrolls inside the window: at its end it follows what comes in; scrolled back it stays (and
+  // digital.js brings it back to that place when CW is shown again). It is written again only when it
+  // changed, so a selection in it lasts.
+  let chatHtml = null;
   function render() {
     if (out) {
       let html = "";
@@ -339,8 +370,12 @@
         html += '<div class="cw-msg-wrap ' + m.dir + '"><div class="cw-msg-lbl">' + m.t +
           '</div><div class="cw-msg ' + m.dir + '">' + inner + "</div></div>";
       }
-      out.innerHTML = html;
-      out.scrollTop = out.scrollHeight;
+      if (html !== chatHtml) {
+        const atEnd = out.scrollHeight - out.scrollTop - out.clientHeight < 24;   // == digital.js END_PX
+        out.innerHTML = html;
+        chatHtml = html;
+        if (atEnd) out.scrollTop = out.scrollHeight;
+      }
     }
     if (hint) {
       // Drive the prompt off whether RX audio is actually ON — not the audio level, so it never
@@ -357,11 +392,12 @@
   // ---- coder (text -> Morse sidetone; never transmits) ----
   $("cwPlay").addEventListener("click", () => playMorse($("cwSend").value));
   $("cwSend").addEventListener("keydown", (e) => { if (e.key === "Enter") playMorse($("cwSend").value); });
-  function playMorse(text) {
+  async function playMorse(text) {
     const ra = RA(); if (!ra) return;
-    ra.ensure();
+    ra.ensure();                                  // a click: the page's audio may start here
     const ctx = ra.ctx(), bus = ra.bus();
     if (!ctx || !bus || !text) return;
+    await attach();                               // the decoder, if on, hears the sidetone from its start
     const wpm = Math.max(5, Math.min(40, +$("cwWpmSet").value || 18));
     const dot = 1.2 / wpm;
     const tone = +$("cwToneSet").value || 600;

@@ -12,6 +12,15 @@
  * can't be shown: its STOP stays in view. RTTY and FT8 receive only; SSTV's Send tab is sstv-tx.js's own
  * and CW's TX cwtool.js's, both on the PTT rules.
  *
+ * tr:modem {mode}: a mode came into view: the page opened on it, the window came onto the grid showing
+ * it (added, a layout reset, another device's layout), or it was chosen (its key, or the window held on
+ * it while it sends). CW starts its decoder then (cwtool.js): every mode decodes without being asked.
+ * Folding the window and opening it again is not a new view (its modes keep listening while folded).
+ *
+ * The text screens (CW's chat, RTTY's text, FT8's list) scroll inside the window. At the end a screen
+ * follows what comes in (cwtool.js, rtty.js and ft8.js scroll it only then); scrolled back it stays where
+ * it was left, and it comes back to that place, or to the end it was following, when it is shown again.
+ *
  * window.DigitalPanel = { mode(), show(id), feed(pcm, rate), summary() }
  */
 (function () {
@@ -30,6 +39,16 @@
   const sending = () => (busy(window.SstvTx) ? "sstv" : busy(window.CwPanel) ? "cw" : null);
   const WAIT = { sstv: "A picture is being sent: STOP it first", cw: "CW is being sent: STOP it first" };
   let cur = MODES.includes(ls(KEY)) ? ls(KEY) : MODES[0];
+  const onGrid = () => !!(tile && tile.parentElement && tile.parentElement.id === "grid");
+  let viewed = null, wasOnGrid = false;                   // the mode last announced in view; the window then on the grid
+  function announce() {                                    // tr:modem: the mode in view, once per new view
+    const g = onGrid();
+    if (g && (!wasOnGrid || viewed !== cur)) {
+      viewed = cur;
+      try { document.dispatchEvent(new CustomEvent("tr:modem", { detail: { mode: cur } })); } catch (_) {}
+    }
+    wasOnGrid = g;
+  }
 
   function render() {
     const lock = sending();
@@ -45,6 +64,7 @@
       k.title = off ? WAIT[lock] : "";
       panes[m].hidden = !on;
     }
+    announce();
   }
   function show(m) {
     const lock = sending();
@@ -68,6 +88,29 @@
     const m = e && e.detail && e.detail.mode;
     if (MODES.includes(m) && m !== cur) keys[m].classList.add("news");
   });
+  // the window came onto the grid (or left it): layout.js's events
+  document.addEventListener("tr:tile", (e) => { if (e && e.detail && e.detail.id === "sstv") announce(); });
+  document.addEventListener("tr:layout", () => announce());
+
+  // ---- the text screens keep their place ----
+  // The browser forgets a hidden box's scroll position (another mode shown, the window folded or moved
+  // on the grid), so each screen notes where the operator left it: at the end (it follows), or a place.
+  // Shown again, or resized, it goes back there. Its own script scrolls it as text comes in, only while
+  // it is at the end.
+  const END_PX = 24;                                       // == rtty.js / ft8.js / cwtool.js: "at the end"
+  function keepPlace(el) {
+    if (!el || typeof el.addEventListener !== "function") return;
+    let follow = true, top = 0;
+    el.addEventListener("scroll", () => {
+      if (!el.clientHeight) return;                        // hidden: the browser's reset, not the operator
+      follow = el.scrollHeight - el.scrollTop - el.clientHeight < END_PX;
+      top = el.scrollTop;
+    });
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => { if (el.clientHeight) el.scrollTop = follow ? el.scrollHeight : top; }).observe(el);
+    }
+  }
+  for (const id of ["cwOut", "rttyText", "ft8List"]) keepPlace($(id));
 
   // ---- the audio strip ----
   const FFT_N = 1024, HOP = 512, ROWS_EVERY = 4, F_TOP = 3000;

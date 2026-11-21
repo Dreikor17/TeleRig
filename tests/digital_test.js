@@ -10,6 +10,13 @@
  *  D3. while SSTV sends a picture, or CW a message, the window stays on that mode and the others can't be
  *      shown (its STOP stays in view)
  *  D4. the collapsed window's summary is the shown mode's; DigitalPanel.feed reaches RTTY, FT8 and SSTV
+ *  D5. tr:modem (a mode come into view: CW starts its decoder then): the page opening on a mode with the
+ *      window on the grid; a mode chosen (not the one shown again; not the 1 s redraw); the window held on
+ *      SSTV while it sends; the window brought onto the grid (added, or a layout that places it); none
+ *      off the grid, none for folding and opening the window, none for a layout with it on the grid all along
+ *  D6. the text screens (CW's chat, RTTY's text, FT8's list) keep their place: at the end when hidden,
+ *      shown again at the new end; scrolled back, shown again where they were left (the browser's reset of
+ *      a hidden box ignored); a resize keeps either
  *  T1. FT8 slots: one decode per 15 s UTC slot, once all of it has arrived, 15 s of samples from the slot's
  *      start (the arrival clock), in a worker loaded from the page's own script
  *  T2. the list: a header per slot, rows by frequency (dB, DT, Hz, message), CQs marked, text never markup;
@@ -32,7 +39,15 @@ function page(opts) {
   const e = makeEnv({ localStorage: opts.localStorage || {} });
   e.ctx.BigInt = BigInt; e.ctx.Uint32Array = Uint32Array;
   const grid = e.el("div", { id: "grid" });
-  const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, grid);
+  e.parking = e.el("div", { id: "tileParking" });            // layout.js's: a tile off the grid
+  const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, opts.offGrid ? e.parking : grid);
+  e.modem = [];                                              // tr:modem, heard from the start (the page opening on a mode)
+  e.doc.addEventListener("tr:modem", (ev) => e.modem.push(ev.detail && ev.detail.mode));
+  if (opts.ro) {                                             // a ResizeObserver the test drives (D6)
+    e.ros = [];
+    e.ctx.ResizeObserver = function (cb) { this.cb = cb; e.ros.push(this); };
+    e.ctx.ResizeObserver.prototype.observe = function (el) { this.el = el; };
+  }
   const modes = e.el("div", { class: "dm-modes" }, tile);
   e.keys = {};
   for (const [m, id] of [["cw", "dmCw"], ["rtty", "dmRtty"], ["ft8", "dmFt8"], ["sstv", "dmSstv"]]) e.keys[m] = e.el("button", { id, type: "button" }, modes);
@@ -43,6 +58,7 @@ function page(opts) {
   e.clear = e.el("button", { id: "ft8Clear", type: "button" }, e.panes.ft8);
   e.status = e.el("p", { id: "ft8Status" }, e.panes.ft8);
   e.list = e.el("div", { id: "ft8List" }, e.panes.ft8);
+  if (opts.ro) { e.cwOut = e.el("div", { id: "cwOut" }, e.panes.cw); e.rttyText = e.el("div", { id: "rttyText" }, e.panes.rtty); }
   e.script = e.el("script", { src: "/static/ft8-decode.js?v=42" });
   e.grid = grid; e.tile = tile;
   e.on = !opts.rxOff;
@@ -153,6 +169,65 @@ const shown = (e) => Object.keys(e.panes).filter((m) => !e.panes[m].hidden);
      "D4 DigitalPanel.feed reaches RTTY, FT8 and SSTV (CW listens on the audio graph)");
   e.ctx.DigitalPanel.feed(new Int16Array(0), 16000);
   eq(e.fed.length, 3, "D4 an empty frame: nothing");
+}
+
+// ---- D5: tr:modem, a mode come into view ----
+{
+  const tileEv = (e, d) => e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: Object.assign({ id: "sstv" }, d) }));
+  const layoutEv = (e) => e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:layout", { detail: { device: "desktop" } }));
+  const e = page({ stubs: true });
+  eq(e.modem, ["cw"], "D5 the page opening on CW, the window on the grid: CW in view");
+  eq(page({ stubs: true, localStorage: { "telerig.digital.mode": "rtty" } }).modem, ["rtty"], "D5 ... on the kept mode: that mode");
+  e.click(e.keys.ft8);
+  eq(e.modem, ["cw", "ft8"], "D5 FT8 chosen: FT8 in view");
+  e.click(e.keys.ft8); e.clock.advance(3000);
+  eq(e.modem, ["cw", "ft8"], "D5 the FT8 key again, the 1 s redraws: nothing new");
+  e.key(e.keys.ft8, "ArrowRight");
+  eq(e.modem.slice(2), ["sstv"], "D5 ArrowRight: SSTV in view");
+  e.click(e.keys.cw);
+  e.sending = true; e.clock.advance(1000);
+  eq(e.modem.slice(3), ["cw", "sstv"], "D5 the window held on SSTV while it sends a picture: SSTV in view");
+  e.sending = false; e.clock.advance(1000);
+  e.click(e.keys.cw);
+  const n = e.modem.length;
+  tileEv(e, { visible: true, collapsed: true }); tileEv(e, { visible: true, collapsed: false }); e.clock.advance(1000);
+  eq(e.modem.length, n, "D5 the window folded and opened again: nothing new (its modes kept listening)");
+  layoutEv(e);
+  eq(e.modem.length, n, "D5 a layout with the window on the grid all along: nothing new");
+  e.parking.appendChild(e.tile); tileEv(e, { visible: false });
+  e.clock.advance(3000);
+  eq(e.modem.length, n, "D5 the window removed: nothing (nothing in view)");
+  e.grid.appendChild(e.tile); tileEv(e, { visible: true });
+  eq(e.modem.slice(n), ["cw"], "D5 the window added again: its mode in view");
+  const f = page({ stubs: true, offGrid: true });
+  f.click(f.keys.rtty); f.clock.advance(3000);
+  eq(f.modem, [], "D5 the window off the grid: nothing, whatever is chosen");
+  f.grid.appendChild(f.tile); layoutEv(f);
+  eq(f.modem, ["rtty"], "D5 a layout that places the window on the grid: its mode in view");
+}
+
+// ---- D6: the text screens keep their place ----
+{
+  const e = page({ stubs: true, ro: true });
+  eq(["cwOut", "rttyText", "ft8List"].map((id) => e.ros.filter((r) => r.el && r.el.id === id).length), [1, 1, 1],
+     "D6 CW's chat, RTTY's text and FT8's list are each watched for being shown again");
+  const L = e.list, ro = e.ros.find((r) => r.el === L);
+  const scrolled = (top) => { L.scrollTop = top; L.dispatchEvent(new e.Event("scroll", { bubbles: false })); };
+  const hide = () => { L.clientHeight = 0; scrolled(0); };   // hidden: the browser drops the place (and may say so)
+  const show = (h) => { L.clientHeight = h; ro.cb([]); };    // shown again, or resized: the observer
+  L.scrollHeight = 1000; L.clientHeight = 200; scrolled(800);  // at the end
+  hide(); L.scrollHeight = 1400;                              // text came in while hidden
+  show(200);
+  eq(L.scrollTop, 1400, "D6 at the end when hidden: shown again at the new end");
+  scrolled(300);                                              // scrolled back, to read
+  hide(); L.scrollHeight = 1800;
+  show(200);
+  eq(L.scrollTop, 300, "D6 scrolled back when hidden: shown again where it was left");
+  show(260);
+  eq(L.scrollTop, 300, "D6 ... a resize keeps that place");
+  scrolled(1600);                                             // 1800 - 1600 - 200: the end again
+  L.scrollHeight = 1900; show(300);
+  eq(L.scrollTop, 1900, "D6 at the end, a resize: still at the end");
 }
 
 // ---- T1: the slots ----

@@ -455,7 +455,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .tp-close{margin-left:auto;background:none;border:none;color:var(--txt-dim);cursor:pointer;font-size:13px;line-height:1;padding:0 2px}
 .tp-close:hover{color:var(--txt)}
 .tp-body{padding:8px 9px;display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-height:0;overflow:auto}
-.cw-out{flex:1 1 auto;min-height:88px;overflow-y:auto;background:var(--field);border:1px solid var(--border);border-radius:var(--r-ctl);
+.cw-out{flex:1 1 auto;min-height:56px;overflow-y:auto;background:var(--field);border:1px solid var(--border);border-radius:var(--r-ctl);
   padding:8px;display:flex;flex-direction:column;gap:7px}
 .cw-msg-wrap{display:flex;flex-direction:column;max-width:84%}
 .cw-msg-wrap.rx{align-self:flex-start;align-items:flex-start}
@@ -632,8 +632,12 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .grid-stack-item.sstv-on-air .tile{border-color:var(--tx-solid);box-shadow:0 0 0 1px var(--tx-solid)}   /* this panel is keying the radio */
 
 /* ---- the Modem window (digital.js): the mode keys; CW (cwtool.js) in its own panel; RTTY (rtty.js) and FT8
-   (ft8.js) on an instrument screen under the audio strip, which grows with the panel ---- */
-.tile-digital>.tile-fit{display:flex;flex-direction:column;min-height:100%}
+   (ft8.js) on an instrument screen under the audio strip. The window is as tall as its panel, never its
+   text: the text screen (CW's chat, RTTY's text, FT8's list) takes the room the controls leave and scrolls
+   inside, so the keys and controls stay put. Its floor (min-height) is low, so the text modes fit even the
+   smallest window layout.js allows (TILES.sstv bodyPx 250: a body of about 266 px or more). SSTV's pane is
+   as tall as its picture; when that is taller than the panel, the panel's body scrolls. ---- */
+.tile-digital>.tile-fit{display:flex;flex-direction:column;height:100%}
 .dm-modes{display:grid;grid-template-columns:repeat(4,1fr);flex:none;margin:0 0 8px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
 .dm-mode{appearance:none;position:relative;background:var(--key);border:0;border-left:1px solid var(--border);padding:6px 0 5px;
   font:700 11px/1 var(--font-ui);letter-spacing:.06em;color:var(--txt-dim);cursor:pointer}
@@ -644,7 +648,7 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .dm-mode:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .dm-mode.news::after{content:"";position:absolute;top:4px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--warn)}  /* news while hidden */
 #dmPaneCw:not([hidden]),#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
-/* CW: the CW panel (cwtool.js) fills its pane, its chat growing with the window */
+/* CW: the CW panel (cwtool.js) fills its pane, its chat taking the room left */
 #dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}
 #dmPaneCw .tp-body{padding:0}
 .dm-bar.cw-bar{margin-top:0}
@@ -657,7 +661,7 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .dm-check{display:inline-flex;align-items:center;gap:4px;margin-right:auto;font-size:11px;color:var(--txt-dim);white-space:nowrap}
 .dm-status{flex:none;margin:6px 0;font-size:11px;line-height:1.35;color:var(--txt-dim)}
 .dm-note{flex:none;margin:6px 0 0;font-size:10px;line-height:1.35;color:var(--txt-faint)}
-.dm-screen{flex:1 1 auto;min-height:120px;box-sizing:border-box;overflow:auto;padding:5px 7px;background:var(--tft-bg);
+.dm-screen{flex:1 1 auto;min-height:64px;box-sizing:border-box;overflow:auto;padding:5px 7px;background:var(--tft-bg);
   border:1px solid var(--tft-border);border-radius:var(--r-sm);color:var(--tft-digit);font:12px/1.45 var(--font-ui)}
 .rtty-text{white-space:pre-wrap;overflow-wrap:anywhere}
 .ft8-slot{margin:7px 0 2px;padding-top:3px;border-top:1px solid var(--tft-border);font-size:10px;color:var(--txt-faint)}

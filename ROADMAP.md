@@ -67,6 +67,17 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   sank at a narrow filter's edges and lit the passband's rim up in two humps (a 250 Hz filter lit up
   whole). With a CW filter it is now measured inside the passband only (a median, clear of its skirts):
   the noise inside looks as it does on a wide band, the outside stays dark, and signals stand out.
+- **The Modem window's text scrolls inside it.** CW's chat, RTTY's text and FT8's list grew the window
+  with every line, so the whole panel scrolled, the mode keys and controls with it. Now the window is as
+  tall as its panel: the text takes the room the controls leave and scrolls on its own, down to the
+  smallest panel the layout allows. At the bottom it follows what comes in; scrolled back, it stays
+  where you are reading, and it keeps that place (or keeps following) when you switch modes and come
+  back. SSTV's picture still scrolls with the panel when the panel is shorter than it.
+- **CW decodes without a click**, as RTTY, FT8 and SSTV always did: showing CW (its key, the page
+  opening on it, the Modem window added showing it) turns Decode on. Decode still turns it off, until
+  CW is next shown. The decoder starts listening once the page has its audio (RX, or the sidetone's ▶);
+  it never starts the audio itself, so a page that opens on CW doesn't leave the browser's audio paused
+  (which would have made the mic send silence).
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
@@ -143,8 +154,9 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   open, so switching loses nothing; a mode with news while hidden gets a dot, and while a picture or a
   CW message goes out the other modes wait (its STOP stays in view). RTTY and FT8 decode only, in the
   browser, from the radio's audio, under a small waterfall of it (0 to 3 kHz):
-  - **CW**: the CW panel, moved in whole: the neural decoder (Decode), the sidetone and CW TX. The
-    scope's CW button shows the window on CW and starts the decoder. A layout saved with the CW panel
+  - **CW**: the CW panel, moved in whole: the neural decoder (Decode; on by itself when CW is shown,
+    since the unreleased changes above), the sidetone and CW TX. The scope's CW button shows the window
+    on CW and starts the decoder. A layout saved with the CW panel
     showing gives its place to the window, or, with the window already showing, its columns back to
     the panel that lent them.
   - **RTTY**: Baudot with US-TTY figures, 45.45 / 50 / 75 baud and 170 / 425 / 850 Hz shifts; mark and
