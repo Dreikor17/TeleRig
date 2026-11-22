@@ -686,8 +686,9 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
    (ft8.js) on an instrument screen under the audio strip. The window is as tall as its panel, never its
    text: the text screen (CW's chat, RTTY's text, FT8's list) takes the room the controls leave and scrolls
    inside, so the keys and controls stay put. Its floor (min-height) is low, so the text modes fit even the
-   smallest window layout.js allows (TILES.sstv bodyPx 250: a body of about 266 px or more). SSTV's pane is
-   as tall as its picture; when that is taller than the panel, the panel's body scrolls. ---- */
+   smallest window layout.js allows (TILES.sstv bodyPx 250: a body of about 266 px or more). SSTV's pane
+   the same way (2026-11-22: its tabs and mode menu used to scroll away with a tall picture): the picture
+   takes the room left. ---- */
 .tile-digital>.tile-fit{display:flex;flex-direction:column;height:100%}
 .dm-modes{display:grid;grid-template-columns:repeat(4,1fr);flex:none;margin:0 0 8px;border:1px solid var(--border);border-radius:var(--r-ctl);overflow:hidden}
 .dm-mode{appearance:none;position:relative;background:var(--key);border:0;border-left:1px solid var(--border);padding:6px 0 5px;
@@ -699,6 +700,12 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .dm-mode:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .dm-mode.news::after{content:"";position:absolute;top:4px;right:6px;width:5px;height:5px;border-radius:50%;background:var(--warn)}  /* news while hidden */
 #dmPaneCw:not([hidden]),#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+/* SSTV: Receive / Send, the mode menu, the status and the pictures received stay put (on Send: the keys and
+   the text over the picture, the level, Send and the note under it); the picture takes the room left, all of
+   it in view: scaled to fit, with black bars beside or under it */
+#dmPaneSstv:not([hidden]),#sstvRx:not([hidden]),#sstvTx:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
+#dmPaneSstv>.sstv-tabs,#sstvRx>*,#sstvTx>*{flex:none}
+#sstvRx>.sstv-canvas,#sstvTx>.sstv-canvas{flex:1 1 0;min-height:72px;height:0;object-fit:contain}
 /* CW: the CW panel (cwtool.js) fills its pane, its chat taking the room left */
 #dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}
 #dmPaneCw .tp-body{padding:0}

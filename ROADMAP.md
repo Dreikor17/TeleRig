@@ -236,6 +236,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   ("DT +2.4 s: this computer's clock or the audio's delay"), says when the audio arrives with gaps (FT8
   needs it unbroken), and no longer sends the operator to the Tune-to menu, gone since 2026-11-21: the
   Calling list in the Spots panel has each band's FT8 dial.
+- **SSTV's keys stay put in the Modem window.** Receive / Send, the mode menu, Clear, the status and the
+  pictures received no longer scroll away with a tall picture: the picture takes the room left and is
+  scaled to fit it whole, with black bars, as CW, RTTY and FT8 already keep their keys (on Send: the
+  picture between its keys and the level, Send and the note). A Modem window shorter than about 8 rows
+  still scrolls: its keys alone are taller than that.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

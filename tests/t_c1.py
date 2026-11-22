@@ -752,7 +752,11 @@ def digital_modes_window_in_node_vm(ctx):
     css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
     for rule in (".tile-digital>.tile-fit{display:flex;flex-direction:column;height:100%}",
                  "#dmPaneCw:not([hidden]),#dmPaneRtty:not([hidden]),#dmPaneFt8:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}",
-                 "#dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}"):
+                 "#dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}",
+                 # SSTV too: its tabs, menu, status and pictures stay put; the picture fits the room left
+                 "#dmPaneSstv:not([hidden]),#sstvRx:not([hidden]),#sstvTx:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}",
+                 "#dmPaneSstv>.sstv-tabs,#sstvRx>*,#sstvTx>*{flex:none}",
+                 "#sstvRx>.sstv-canvas,#sstvTx>.sstv-canvas{flex:1 1 0;min-height:72px;height:0;object-fit:contain}"):
         check(rule in css, f"style.css: {rule}")
     check(not re.search(r"\.tile-digital>\.tile-fit\{[^}]*min-height:100%", css), "the Modem window doesn't grow with its content")
     for rule in (".dm-rx{display:flex;align-items:center;gap:8px;flex:none;",
