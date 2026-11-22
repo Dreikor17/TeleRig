@@ -1803,6 +1803,7 @@ routes = [
     Route("/api/me/memories", account_api.api_me_memories_get, methods=["GET"]),
     Route("/api/me/memories", account_api.api_me_memories_post, methods=["POST"]),
     Route("/api/me/memories", account_api.api_me_memories_delete, methods=["DELETE"]),
+    Route("/api/me/memories/presets", account_api.api_me_memories_presets, methods=["POST"]),
     *admin_api.routes(),
     Route("/api/status", api_status),
     Route("/api/radios", api_radios),

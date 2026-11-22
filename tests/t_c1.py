@@ -468,7 +468,7 @@ def spots_panel_in_node_vm(ctx):
     # the server is asked through TR.api only, for the spots and for the account's memories
     check("fetch(" not in js and "XMLHttpRequest" not in js and "WebSocket" not in js, "spots.js asks the server through TR.api only")
     eq(sorted(set(re.findall(r'"(/api/[a-z_/]+)', js))), ["/api/me/memories", "/api/spots"], "spots.js asks for the spots and the memories, nothing else")
-    eq(len(re.findall(r"TR\.api\(", js)), 4, "spots.js: four requests (the spots; the memories read, one saved, one deleted)")
+    eq(len(re.findall(r"TR\.api\(", js)), 5, "spots.js: five requests (the spots; the memories read, one saved, one deleted, a radio's presets)")
     eq(re.findall(r'method: "([A-Z]+)"', js), ["DELETE"], "spots.js: a memory is deleted with DELETE (saved with TR.api's POST)")
     # callfreqs.js is a list and nothing else
     cf = _strip_comments(_read("callfreqs.js"))

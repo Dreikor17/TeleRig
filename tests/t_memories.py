@@ -21,7 +21,7 @@ FT8 = {"hz": 7074000, "mode": "DATA-USB", "name": "FT8 40 m"}
 # repeater memories: the IC-9700's + shift, 600 kHz offset, TSQL 100.0 Hz; the FT-991A's - shift and DCS 023
 RPT_ICOM = {"hz": 147240000, "mode": "FM", "name": "Club", "shift": "+", "offset": 600000, "tone": "tsql", "ctcss": 1000}
 RPT_YAESU = {"hz": 146940000, "mode": "FM", "name": "Hilltop", "shift": "-", "tone": "dcs", "dcs": 23}
-EMPTY = {"rev": 0, "radios": {}, "max": 100, "memories_error": False}
+EMPTY = {"rev": 0, "radios": {}, "seeded": [], "max": 100, "memories_error": False}
 
 
 def _err(r):
@@ -56,6 +56,38 @@ def three(client):
                                           client.delete(API + "?radio=ft991a&id=1"))]
 
 
+# -- the presets: popular SSB frequencies, once per radio ---------------------------------------------------
+@test("layout")
+def memories_presets_once_per_radio(ctx):
+    srv, cl = users(ctx, ("OP1", "operator"), ("VIEW", "viewer"))
+    op1, view = cl["OP1"], cl["VIEW"]
+    r = op1.post(API + "/presets", {"radio": "ft991a"})
+    j = r.json()
+    eq((r.status, j.get("ok"), j.get("rev"), j.get("added"), len(j.get("items") or []), r.headers.get("cache-control")),
+       (200, True, 1, 10, 10, "no-store"), f"the first POST: the ten presets {r!r}")
+    seven = [i for i in j["items"] if i["hz"] == 7200000]
+    eq(seven, [{"id": seven[0]["id"] if seven else 0, "hz": 7200000, "mode": "LSB", "name": "40 m SSB 7.200", "narrow": False, "width": 14}],
+       "40 m SSB 7.200: LSB, NAR off, WIDTH 2.4 kHz")
+    g = op1.get(API).json()
+    eq((g["seeded"], len(g["radios"]["ft991a"])), (["ft991a"], 10), "GET: the radio noted as seeded, its list")
+    w = written(mfile(srv, "OP1"))
+    r = op1.post(API + "/presets", {"radio": "ft991a"})
+    eq((r.status, r.json().get("added"), r.json().get("rev"), written(mfile(srv, "OP1")) == w), (200, 0, 1, True),
+       "the second POST: nothing added, nothing written")
+    gone = j["items"][0]["id"]
+    op1.delete(API + f"?radio=ft991a&id={gone}")
+    r = op1.post(API + "/presets", {"radio": "ft991a"})
+    eq(([i["id"] for i in r.json()["items"]].count(gone), r.json().get("added")), (0, 0), "a preset deleted never comes back")
+    r = op1.post(API + "/presets", {"radio": "ic9700"})
+    eq((r.status, r.json().get("added"), r.json().get("items"), op1.get(API).json()["seeded"]), (200, 0, [], ["ft991a", "ic9700"]),
+       "the IC-9700 (no HF presets): nothing added, but noted")
+    for body, field in (({"radio": "nope"}, "radio"), ({}, "radio"), ({"radio": "ft891", "x": 1}, "x")):
+        r = op1.post(API + "/presets", body)
+        eq((r.status, _err(r), r.json().get("field")), (400, "invalid", field), f"refused: {body}")
+    r = view.post(API + "/presets", {"radio": "ft991a"})
+    eq(r.status, 403, "a viewer has no memories, so no presets")
+
+
 # -- add, list, delete; one file per user ------------------------------------------------------------------
 @test("layout")
 def memories_add_list_delete_and_two_users(ctx):
@@ -73,7 +105,7 @@ def memories_add_list_delete_and_two_users(ctx):
     r = op1.post(API, {"radio": "ic9700", "item": ICOM})
     eq(r.json(), {"ok": True, "rev": 3, "id": 3, "items": [{"id": 3, **ICOM}]}, "another radio: a list of its own, the same id counter")
     lists = {"ft991a": [{"id": 1, **YAESU}, {"id": 2, **FT8}], "ic9700": [{"id": 3, **ICOM}]}
-    mine = {"rev": 3, "radios": lists, "max": 100, "memories_error": False}
+    mine = {"rev": 3, "radios": lists, "seeded": [], "max": 100, "memories_error": False}
     eq(op1.get(API).json(), mine, "GET: every radio's list, items as stored with their ids")
     eq(json.loads(mfile(srv, "OP1").read_text()), {"v": 1, "rev": 3, "next": 4, "radios": lists}, "the stored file")
 
@@ -103,7 +135,7 @@ def memories_add_list_delete_and_two_users(ctx):
     eq(written(mfile(srv, "OP1")), w1, "a DELETE of an id that is not there writes nothing")
     r = op1.request("DELETE", API + "?radio=ic9700&id=3")       # with a {} JSON body, as the page sends it
     eq((r.status, r.json()), (200, {"ok": True, "rev": 5, "items": []}), "the last memory of a radio")
-    eq(op1.get(API).json(), {"rev": 5, "radios": {"ft991a": [{"id": 2, **FT8}]}, "max": 100, "memories_error": False},
+    eq(op1.get(API).json(), {"rev": 5, "radios": {"ft991a": [{"id": 2, **FT8}]}, "seeded": [], "max": 100, "memories_error": False},
        "a radio with no memory left is not listed")
     r = op1.post(API, {"radio": "ic9700", "item": ICOM})
     eq((r.json().get("rev"), r.json().get("id")), (6, 4), "an id is never used twice")
@@ -242,7 +274,7 @@ def memories_keep_the_repeater_settings(ctx):
         check(isinstance(j.get("message"), str) and j["message"].endswith("."), f"a sentence for the user: {j}")
     eq(written(mfile(srv, "OP1")), w, "the refused ones wrote nothing")
     eq(op.get(API).json(), {"rev": 2, "radios": {"ic9700": [{"id": 1, **RPT_ICOM}], "ft991a": [{"id": 2, **RPT_YAESU}]},
-                            "max": 100, "memories_error": False}, "GET: both, as they were saved")
+                            "seeded": [], "max": 100, "memories_error": False}, "GET: both, as they were saved")
     kept = json.loads(mfile(srv, "OP1").read_text(encoding="utf-8"))["radios"]
     eq((list(kept["ic9700"][0]), list(kept["ft991a"][0])),
        (["id", "hz", "mode", "name", "shift", "offset", "tone", "ctcss"], ["id", "hz", "mode", "name", "shift", "tone", "dcs"]),
@@ -314,7 +346,7 @@ def memories_file_goes_with_the_user(ctx):
     f9.write_text(json.dumps(hand), encoding="utf-8")
     w9 = written(f9)
     time.sleep(harness.STORE_PICKUP)                            # the server looks at a file it has read every 0.5 s
-    eq(op9.get(API).json(), {"rev": 7, "radios": {"ft991a": [{"id": 3, **FT8}, {"id": 5, **ITEM}]}, "max": 100, "memories_error": False},
+    eq(op9.get(API).json(), {"rev": 7, "radios": {"ft991a": [{"id": 3, **FT8}, {"id": 5, **ITEM}]}, "seeded": [], "max": 100, "memories_error": False},
        "GET leaves out the unknown radio and the items that do not validate; id order")
     eq(written(f9), w9, "the read did not touch the file")
     r = op9.post(API, {"radio": "ft991a", "item": YAESU})
@@ -326,14 +358,14 @@ def memories_file_goes_with_the_user(ctx):
     # an unreadable file is reported, never in the way, and replaced by the next save
     f2 = mfile(srv, "OP2")
     f2.write_text("{not json", encoding="utf-8")                # OP2 never asked before: nothing cached
-    eq(op2.get(API).json(), {"rev": 0, "radios": {}, "max": 100, "memories_error": True}, "an unreadable file is reported")
+    eq(op2.get(API).json(), {"rev": 0, "radios": {}, "seeded": [], "max": 100, "memories_error": True}, "an unreadable file is reported")
     eq(op2.delete(API + "?radio=ft991a&id=1").json(), {"ok": True, "rev": 0, "items": []}, "a DELETE answers and leaves it alone")
     eq(f2.read_text(encoding="utf-8"), "{not json", "the unreadable file is still there")
     r = op2.post(API, {"radio": "ft991a", "item": ITEM})
     eq((r.status, r.json()), (200, {"ok": True, "rev": 1, "id": 1, "items": [{"id": 1, **ITEM}]}), "the next save starts a fresh file")
     aside = [x for x in f2.parent.iterdir() if x.name.startswith(f2.name + ".corrupt-")]
     eq([x.read_text(encoding="utf-8") for x in aside], ["{not json"], "the unreadable file was moved aside, not lost")
-    eq(op2.get(API).json(), {"rev": 1, "radios": {"ft991a": [{"id": 1, **ITEM}]}, "max": 100, "memories_error": False},
+    eq(op2.get(API).json(), {"rev": 1, "radios": {"ft991a": [{"id": 1, **ITEM}]}, "seeded": [], "max": 100, "memories_error": False},
        "readable again")
     check(srv.alive(), "server died")
 

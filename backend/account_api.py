@@ -428,12 +428,33 @@ MEMORY_POST_KEYS = frozenset({"radio", "item"})
 
 @requires("operator")
 async def api_me_memories_get(request):
-    """{rev, radios, max, memories_error}: the caller's own memories (backend/memory_store.py), a list
-    per radio in id order. Operators and admins: a viewer cannot tune, so has no memories."""
+    """{rev, radios, seeded, max, memories_error}: the caller's own memories (backend/memory_store.py), a
+    list per radio in id order; seeded names the radios that have had their presets. Operators and
+    admins: a viewer cannot tune, so has no memories."""
     p = request.state.principal
     data, bad = await run_in_threadpool(memory_store.get, p.user)
-    return JSONResponse({"rev": data["rev"], "radios": data["radios"], "max": memory_store.MAX_PER_RADIO,
-                         "memories_error": bad}, headers=NO_STORE)
+    return JSONResponse({"rev": data["rev"], "radios": data["radios"], "seeded": data["seeded"],
+                         "max": memory_store.MAX_PER_RADIO, "memories_error": bad}, headers=NO_STORE)
+
+
+@requires("operator")
+async def api_me_memories_presets(request):
+    """POST {radio} -> {ok, rev, items, added}: that radio's presets (popular SSB frequencies,
+    memory_store.PRESETS) added to the caller's memories, once per radio: a radio that had them already
+    gets nothing more, so a preset deleted never comes back. `items` is the radio's whole list. An
+    unknown radio or any other field -> 400 {error:"invalid", field}."""
+    p = request.state.principal
+    body = await read_json(request, max_bytes=memory_store.BODY_MAX)
+    if not isinstance(body, dict):
+        return body
+    for k in body:
+        if k != "radio":
+            key = memory_store.key_name(k)
+            return err(400, "invalid", f"Unknown field {key!r}.", field=key)
+    res, fail = await _memory_write(memory_store.seed, p.user, body.get("radio"))
+    if fail is not None:
+        return fail
+    return JSONResponse({"ok": True, **res}, headers=NO_STORE)
 
 
 @requires("operator")

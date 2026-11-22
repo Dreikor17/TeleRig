@@ -23,7 +23,10 @@
  *            spot's does; a row with a Modem mode (CW, FT8, SSTV) shows that mode in the Modem window too.
  *            Nothing is asked of the server while it shows.
  *   MEMORY   the operator's own frequencies for this radio, lowest first, kept by the server for the
- *            account (GET / POST / DELETE /api/me/memories), so every device has them. SAVE takes the
+ *            account (GET / POST / DELETE /api/me/memories), so every device has them. A radio the account
+ *            has not had the presets for (GET's seeded: popular SSB frequencies, backend
+ *            memory_store.PRESETS, at 2.4 kHz) gets them once (POST /api/me/memories/presets): they are
+ *            memories like any other, and one deleted never comes back. SAVE takes the
  *            radio as it is (frequency, the mode by its own name, the filter as the radio says it: an
  *            Icom's FIL slot and DATA switch, a Yaesu's NAR and WIDTH) and asks for a name: the
  *            frequency is filled in and selected, so typing replaces it; SAVE again (or Enter) keeps
@@ -372,7 +375,8 @@
   // radios: {radio id: [{id, hz, mode, name, data?, filter?, narrow?, width?, shift?, offset?, tone?, ctcss?,
   // dcs?}]}; seq counts every change
   // of it here; draft: the radio as it was when SAVE was pressed, waiting for its name
-  const mem = { radios: {}, max: 100, seq: 0, at: 0, loaded: false, error: false, loading: false, busy: false, draft: null };
+  const mem = { radios: {}, max: 100, seq: 0, at: 0, loaded: false, error: false, loading: false, busy: false, draft: null,
+                seeded: new Set(), seeding: new Set() };      // the radios that have had their presets; asked for on this page
   function adopt(radio, j) {                                // a write's answer carries that radio's whole list
     if (!j || !Array.isArray(j.items)) return;
     mem.radios[radio] = j.items;
@@ -385,6 +389,7 @@
     try {
       const j = await TR.api(MEM_API, { noRedirect: true });
       mem.radios = (j && j.radios && typeof j.radios === "object") ? j.radios : {};
+      mem.seeded = new Set(j && Array.isArray(j.seeded) ? j.seeded : []);
       if (j && j.max > 0) mem.max = j.max;
       mem.error = !!(j && j.memories_error);
       mem.loaded = true;
@@ -397,6 +402,16 @@
       mem.seq++;
       if (filt.view === "mem") render();
     }
+  }
+  // a radio's presets, asked for once on this page (a refusal waits for the next page load): the server
+  // adds them and notes the radio, so the next GET lists it as seeded
+  async function seedPresets(radio) {
+    mem.seeding.add(radio);
+    try {
+      adopt(radio, await TR.api(MEM_API + "/presets", { json: { radio }, noRedirect: true }));
+      mem.seeded.add(radio);
+    } catch (_) {}                                          // nothing added: the list stays as it is
+    if (filt.view === "mem") render();
   }
   function memList(p) {                                     // this radio's, lowest first
     const l = p && Array.isArray(mem.radios[p.id]) ? mem.radios[p.id] : [];
@@ -596,6 +611,7 @@
   let memSig = null, memRows = [];                          // rows as markRows wants them, plus {id, del}
   function renderMem() {
     const p = profile(), op = canTune(), here = bandHere(p, radioState());
+    if (op && p && mem.loaded && !mem.error && !mem.seeded.has(p.id) && !mem.seeding.has(p.id)) seedPresets(p.id);
     const sig = [p ? p.id : "", op ? 1 : 0, filt.mode, bandSig(here), mem.seq].join("|");
     if (sig !== memSig) {
       memSig = sig;

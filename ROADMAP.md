@@ -241,6 +241,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   scaled to fit it whole, with black bars, as CW, RTTY and FT8 already keep their keys (on Send: the
   picture between its keys and the level, Send and the note). A Modem window shorter than about 8 rows
   still scrolls: its keys alone are taller than that.
+- **Preloaded memories: popular SSB frequencies.** Each account's Memory list gets ten presets for each
+  HF radio, once: 40 m SSB 7.200 (the operator's pick), 10 m SSB calling 28.400, the Hurricane Watch Net
+  (14.325 by day, 7.268 by night, which is also the Waterway Net's), the county hunters' 3.901, 7.188 and
+  14.336, and IOTA's 14.260, 21.260 and 28.460, each in its sideband at 2.4 kHz (an Icom's FIL2, a Yaesu's
+  WIDTH 2.4 kHz). They are memories like any other: one deleted never comes back, and one already on a
+  memory's frequency and mode is left out (server: memory_store.PRESETS, POST /api/me/memories/presets;
+  the page asks once for a radio not seeded yet). The VHF/UHF radios get none: their calling frequencies
+  are in the Calling list.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

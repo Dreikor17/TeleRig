@@ -86,8 +86,8 @@ ICOM = {"hz": 145500000, "mode": "FM", "name": "Calling", "data": False, "filter
 # repeater memories: the IC-9700's + shift, 600 kHz offset, TSQL 100.0 Hz; the FT-991A's - shift and DCS 023
 RPT_ICOM = {"hz": 147240000, "mode": "FM", "name": "Club", "shift": "+", "offset": 600000, "tone": "tsql", "ctcss": 1000}
 RPT_YAESU = {"hz": 146940000, "mode": "FM", "name": "Hilltop", "shift": "-", "tone": "dcs", "dcs": 23}
-NONE = ({"rev": 0, "radios": {}}, False)
-UNREADABLE = ({"rev": 0, "radios": {}}, True)
+NONE = ({"rev": 0, "radios": {}, "seeded": []}, False)
+UNREADABLE = ({"rev": 0, "radios": {}, "seeded": []}, True)
 
 C("the limits: 100 a radio, a name of 32, a body of 2048 bytes", (M.MAX_PER_RADIO, M.NAME_MAX, M.BODY_MAX), (100, 32, 2048))
 
@@ -371,7 +371,7 @@ C("second add: rev 2, id 2, the whole list in id order, the name stripped",
 a3 = M.add("OP1", "ic9700", ICOM)
 C("another radio: a list of its own, the file's one id counter", a3, {"rev": 3, "id": 3, "items": [{"id": 3, **ICOM}]})
 C("get: every radio's list, items as stored with their ids",
-  M.get("OP1"), ({"rev": 3, "radios": {"ft991a": [{"id": 1, **YAESU}, {"id": 2, **FT8}], "ic9700": [{"id": 3, **ICOM}]}}, False))
+  M.get("OP1"), ({"rev": 3, "radios": {"ft991a": [{"id": 1, **YAESU}, {"id": 2, **FT8}], "ic9700": [{"id": 3, **ICOM}]}, "seeded": []}, False))
 p1 = M.path_for("OP1")
 C("the file: v, rev, next and a list per radio",
   stored("OP1"), {"v": 1, "rev": 3, "next": 4, "radios": {"ft991a": [{"id": 1, **YAESU}, {"id": 2, **FT8}],
@@ -401,7 +401,7 @@ C("... the id counter stays", (stored("OP1")["next"], M.add("OP1", "ic9700", ICO
 C("add: an IC-9700 repeater memory, as given", M.add("RPT", "ic9700", RPT_ICOM), {"rev": 1, "id": 1, "items": [{"id": 1, **RPT_ICOM}]})
 C("add: an FT-991A one, as given", M.add("RPT", "ft991a", RPT_YAESU), {"rev": 2, "id": 2, "items": [{"id": 2, **RPT_YAESU}]})
 C("get: both back, as they were saved",
-  M.get("RPT"), ({"rev": 2, "radios": {"ic9700": [{"id": 1, **RPT_ICOM}], "ft991a": [{"id": 2, **RPT_YAESU}]}}, False))
+  M.get("RPT"), ({"rev": 2, "radios": {"ic9700": [{"id": 1, **RPT_ICOM}], "ft991a": [{"id": 2, **RPT_YAESU}]}, "seeded": []}, False))
 d = stored("RPT")["radios"]
 C("the file keeps them in the stored order", (list(d["ic9700"][0]), list(d["ft991a"][0])),
   (["id", "hz", "mode", "name", "shift", "offset", "tone", "ctcss"], ["id", "hz", "mode", "name", "shift", "tone", "dcs"]))
@@ -464,7 +464,7 @@ M._reset_for_tests()
 w3 = written(p3)
 C("hand-edited file: a radio that is not in PROFILES and items that do not validate are left out",
   M.get("OP3"), ({"rev": 2, "radios": {"ft991a": [{"id": 1, **ITEM}, {"id": 9, "hz": 145000000, "mode": "FM", "name": "fine",
-                                                                 "narrow": True}]}}, False))
+                                                                 "narrow": True}]}, "seeded": []}, False))
 C("... and the read left the file as it was", written(p3) == w3, True)
 a = M.add("OP3", "ft991a", FT8)
 C("a file without `next`: the new id is past every id in the file",
@@ -492,7 +492,7 @@ C("a delete on it answers rev 0 and leaves it alone", (M.delete("OP1", "ft991a",
 a = M.add("OP1", "ft991a", ITEM)
 new = sorted(moved_aside(p1) - old)
 C("the next add moves the unreadable file aside and starts a fresh one",
-  (a, len(new), M.get("OP1")), ({"rev": 1, "id": 1, "items": [{"id": 1, **ITEM}]}, 1, ({"rev": 1, "radios": {"ft991a": [{"id": 1, **ITEM}]}}, False)))
+  (a, len(new), M.get("OP1")), ({"rev": 1, "id": 1, "items": [{"id": 1, **ITEM}]}, 1, ({"rev": 1, "radios": {"ft991a": [{"id": 1, **ITEM}]}, "seeded": []}, False)))
 C("... the moved file holds what was there", (p1.parent / new[0]).read_text() if new else None, "{not json")
 tops = [{"v": 2}, {"v": 1, "rev": -5}, {"rev": True}, {"rev": "3"}, {"next": 0}, {"next": "3"}, {"next": True}, {"radios": []},
         {"radios": None}, ["a", "list"]]
@@ -506,6 +506,48 @@ p1.write_text("{}")
 M._reset_for_tests()
 C("an empty object is a file with no memories", (M.get("OP1"), M.add("OP1", "ft991a", ITEM)["id"], stored("OP1")),
   (NONE, 1, {"v": 1, "rev": 1, "next": 2, "radios": {"ft991a": [{"id": 1, **ITEM}]}}))
+
+# ---- presets: popular SSB frequencies, once per radio ----------------------------------------------
+M._reset_for_tests()
+M.delete_file("SEED")
+pre = {r: M.preset_items(r) for r in ("ft991a", "ft891", "ic7300mk2", "ic9700", "ic728")}
+C("preset_items: the ten presets on each HF radio, none on the IC-9700 (VHF / UHF)",
+  {r: len(v) for r, v in pre.items()}, {"ft991a": 10, "ft891": 10, "ic7300mk2": 10, "ic9700": 0, "ic728": 10})
+C("... the one the operator named first: 7.200 LSB, 40 m SSB 7.200",
+  [i for i in pre["ft991a"] if i["hz"] == 7_200_000], [{"hz": 7_200_000, "mode": "LSB", "name": "40 m SSB 7.200", "narrow": False, "width": 14}])
+C("... SSB at 2.4 kHz as each radio sets it: a Yaesu NAR off and WIDTH 14, an Icom FIL2 with DATA off, the IC-728 nothing",
+  [{k: v for k, v in pre[r][0].items() if k not in ("hz", "mode", "name")} for r in ("ft891", "ic7300mk2", "ic728")],
+  [{"narrow": False, "width": 14}, {"data": False, "filter": 2}, {}])
+C("... the sideband by band: LSB below 10 MHz, USB above",
+  sorted({(i["hz"] < 10_000_000, i["mode"]) for i in pre["ic7300mk2"]}), [(False, "USB"), (True, "LSB")])
+C("... every preset is a valid item, its name within NAME_MAX, lowest first",
+  [all(M.validate_item("ft991a", i) == i for i in pre["ft991a"]), max(len(i["name"]) for i in pre["ft991a"]) <= M.NAME_MAX,
+   [i["hz"] for i in pre["ft991a"]] == sorted(i["hz"] for i in pre["ft991a"])], [True, True, True])
+s1 = M.seed("SEED", "ft991a")
+C("seed: all of them, rev 1, ids from 1, the radio noted",
+  (s1["added"], s1["rev"], [i["id"] for i in s1["items"]], [i["name"] for i in s1["items"]] == [i["name"] for i in pre["ft991a"]],
+   stored("SEED")["seeded"], M.get("SEED")[0]["seeded"]), (10, 1, list(range(1, 11)), True, ["ft991a"], ["ft991a"]))
+ws = written(M.path_for("SEED"))
+C("seed again: nothing added, the same answer, nothing written",
+  (M.seed("SEED", "ft991a"), written(M.path_for("SEED")) == ws), ({"rev": 1, "items": s1["items"], "added": 0}, True))
+M.delete("SEED", "ft991a", 3)
+C("a preset deleted never comes back", ([i["hz"] for i in M.seed("SEED", "ft991a")["items"]].count(7_200_000), M.seed("SEED", "ft991a")["added"]), (0, 0))
+own = M.add("SEED", "ft891", {"hz": 14_336_000, "mode": "USB", "name": "My county hunters"})
+s2 = M.seed("SEED", "ft891")
+C("a radio with a memory on a preset's frequency and mode: that preset left out, the others added after it",
+  (s2["added"], [i["name"] for i in s2["items"]].count("County hunters 20 m"), s2["items"][0]["name"], stored("SEED")["seeded"]),
+  (9, 0, "My county hunters", ["ft991a", "ft891"]))
+s3 = M.seed("SEED", "ic9700")
+C("a radio with no presets (the IC-9700): nothing added, but noted (the page asks once)",
+  (s3["added"], s3["items"], "ic9700" in stored("SEED")["seeded"], "ic9700" in stored("SEED")["radios"]), (0, [], True, False))
+C("seed of an unknown radio names the radio", [field_of(M.seed, "SEED", r) for r in ("nope", None, "")], ["radio"] * 3)
+for k in range(95):
+    M.add("NEAR", "ic7300mk2", {"hz": 14_000_000 + 100 * k, "mode": "USB", "name": f"m{k}"})
+s4 = M.seed("NEAR", "ic7300mk2")
+C("near the limit: only as many as fit (95 + 5 = MAX_PER_RADIO)", (s4["added"], len(s4["items"])), (5, M.MAX_PER_RADIO))
+C("a file with a bad seeded list is read as none seeded", (M._seeded({"seeded": "ft991a"}), M._seeded({"seeded": ["ft991a", 3]})), ([], ["ft991a"]))
+for u in ("SEED", "NEAR"):
+    M.delete_file(u)
 
 # ---- delete (user deleted) -----------------------------------------------------------------------
 C("delete_file removes the file", (M.delete_file("W1AW/P"), M.path_for("W1AW/P").exists()), (True, False))

@@ -403,7 +403,7 @@ C("restricted_ok routes", sorted(p for p, pol in pols.items() if pol.restricted_
 C("operator routes (incl. HTTP STOP, AR-15, and the operator's own memories)",
   sorted(p for p, pol in pols.items() if pol.min_role == "operator"),
   ["DELETE /api/me/memories", "GET /api/me/memories", "GET /api/ports", "POST /api/connect", "POST /api/disconnect",
-   "POST /api/me/memories", "POST /api/tx_stop"])
+   "POST /api/me/memories", "POST /api/me/memories/presets", "POST /api/tx_stop"])
 ADMIN_ROUTES = {   # §2.17: (sudo, local)
     "POST /api/admin/reauth": (False, False), "GET /api/admin/users": (False, False),
     "POST /api/admin/users": (True, False), "PATCH /api/admin/users/{uid}": (True, False),
@@ -431,6 +431,8 @@ C("/api/me/layout GET/PUT/DELETE: viewer, not while restricted (T34)",
 C("/api/me/memories GET/POST/DELETE: operator (a viewer cannot tune), not while restricted; no sudo, not local-only",
   [dataclasses.astuple(pols[f"{m} /api/me/memories"]) for m in ("GET", "POST", "DELETE")],
   [("operator", False, False, False, False)] * 3)
+C("POST /api/me/memories/presets (a radio's presets, once): the same as the memories",
+  dataclasses.astuple(pols["POST /api/me/memories/presets"]), ("operator", False, False, False, False))
 C("removed routes are gone (404): set_password, audio_devices, the old Tailscale routes",
   sorted(p for p in ("/api/set_password", "/api/audio_devices", "/api/remote_status", "/api/tailscale_serve",
                      "/api/tailscale_serve_off") if p in paths), [])

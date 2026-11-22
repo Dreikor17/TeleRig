@@ -38,6 +38,11 @@ validate_item() rejects every shape, type and range error and any other key (Mem
 always did, so the files written before they existed read the same. A radio holds at most
 MAX_PER_RADIO memories (MemoryFull -> 409 {error:"full"}).
 
+Presets: popular SSB frequencies (PRESETS) every list starts with, once per radio. seed() adds the
+ones the radio can take (preset_items) and notes the radio in the file's "seeded" list, so a preset
+the operator deleted never comes back; get() serves that list, and the page asks for the presets of a
+radio not in it (the Memory view, frontend/spots.js).
+
 Files are written atomically under the OS lock (store.JsonStore). A read never changes the file: a
 radio that is not in PROFILES any more and an item that no longer validates are left out of what is
 served, and stay in the file. A file that cannot be read is reported (`memories_error`) and moved
@@ -75,6 +80,28 @@ OFFSET_10MHZ = 10_000_000            # an offset this big or bigger ...
 OFFSET_10MHZ_FROM = 1_000_000_000    # ... only from this frequency up (the IC-9700's 1200 MHz band)
 CTCSS = frozenset(round(t * 10) for t in civ.CTCSS_TONES)        # the standard tones, in tenths of Hz
 DCS = frozenset(int(c) for c in civ.DCS_CODES)                   # the standard codes, digits read as decimal
+# The presets: (hz, sideband, name), lowest first. Sources (read 2026-11-22): 7.200, the operator's own
+# example of a popular 40 m SSB frequency; 28.400, the 10 m SSB calling frequency by custom (most of 10 m's
+# SSB is 28.300-28.500); hwn.org's net procedures (the Hurricane Watch Net, when activated: 14.325 USB by
+# day, 7.268 LSB by night; 7.268 is also the Waterway Net's morning net, which the HWN page names);
+# countyhunter.com (the county hunters' common SSB frequencies: 14.336, 7.188, 3.901); iota-world.org (the
+# IOTA meeting frequencies, SSB: 14.260 the main one, 21.260, 28.460). The calling frequencies (QRP, SSTV,
+# AM, FT8, W1AW, the emergency centers) are in the Spots panel's Calling list (frontend/callfreqs.js).
+PRESETS = (
+    (3_901_000, "LSB", "County hunters 80 m"),
+    (7_188_000, "LSB", "County hunters 40 m"),
+    (7_200_000, "LSB", "40 m SSB 7.200"),
+    (7_268_000, "LSB", "Hurricane Watch / Waterway"),
+    (14_260_000, "USB", "IOTA 20 m"),
+    (14_325_000, "USB", "Hurricane Watch Net"),
+    (14_336_000, "USB", "County hunters 20 m"),
+    (21_260_000, "USB", "IOTA 15 m"),
+    (28_400_000, "USB", "10 m SSB calling"),
+    (28_460_000, "USB", "IOTA 10 m"),
+)
+# SSB's 2.4 kHz the way each radio sets it: an Icom's FIL2 (2.4 kHz in the IC-7300MK2 and IC-9700 manuals),
+# DATA off; a Yaesu's NAR off and WIDTH code 14 (2400 Hz in frontend/waterfall.js Passband, SH.ssb)
+PRESET_FIL, PRESET_WIDTH = 2, 14
 
 
 class MemoryInvalid(ValueError):
@@ -228,6 +255,35 @@ def _repeater(prof: Any, item: dict, out: dict) -> None:
         raise MemoryInvalid("item.dcs", "A DCS code goes with dcs or dcs-enc only.")
 
 
+def preset_items(radio: str) -> list:
+    """The presets this radio can take, as items: on its amateur bands (a preset is somewhere to talk,
+    not only to listen) and in a sideband it has, at SSB's 2.4 kHz the way it sets that (PRESET_FIL,
+    PRESET_WIDTH; nothing on a radio without filter commands: the IC-728)."""
+    prof = PROFILES.get(radio)
+    if prof is None:
+        return []
+    caps, out = prof.capabilities, []
+    for hz, sb, name in PRESETS:
+        if sb not in prof.modes or not any(b.lo <= hz <= b.hi for b in prof.bands):
+            continue
+        it: dict = {"hz": hz, "mode": sb, "name": name}
+        if prof.protocol == "yaesu":
+            if caps.narrow:
+                it["narrow"] = False
+            if caps.ext_ops:
+                it["width"] = PRESET_WIDTH
+        elif caps.tab_rx:                            # an Icom's FIL slots (on its RX tab)
+            if caps.data_mode:
+                it["data"] = False
+            it["filter"] = PRESET_FIL
+        out.append(validate_item(radio, it))
+    return out
+
+
+def _seeded(d: dict) -> list:
+    return [r for r in d["seeded"] if isinstance(r, str)] if isinstance(d.get("seeded"), list) else []
+
+
 def _stored(radio: str, it: Any) -> Optional[dict]:
     """A stored item as it is served ({"id", ...the item}), or None when it does not validate."""
     if not isinstance(it, dict) or not _is_int(it.get("id")) or it["id"] < 1:
@@ -319,23 +375,64 @@ def _rev(d: dict) -> int:
 
 
 def get(user: str) -> tuple:
-    """({"rev", "radios"}, memories_error): what the user's file holds, as it is served. Only radios
-    that are in PROFILES and have an item to show are listed, each in id order. No file: rev 0 and
-    no radios. memories_error = the file exists but cannot be read (rev 0, no radios)."""
+    """({"rev", "radios", "seeded"}, memories_error): what the user's file holds, as it is served. Only
+    radios that are in PROFILES and have an item to show are listed, each in id order; "seeded" names
+    the radios that have had their presets (seed()). No file: rev 0, no radios, none seeded.
+    memories_error = the file exists but cannot be read (rev 0, no radios, none seeded)."""
     try:
         st = _store(user)
         if st.status() == "missing":
-            return {"rev": 0, "radios": {}}, False
+            return {"rev": 0, "radios": {}, "seeded": []}, False
         d = st.load()
     except (StoreCorrupt, OSError, ValueError) as e:
         console(f"TeleRig: the memories of {user} cannot be read: {e}")
-        return {"rev": 0, "radios": {}}, True
+        return {"rev": 0, "radios": {}, "seeded": []}, True
     radios = {}
     for rid, lst in _radios(d).items():
         items = _items(rid, lst) if rid in PROFILES else []
         if items:
             radios[rid] = items
-    return {"rev": _rev(d), "radios": radios}, False
+    return {"rev": _rev(d), "radios": radios, "seeded": [r for r in _seeded(d) if r in PROFILES]}, False
+
+
+def seed(user: str, radio: Any) -> dict:
+    """Give `radio` its presets, once: the ones it can take (preset_items) that its list doesn't hold
+    already (the same frequency in the same mode), as far as MAX_PER_RADIO allows; then the radio is
+    noted in the file's "seeded" list, so a preset deleted later never comes back. Returns {rev,
+    items, added}: the rev, that radio's list as served and how many presets went in (0, and the file
+    as it was, for a radio seeded before). MemoryInvalid for an unknown radio. An unreadable file is
+    moved aside and replaced, as add() does. StoreBusy/OSError propagate."""
+    if not isinstance(radio, str) or radio not in PROFILES:
+        raise MemoryInvalid("radio", "Unknown radio.")
+    presets = preset_items(radio)
+    got: dict = {"added": 0}
+
+    def fn(d: dict) -> None:
+        radios, seeded = _radios(d), _seeded(d)
+        lst = _list(radios, radio)
+        shown = _items(radio, lst)
+        if radio in seeded:
+            got.update(rev=_rev(d), items=shown)
+            raise _Unchanged()
+        have = {(it["hz"], it["mode"]) for it in shown}
+        nxt, room = _next_id(d, radios), MAX_PER_RADIO - len(shown)
+        for it in presets:
+            if room <= 0:
+                break
+            if (it["hz"], it["mode"]) in have:
+                continue
+            lst.append({"id": nxt, **it})
+            nxt += 1
+            room -= 1
+            got["added"] += 1
+        if lst:
+            radios[radio] = lst
+        d.update(v=FILE_VERSION, rev=_rev(d) + 1, next=nxt, radios=radios, seeded=seeded + [radio])
+    try:
+        new = _store(user).mutate(fn, create=True, move_corrupt=True)
+    except _Unchanged:
+        return {"rev": got["rev"], "items": got["items"], "added": 0}
+    return {"rev": new["rev"], "items": _items(radio, new["radios"].get(radio)), "added": got["added"]}
 
 
 def add(user: str, radio: Any, item: Any) -> dict:

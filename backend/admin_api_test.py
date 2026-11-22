@@ -516,7 +516,7 @@ C("user_deleted audited", [x.get("user") for x in audit_events("user_deleted")],
 memory_store.add("OP8", "ic9700", {"hz": 145500000, "mode": "FM", "name": "left behind"})   # no such user (yet)
 r = call("POST", "/api/admin/users", {"user": "OP8", "role": "operator", "password": "Op8#Test-2026", "must_change": False}, ADM)
 C("a callsign created again starts with no memories: a file left behind is removed",
-  (r.status, memory_store.path_for("OP8").exists(), memory_store.get("OP8")), (200, False, ({"rev": 0, "radios": {}}, False)))
+  (r.status, memory_store.path_for("OP8").exists(), memory_store.get("OP8")), (200, False, ({"rev": 0, "radios": {}, "seeded": []}, False)))
 
 # ---- sessions (no sockets in-process) + lockouts ----------------------------------------------------
 s = call("GET", "/api/admin/sessions", None, ADM).json()

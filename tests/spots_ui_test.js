@@ -59,6 +59,9 @@
  *       Yaesu in its data mode, an Icom in the voice mode on FIL1); memories the same
  *  (e.sent leaves out that repeated frequency, so the other checks read as the radio's settings; e.raw
  *  has every message.)
+ *  P31. the presets: a radio the account has not had them for gets them once (POST .../presets) when the
+ *       Memory view shows it; they tune like any memory (SSB at 2.4 kHz); not asked again, not for a radio
+ *       seeded before, not by a viewer; a refusal leaves the list as it is and isn't repeated on the page
  */
 "use strict";
 const fs = require("fs");
@@ -126,6 +129,13 @@ const MEMS = () => ({
   ],
 });
 const copy = (x) => JSON.parse(JSON.stringify(x));
+// what the server's presets look like (backend memory_store.preset_items): two of them, for the radios
+// the checks use
+const PRESETS = {
+  ft991a: [{ hz: 7200000, mode: "LSB", name: "40 m SSB 7.200", narrow: false, width: 14 },
+           { hz: 28400000, mode: "USB", name: "10 m SSB calling", narrow: false, width: 14 }],
+  ic7300mk2: [{ hz: 7200000, mode: "LSB", name: "40 m SSB 7.200", data: false, filter: 2 }],
+};
 // app.js's CTCSS and DCS tables, which the page hands spots.js as window.FmTones: read from the file itself
 const TONE_TABLES = (() => {
   const src = fs.readFileSync(require("path").join(__dirname, "..", "frontend", "app.js"), "utf8");
@@ -140,7 +150,11 @@ function page(opts) {
   // /api/me/memories as backend/account_api.py serves it: GET (every radio's list), POST {radio, item}
   // and DELETE ?radio=&id= (that radio's list back). mem.calls records each request; mem.fail = {status,
   // body} answers the next one that way; mem.hold = [] keeps answers back until each held function is called.
-  const mem = { calls: [], fail: opts.memFail || null, hold: null, db: { rev: 0, next: 100, radios: copy(opts.mem || {}) } };
+  // db.seeded: the radios that have had their presets (all of them unless opts.seeded says otherwise, so
+  // the other checks see only their own memories); the stand-in's presets: two a radio, as the server
+  // makes them (P31)
+  const mem = { calls: [], fail: opts.memFail || null, hold: null,
+                db: { rev: 0, next: 100, radios: copy(opts.mem || {}), seeded: copy(opts.seeded || STUBS.map((s) => s.id)) } };
   function memApi(url, init) {
     const method = (init && init.method) || "GET", call = { method, url: String(url) };
     if (method === "POST") call.body = JSON.parse(init.body);
@@ -148,7 +162,15 @@ function page(opts) {
     const reply = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
     if (mem.fail) { const f = mem.fail; mem.fail = null; return reply(f.status, f.body); }
     const db = mem.db;
-    if (method === "GET") return reply(200, { rev: db.rev, radios: copy(db.radios), max: opts.memMax || 100, memories_error: false });
+    if (method === "GET") return reply(200, { rev: db.rev, radios: copy(db.radios), seeded: copy(db.seeded), max: opts.memMax || 100, memories_error: false });
+    if (method === "POST" && /\/presets$/.test(String(url))) {
+      if (opts.presetsFail) return reply(500, { error: "store_error" });
+      const radio = call.body.radio, l = (db.radios[radio] = db.radios[radio] || []);
+      if (db.seeded.includes(radio)) return reply(200, { ok: true, rev: db.rev, items: copy(l), added: 0 });
+      const pre = (PRESETS[radio] || []).map((it) => Object.assign({ id: db.next++ }, it));
+      l.push(...pre); db.seeded.push(radio);
+      return reply(200, { ok: true, rev: ++db.rev, items: copy(l), added: pre.length });
+    }
     if (method === "POST") {
       const l = (db.radios[call.body.radio] = db.radios[call.body.radio] || []), id = db.next++;
       l.push(Object.assign({ id }, call.body.item));
@@ -1411,6 +1433,32 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     await settle(m);
     m.st = Object.assign({}, m.st, { mode_name: "CW-USB" }); m.raw.length = 0; m.click(m.memRow("40 m net"));
     eq(m.raw, [F(7200000), M("LSB"), F(7200000), NAR, W(0)], "P30 a memory from CW: the frequency again after the mode");
+  }
+  // P31: the presets
+  {
+    const presetPosts = (e) => e.mem.calls.filter((c) => c.method === "POST" && /\/presets$/.test(c.url));
+    const e = memory({ seeded: [] });                       // an account whose radios haven't had them
+    await settle(e);
+    eq([e.gets(), presetPosts(e).map((c) => [c.url, c.body])], [1, [["/api/me/memories/presets", { radio: "ft991a" }]]],
+       "P31 the Memory view, a radio without its presets: read, then asked for them once");
+    eq(e.names(), ["40 m net", "40 m SSB 7.200", "WWV", "FT8 20 m", "10 m SSB calling", "Simplex"],
+       "P31 ... and they are in the list, with the account's own, lowest first");
+    e.sent.length = 0; e.raw.length = 0;
+    e.click(e.memRow("40 m SSB 7.200"));
+    eq(e.raw, [F(7200000), M("LSB"), F(7200000), NAR, W(14)], "P31 a preset tunes like a memory: LSB at 2.4 kHz (the frequency again after the mode)");
+    e.clock.advance(65000); await settle(e);
+    eq(presetPosts(e).length, 1, "P31 not asked again (the server noted the radio)");
+    const done = memory();                                   // seeded before: nothing asked
+    await settle(done);
+    eq(presetPosts(done).length, 0, "P31 a radio seeded before: not asked");
+    const v = memory({ viewer: true, seeded: [] });
+    await settle(v);
+    eq([v.gets(), presetPosts(v).length], [0, 0], "P31 a viewer: no memories, no presets");
+    const g = memory({ seeded: [], presetsFail: true });     // the server refuses the presets (a 500)
+    await settle(g);
+    eq([presetPosts(g).length, g.names()], [1, ["40 m net", "WWV", "FT8 20 m", "Simplex"]], "P31 a refusal: the list as it was");
+    g.clock.advance(65000); await settle(g);
+    eq(presetPosts(g).length, 1, "P31 ... and not asked again on this page");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);
