@@ -249,6 +249,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   memory's frequency and mode is left out (server: memory_store.PRESETS, POST /api/me/memories/presets;
   the page asks once for a radio not seeded yet). The VHF/UHF radios get none: their calling frequencies
   are in the Calling list.
+- **SSTV's Auto joins a picture already under way.** Auto used to start only on a picture's VIS header,
+  so a picture tuned in late (or whose header was too weak to read) waited for the next one, though it
+  was plain to hear. Now the rhythm of its sync pulses names the mode: four in a row a line apart (to 1 %,
+  one missed allowed), as long as that mode's sync (Martin 4.9 ms, Scottie and Robot 9 ms, PD 20 ms), and
+  their tone gives the tuning offset (within 150 Hz). The picture starts there, said as "joined under
+  way". A start joined so must show a sync on 8 of its first 12 lines (4 after a header), so a pulse train,
+  CW keying, voice or noise never shows as a picture. Choosing a mode still starts at the next sync, as
+  before.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

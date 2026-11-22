@@ -37,7 +37,7 @@ function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
 const START = Date.UTC(2026, 10, 19, 18, 30, 0);
-const LISTENING = "Listening for an SSTV picture (its VIS header picks the mode).";
+const LISTENING = "Listening for an SSTV picture: its header picks the mode, or its line timing if it is already under way.";
 const R36_NAME = "Robot 36 · 14.230 MHz USB · 18:30Z";
 
 // A stand-in for the browser's IndexedDB, as much of it as sstv.js uses: one database with one object
@@ -208,6 +208,15 @@ function noise(sec, rms) {
     eq([e.items().length, e.urls.revoked.length], [12, 1], "Q6 the strip keeps 12 pictures, freeing the oldest");
     eq(e.urls.revoked, ["blob:sstv/1"], "Q6 ... the first one");
     eq(!!e.dialog(), false, "Q6 ... and the viewer showing it closes");
+  }
+  // Q12: a picture already under way (no header heard): joined by its line timing, and said so
+  {
+    const e = page();
+    const m = e.ctx.SSTV.byId("s1"), segs = E.picture(m, E.pic(m.width, m.height)), per = segs.length / m.height;
+    e.feed(E.audio(segs.slice(Math.round(40 * per + per / 3), Math.round(120 * per)), { lead: 0.2 }));
+    check(/^Receiving Scottie S1 \(joined under way\) · line \d+ of 256 · 14\.230 MHz USB$/.test(e.status()),
+          "Q12 a picture joined under way: said in the status: " + e.status());
+    eq(e.said[0], "SSTV picture starting, Scottie S1", "Q12 ... and announced");
   }
   // Q4: off the grid
   {

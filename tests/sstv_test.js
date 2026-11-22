@@ -15,6 +15,10 @@
  *      noise or voice-band noise, a chosen mode on voice-band noise, or a header and two lines are dropped
  *      (onFalse) and never shown; the rows wait until the picture is confirmed; a real header inside a
  *      start's trial wins; interference over a real picture's first lines still lets it through
+ *  V7. Auto joins a picture already under way (no header heard) by its sync rhythm: Martin M1, Scottie S1,
+ *      PD-120, Robot 36 and Martin M2 from the middle of a line, each named right and matching the picture;
+ *      80 Hz mistuned (measured from the syncs) and a 0.2 % fast clock still join; noise, voice-band noise,
+ *      a pulse train no mode has and CW-like keying never start one
  */
 "use strict";
 const fs = require("fs");
@@ -123,6 +127,71 @@ for (const m of MODES) {
   check(r.rows.length >= 213 && r.rows.length <= 216, `V4 ... at the next line (${r.rows.length} rows)`);
   const err = mae(r.rows, m, img, 41);
   check(err < 3, `V4 ... matching the picture from line 41 (mean error ${err.toFixed(1)})`);
+}
+
+// ---- V7: Auto joins a picture already under way ----
+// the best line offset (picture line y0 + row) of the rows decoded, and its mean error
+function bestFit(rows, m, img, lo, hi) {
+  let best = { y0: -1, err: 999 };
+  // (the first two rows left out: a joined Robot 36's first line has no colour pair yet)
+  for (let y0 = lo; y0 <= hi; y0++) { const e = mae(rows.slice(0, 40), m, img, y0, 2); if (e < best.err) best = { y0, err: e }; }
+  return best;
+}
+for (const [id, from] of [["m1", 30], ["s1", 30], ["pd120", 20], ["r36", 60], ["m2", 40]]) {
+  const m = byId(id), img = pic(m.width, m.height);
+  const segs = picture(m, img), perLine = segs.length / m.lines;
+  const tail = segs.slice(Math.round(from * perLine + perLine / 3));   // a third into line `from`, no VIS
+  const r = decode(audio(tail, { lead: 0.2 }).subarray(0, 30 * FS));
+  eq([r.starts.map((s) => [s.mode.id, s.joined]), r.unknown], [[[id, true]], []], `V7 ${m.name} joined under way, no header: named right`);
+  const fit = bestFit(r.rows, m, img, from * m.rowsPerLine, (from + 8) * m.rowsPerLine);
+  // as well as from a header (V2: GBR under 3, the colour-difference modes under 5), a row's worth more for GBR
+  check(r.rows.length > 20 && fit.err < (m.color === "GBR" ? 4 : 5),
+        `V7 ... matching the picture from line ${fit.y0} (mean error ${fit.err.toFixed(1)}, ${r.rows.length} rows)`);
+}
+{
+  const m = byId("s1"), img = pic(m.width, m.height);
+  const segs = picture(m, img), perLine = segs.length / m.lines;
+  const r = decode(audio(segs.slice(Math.round(50 * perLine + 5)), { lead: 0.2, offset: 80 }).subarray(0, 30 * FS));
+  check(r.starts.length === 1 && r.starts[0].mode.id === "s1" && Math.abs(r.starts[0].offsetHz - 80) <= 10,
+        `V7 Scottie S1 80 Hz high, joined: the offset from its syncs (${r.starts[0] && r.starts[0].offsetHz} Hz)`);
+  const fit = bestFit(r.rows, m, img, 50, 58);
+  check(fit.err < 4, `V7 ... and taken off (mean error ${fit.err.toFixed(1)})`);
+  const q = byId("m2"), qimg = pic(q.width, q.height), qs = picture(q, qimg), qper = qs.length / q.lines;
+  const f = decode(audio(qs.slice(Math.round(60 * qper + 4)), { lead: 0.2, fsTx: FS * 1.002 }));
+  check(f.starts.length === 1 && f.starts[0].mode.id === "m2" && f.rows.length > 150,
+        `V7 Martin M2 from a sender 0.2 % fast, joined: ${f.rows.length} rows`);
+}
+{
+  // a train of 9 ms 1200 Hz pulses every 600 ms over 1500 Hz (no mode's line), and CW-like 1200 Hz keying
+  const train = [];
+  for (let k = 0; k < 40; k++) train.push(tone(9, 1200), tone(591, 1500));
+  const rt = decode(audio(train));
+  eq([rt.starts.length, rt.falses.length], [0, 0], "V7 a pulse train no mode has (every other line of Robot 72): no picture, not even tried");
+  // three pulses a line apart (fewer than four), then silence: not tried
+  const three = [];
+  for (let k = 0; k < 3; k++) three.push(tone(9, 1200), tone(byId("s1").lineMs - 9, 1700));
+  eq(decode(audio(three, { tail: 3 })).falses.length, 0, "V7 three pulses a line apart: not tried (four are needed)");
+  // nine-ms pulses 3 % slower than Scottie S1's line: no mode (its line to 1 %), not tried
+  const slow = [];
+  for (let k = 0; k < 30; k++) slow.push(tone(9, 1200), tone(byId("s1").lineMs * 1.03 - 9, 1700));
+  const rs = decode(audio(slow));
+  eq([rs.starts.length, rs.falses.length], [0, 0], "V7 a line 3 % off Scottie S1's: not that mode, not tried");
+  const cw = [];
+  for (let k = 0; k < 60; k++) cw.push(tone(k % 3 ? 60 : 180, 1200), tone(60, 1700));
+  eq(decode(audio(cw)).starts.length, 0, "V7 CW-like keying at 1200 Hz: no picture");
+  eq(decode(audio([], { noise: 0.25, lead: 20, tail: 0 })).starts.length, 0, "V7 20 s of noise: no picture (no rhythm in it)");
+  // Robot 72's line (9 ms every 300 ms) for five pulses, then every other line: joined, then dropped (8 of
+  // 12 needed of a start joined so; this has 6)
+  const broken = [];
+  for (let k = 0; k < 5; k++) broken.push(tone(9, 1200), tone(291, 1500));
+  for (let k = 0; k < 20; k++) broken.push(tone(9, 1200), tone(591, 1500));
+  const rb = decode(audio(broken));
+  eq([rb.starts.length, rb.falses.length >= 1, rb.rows.length], [0, true, 0], "V7 a rhythm that breaks after four lines: tried, dropped, nothing shown");
+  // 20 ms pulses (a PD sync) at Scottie S1's line: not Scottie (its sync is 9 ms), and no PD has that line
+  const pdlen = [], s1 = byId("s1").lineMs;
+  for (let k = 0; k < 30; k++) pdlen.push(tone(20, 1200), tone(s1 - 20, 1700));
+  const rp = decode(audio(pdlen));
+  eq([rp.starts.length, rp.falses.length], [0, 0], "V7 a sync of the wrong length at a mode's line: no picture, not even tried");
 }
 
 // ---- V5: no false starts; an unknown VIS; a signal that goes away ----

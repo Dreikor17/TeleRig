@@ -9,8 +9,10 @@
  *   Lines: each line re-locks on its sync pulse (a small loop that also learns the line period), so a
  *   station whose sound card clock runs fast or slow does not slant the picture.
  *   Modes (timings: the Barber / N7CXI "Dayton paper" tables): Robot 36 / 72, Martin M1 / M2, Scottie
- *   S1 / S2 / DX, PD-50 / 90 / 120 / 160 / 180 / 240 / 290. "Auto" starts on a VIS header; a chosen
- *   mode starts at the next sync pulse (joining a picture already under way).
+ *   S1 / S2 / DX, PD-50 / 90 / 120 / 160 / 180 / 240 / 290. "Auto" starts on a VIS header, or joins a
+ *   picture already under way (its header missed: tuned in late, or too weak to read) by the rhythm of
+ *   its sync pulses: four in a row a line apart (to 1 %, a pulse or two missed allowed) with the sync's
+ *   length name the mode, and their tone the tuning offset. A chosen mode starts at the next sync pulse.
  *   A start is a picture only once its lines prove it: 4 of the first 12 line syncs must arrive where the
  *   timing puts them, as real pulses (low inside, the porch and picture around them). Until then the
  *   decoder holds the rows back and the panel shows nothing; a start that fails is dropped (onFalse).
@@ -85,6 +87,14 @@
   // barely read still gives >= 0.86 inside and <= 0.16 around; noise and voice give 0.22 .. 1 around.
   const CONFIRM = 4, CONFIRM_OF = 12, SYNC_GOOD = 0.7, SYNC_AROUND = 0.25;
   const SKIP_HEADER = 30;                            // ms: after a start, the search for the next one begins this far on
+  // Joining a picture under way (rhythm()): RHYTHM pulses in a row, each a whole number (1..3) of the mode's
+  // lines after the others to RHYTHM_TOL of a line, each as long as its sync (to 30 % or 1.5 ms); a pulse is
+  // 3.5 .. 26 ms of the sync tone (the syncs are 4.9 .. 20 ms; a VIS bit run is 30 ms or more); the tone
+  // within JOIN_OFFSET Hz of 1200.
+  const RHYTHM = 4, RHYTHM_TOL = 0.01, JOIN_OFFSET = 150;
+  // A start joined so needs CONFIRM_JOIN good syncs of its first CONFIRM_OF lines (a picture under way has a
+  // sync on every line), not CONFIRM: a pulse every other line is no picture.
+  const CONFIRM_JOIN = 8;
   function lowpass(n, cutoff, fs) {                  // windowed sinc (Blackman), unity gain at DC
     const h = new Float32Array(n), m = (n - 1) / 2, fc = cutoff / fs;
     let s = 0;
@@ -116,7 +126,10 @@
       this.reset();
     }
     // -- control --
-    reset() { this.state = "idle"; this.m = null; this.offset = 0; this.nextCheck = 0; this.line = 0; this.rows = 0; this.missed = 0; this.trial = null; }
+    reset() {
+      this.state = "idle"; this.m = null; this.offset = 0; this.nextCheck = 0; this.line = 0; this.rows = 0; this.missed = 0; this.trial = null;
+      this.pulses = []; this.inPulse = false; this.pulseStart = 0;        // the sync pulses heard while idle (rhythm())
+    }
     setMode(want) { this.want = want === "auto" || BY_ID.has(want) ? want : "auto"; this.reset(); }
     ms(t) { return (t * this.fs) / 1000; }
     // -- input --
@@ -187,7 +200,8 @@
       while (this.nextCheck + step <= end) {
         this.nextCheck += step;
         const now = this.nextCheck;
-        if (this.want === "auto" ? this.vis(now) : this.forcedSync(now)) return true;
+        // a header always; the rhythm only while idle (a start on trial keeps its own pulses)
+        if (this.want === "auto" ? this.vis(now) || (this.state === "idle" && this.rhythm(now)) : this.forcedSync(now)) return true;
       }
       return false;
     }
@@ -229,6 +243,44 @@
       for (let i = Math.round(a); i <= b; i++) if (this.mean(i - h, i + h) < thr) return i;
       return Math.round((a + b) / 2);
     }
+    // Auto, no header heard: a picture already under way, joined by the rhythm of its sync pulses. Each ms the
+    // last ms is looked at: a run of sync-ish samples is a pulse. At a pulse's end, the pulses held (the last
+    // 8) are tried against every mode: RHYTHM of them in a row (this one and the ones before it), each a
+    // whole number of lines from this one, as long as the mode's sync. The picture starts at this pulse, the
+    // tuning offset from the pulses' own tone, on trial as any start (its lines must prove it).
+    rhythm(now) {
+      const h = this.ms(1), fr = this.syncFrac(now - h, now);
+      if (!this.inPulse) { if (fr >= 0.8) { this.inPulse = true; this.pulseStart = now - h; } return false; }
+      if (fr > 0.2) return false;
+      this.inPulse = false;
+      const at = this.pulseStart, len = now - h - at, lenMs = (len * 1000) / this.fs;
+      if (lenMs < 3.5 || lenMs > 26) return false;                      // not a line sync
+      const p = this.pulses;
+      p.push({ at, ms: lenMs, hz: this.mean(at + len * 0.2, at + len * 0.8) });
+      while (p.length > 8) p.shift();
+      if (p.length < RHYTHM) return false;
+      const fits = (m, q) => Math.abs(q.ms - m.syncMs) <= Math.max(1.5, 0.3 * m.syncMs);
+      let best = null;
+      for (const m of MODES) {
+        if (!fits(m, p[p.length - 1])) continue;
+        const per = this.ms(m.lineMs), run = [p[p.length - 1]];
+        for (let i = p.length - 2; i >= 0 && run.length < RHYTHM; i--) {
+          const d = run[run.length - 1].at - p[i].at, k = Math.round(d / per);
+          if (k >= 1 && k <= 3 && Math.abs(d - k * per) <= per * RHYTHM_TOL && fits(m, p[i])) run.push(p[i]);
+          else if (d > 3.5 * per) break;
+        }
+        if (run.length < RHYTHM) continue;
+        // a pulse missed at most once in the run: a train at twice a mode's line is not that mode
+        const span = run[0].at - run[run.length - 1].at, lines = Math.round(span / per), err = Math.abs(span / per - lines);
+        if (lines > RHYTHM) continue;
+        if (!best || err < best.err) best = { m, run, err };
+      }
+      if (!best) return false;
+      const tones = best.run.map((q) => q.hz).sort((a, b) => a - b), off = tones[tones.length >> 1] - 1200;
+      if (!(Math.abs(off) <= JOIN_OFFSET)) return false;
+      this.begin(best.m, off, at, now, true);
+      return true;
+    }
     forcedSync(now) {                                   // a chosen mode: start at the next sync pulse
       const m = BY_ID.get(this.want);
       const s0 = now - this.ms(m.syncMs);
@@ -239,15 +291,15 @@
     // firstSync: where line 0's sync starts, known to the sample (the VIS edge, or a sync just found):
     // the first line is not searched (after a VIS the stop bit and the first sync are one 1200 Hz tone).
     // found: where the header or sync was found. The picture starts on trial: onStart waits for its lines.
-    begin(m, off, firstSync, found) {
+    begin(m, off, firstSync, found, joined) {
       if (this.trial) this.emit("onFalse", { mode: this.m, lines: this.line });    // a new header replaces a start on trial
-      this.m = m; this.offset = off; this.state = "rx";
+      this.m = m; this.offset = off; this.state = "rx"; this.pulses = []; this.inPulse = false;
       this.line = 0; this.rows = 0; this.missed = 0;
       this.anchor = firstSync; this.period = this.ms(m.lineMs); this.firstLine = true;
       this.cr = new Float32Array(m.width).fill(128); this.cb = new Float32Array(m.width).fill(128);
       // re-count the sync-ish samples with this picture's offset
       for (let i = 0; i < this.n; i++) this.S[i + 1] = this.S[i] + (this.f[i] - off < 1350 ? 1 : 0);
-      this.trial = { good: 0, seen: 0, rows: [], offsetHz: Math.round(off) };
+      this.trial = { good: 0, seen: 0, rows: [], offsetHz: Math.round(off), joined: !!joined, need: joined ? CONFIRM_JOIN : CONFIRM };
       this.nextCheck = found + this.ms(SKIP_HEADER);   // not this header again
     }
     judge(at, sync, best) {                             // on trial: is the sync found at `at` a real line sync?
@@ -259,7 +311,7 @@
     confirm() {                                         // a picture after all: it starts now, with the rows held back
       const t = this.trial;
       this.trial = null;
-      this.emit("onStart", { mode: this.m, offsetHz: t.offsetHz });
+      this.emit("onStart", { mode: this.m, offsetHz: t.offsetHz, joined: t.joined });
       for (const r of t.rows) this.emit("onRow", r);
     }
     drop() {                                            // not a picture: forget it; the search goes on from where it was
@@ -293,8 +345,8 @@
       this.draw(anchor - this.ms(m.syncAt));
       this.line++;
       const t = this.trial;
-      if (t && t.good >= CONFIRM) this.confirm();
-      else if (t && t.seen - t.good > CONFIRM_OF - CONFIRM) { this.drop(); return true; }   // it can't get there now
+      if (t && t.good >= t.need) this.confirm();
+      else if (t && t.seen - t.good > CONFIRM_OF - t.need) { this.drop(); return true; }   // it can't get there now
       if (this.line >= m.lines) this.finish("done");
       return true;
     }
@@ -414,16 +466,16 @@
   function render() {
     if (cur) {
       const st = cur.freqText ? " · " + cur.freqText : "";
-      say("Receiving " + cur.mode.name + " · line " + Math.min(rowsDone, cur.mode.height) + " of " + cur.mode.height + st);
+      say("Receiving " + cur.mode.name + (cur.joined ? " (joined under way)" : "") + " · line " + Math.min(rowsDone, cur.mode.height) + " of " + cur.mode.height + st);
     } else if (!rxOn()) say("");                            // RX is off: the window's own line says so (digital.js)
     else if (lastNote) say(lastNote);
-    else say(want === "auto" ? "Listening for an SSTV picture (its VIS header picks the mode)."
+    else say(want === "auto" ? "Listening for an SSTV picture: its header picks the mode, or its line timing if it is already under way."
                              : "Listening for " + BY_ID.get(want).name + ": it starts at the next sync pulse.");
   }
   const hooks = {
-    onStart: ({ mode, offsetHz }) => {
+    onStart: ({ mode, offsetHz, joined }) => {
       const st = radio(), now = new Date(Date.now());
-      cur = { mode, at: now, offsetHz, freqText: st.connected && st.freq ? (st.freq / 1e6).toFixed(3) + " MHz " + (st.mode_name || "") : "" };
+      cur = { mode, at: now, offsetHz, joined: !!joined, freqText: st.connected && st.freq ? (st.freq / 1e6).toFixed(3) + " MHz " + (st.mode_name || "") : "" };
       cur.freqText = cur.freqText.trim();
       rowsDone = 0; unknown = null; lastNote = "";
       blank(mode.width, mode.height);
