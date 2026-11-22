@@ -67,9 +67,10 @@ def ptt_hotkey_in_node_vm(ctx):
 
 @test("unit")
 def device_and_bridge_ui_in_node_vm(ctx):
-    """device.js (full screen + screen wake lock, the PTT hotkey dialog) and bridge.js (the WSJT-X bridge
-    indicator: states, the panel per role, pause / resume) on the real scripts in a Node vm, with fake
-    Fullscreen / Wake Lock APIs (no browser, no server, no radio)."""
+    """device.js (Keep screen awake, on by default on a phone or tablet; full screen + screen wake lock;
+    the PTT hotkey dialog) and bridge.js (the WSJT-X bridge indicator: states, the panel per role, pause /
+    resume) on the real scripts in a Node vm, with fake Fullscreen / Wake Lock APIs (no browser, no
+    server, no radio). Static: the page's Keep screen awake item, hidden until device.js binds it."""
     r = subprocess.run(["node", str(REPO / "tests" / "device_bridge_ui_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"device_bridge_ui_test.js: {r.stdout}{r.stderr}")
@@ -78,6 +79,12 @@ def device_and_bridge_ui_in_node_vm(ctx):
         js = _strip_comments(_read(f))
         check("innerHTML" not in js and "insertAdjacentHTML" not in js and "outerHTML" not in js, f"{f} never parses text as HTML")
         check("eval(" not in js and "new Function" not in js, f"{f} has no eval")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    m = re.search(r'<button role="menuitem" type="button" id="umAwake"[^>]*>(.*?)</button>', html, re.S)
+    check(m and " hidden" in m.group(0) and 'aria-pressed="false"' in m.group(0) and 'href="#i-eye"' in m.group(1)
+          and '<span id="umAwakeLbl">Keep screen awake</span>' in m.group(1),
+          f"index.html: Keep screen awake in the account menu, hidden until bound: {m and m.group(0)}")
+    check(m and "phone-only" not in m.group(0), "... on every device (on by default only on a phone or tablet)")
 
 
 @test("unit")

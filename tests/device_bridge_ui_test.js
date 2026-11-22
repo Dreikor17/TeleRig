@@ -7,7 +7,11 @@
  *     node tests/device_bridge_ui_test.js   -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
  *  A. full screen + keep awake: on / off, Esc, the lock re-taken after the tab was hidden, a refused
- *     or never-answered request, no wake lock (plain http), no full-screen API (iPhone), neither
+ *     or never-answered request, no wake lock (plain http), no full-screen API (iPhone), neither.
+ *     Keep screen awake on its own: on from the start on a phone or tablet (no tap), off on a computer,
+ *     kept per browser; with full screen (leaving it keeps the screen awake); a refused request or a
+ *     lock let go in view asked again at the next tap or key, and not once one is held; plain http on
+ *     a phone: told once per browser
  *  B. the PTT hotkey dialog: capture, reserved keys refused, hold / toggle, remove, nothing is keyed
  *     while capturing, not opened while transmitting or for a viewer
  *  C. the bridge indicator: states, the panel per role, pause / resume, the pause announced once,
@@ -28,11 +32,16 @@ function test(name, fn) { pending.push([name, fn]); }
 const OP_PERMS = ["view", "listen", "menu_read", "operate", "tx", "connect", "menu"];
 
 // ---- A. full screen + keep awake -------------------------------------------------------------------
-// opts: fs = "ok" | "reject" | "hang" | false (no API); wake = "ok" | "reject" | false (no API); secure
+// opts: fs = "ok" | "reject" | "hang" | false (no API); wake = "ok" | "reject" | "reject-first" (the first
+// request refused, the rest granted) | false (no API); secure; touch (a phone or tablet: a touch screen and
+// no mouse); store (this browser's localStorage)
 function fullEnv(opts) {
-  opts = Object.assign({ fs: "ok", wake: "ok", secure: true }, opts || {});
-  const env = makeEnv({});
+  opts = Object.assign({ fs: "ok", wake: "ok", secure: true, touch: false }, opts || {});
+  const env = makeEnv({ localStorage: opts.store || {} });
   const { doc, ctx } = env;
+  ctx.matchMedia = (q) => ({ matches: !!opts.touch && q === "(hover: none) and (pointer: coarse)",
+                             addEventListener() {}, removeEventListener() {}, addListener() {} });
+  let refusals = opts.wake === "reject-first" ? 1 : 0;
   const root = doc.documentElement;
   const log = [];
   env.log = log;
@@ -56,7 +65,7 @@ function fullEnv(opts) {
     ctx.navigator.wakeLock = {
       request: (type) => {
         log.push("wake:request:" + type);
-        if (opts.wake === "reject") return Promise.reject(Object.assign(new Error("no"), { name: "NotAllowedError" }));
+        if (opts.wake === "reject" || refusals-- > 0) return Promise.reject(Object.assign(new Error("no"), { name: "NotAllowedError" }));
         const l = { released: false, _l: [], addEventListener(t, fn) { if (t === "release") this._l.push(fn); },
                     release() { if (!this.released) { this.released = true; log.push("wake:release"); for (const fn of this._l) fn(); } return Promise.resolve(); } };
         env.locks.push(l);
@@ -70,6 +79,9 @@ function fullEnv(opts) {
   env.um = env.el("button", { id: "umFull", hidden: true, "aria-pressed": "false" });
   env.um.appendChild(doc.createElement("use")).setAttribute("href", "#i-tr-fullscreen");
   env.umLbl = env.el("span", { id: "umFullLbl" }, env.um);
+  env.aw = env.el("button", { id: "umAwake", hidden: true, "aria-pressed": "false" });
+  env.aw.appendChild(doc.createElement("use")).setAttribute("href", "#i-eye");
+  env.awLbl = env.el("span", { id: "umAwakeLbl" }, env.aw);
   env.el("div", { id: "toasts" });
   env.load("tr.js");
   env.toasts = [];
@@ -79,12 +91,17 @@ function fullEnv(opts) {
   env.tick = async (ms) => { for (let i = 0; i < 4; i++) await env.flush(); if (ms) { env.clock.advance(ms); for (let i = 0; i < 4; i++) await env.flush(); } };
   env.icon = () => env.full.querySelector("use").getAttribute("href");
   env.held = () => env.locks.filter((l) => !l.released).length;
+  env.awIcon = () => env.aw.querySelector("use").getAttribute("href");
+  env.stored = (k) => ctx.localStorage.getItem(k);
+  env.tap = () => doc.dispatchEvent(new env.Event("pointerup"));
   return env;
 }
 
 test("A full screen on: the page goes full screen AND holds a screen wake lock; off undoes both", async () => {
   const e = fullEnv();
-  eq([e.full.hidden, e.um.hidden, e.D.fullscreen.supported, e.D.fullscreen.wake], [false, false, true, true], "A both buttons are bound");
+  eq([e.full.hidden, e.um.hidden, e.aw.hidden, e.D.fullscreen.supported, e.D.fullscreen.wake], [false, false, false, true, true],
+     "A both full-screen buttons and Keep screen awake are bound");
+  eq([e.locks.length, e.D.awake.on(), e.awLbl.textContent], [0, false, "Keep screen awake"], "A a computer: not kept awake until asked");
   eq([e.full.getAttribute("aria-pressed"), e.icon(), e.full.title], ["false", "#i-tr-fullscreen", "Full screen (keeps the screen awake)"], "A off");
   e.full.click();
   await e.tick();
@@ -144,7 +161,8 @@ test("A the browser never answers the full-screen request: off after 3 s, a mess
 });
 test("A no wake lock (plain http): full screen still works and the reason is said once", async () => {
   const e = fullEnv({ wake: false, secure: false });
-  eq([e.full.hidden, e.D.fullscreen.wake, e.full.title], [false, false, "Full screen"], "A the button does not promise keep-awake");
+  eq([e.full.hidden, e.D.fullscreen.wake, e.full.title, e.aw.hidden, e.toasts], [false, false, "Full screen", true, []],
+     "A the button does not promise keep-awake; no Keep screen awake; a computer is told nothing at first");
   e.full.click();
   await e.tick();
   eq([!!e.doc.fullscreenElement, e.toasts.length], [true, 1], "A full screen on");
@@ -162,29 +180,148 @@ test("A the wake lock is refused (battery saver): full screen stays on, nothing 
   await e.tick();
   eq(e.D.fullscreen.on(), false, "A off");
 });
-test("A no full-screen API (iPhone): the switch is Keep screen awake alone", async () => {
-  const e = fullEnv({ fs: false });
-  eq([e.um.hidden, e.D.fullscreen.supported, e.umLbl.textContent], [false, false, "Keep screen awake"], "A labelled for what it does");
-  e.um.click();
+test("A no full-screen API (iPhone): no full-screen switch; Keep screen awake is the one", async () => {
+  const e = fullEnv({ fs: false, touch: true });
   await e.tick();
-  eq([e.held(), e.D.fullscreen.on(), e.umLbl.textContent, e.um.getAttribute("aria-pressed")], [1, true, "Let the screen sleep", "true"], "A awake");
-  e.um.click();
+  eq([e.full.hidden, e.um.hidden, e.aw.hidden, e.D.fullscreen.supported], [true, true, false, false], "A only Keep screen awake");
+  eq([e.held(), e.D.awake.on(), e.awLbl.textContent, e.aw.getAttribute("aria-pressed"), e.awIcon()],
+     [1, true, "Let the screen sleep", "true", "#i-eye-off"], "A a phone: awake from the start, labelled for what a click does");
+  e.aw.click();
   await e.tick();
-  eq([e.held(), e.D.fullscreen.on(), e.umLbl.textContent], [0, false, "Keep screen awake"], "A released");
+  eq([e.held(), e.D.awake.on(), e.awLbl.textContent, e.aw.getAttribute("aria-pressed"), e.awIcon()],
+     [0, false, "Keep screen awake", "false", "#i-eye"], "A released");
+  e.D.fullscreen.toggle();
+  await e.tick();
+  eq([e.held(), e.D.fullscreen.on(), e.log.filter((x) => x.startsWith("fs:")), e.toasts], [0, false, [], []],
+     "A the full-screen call does nothing there (no request, no message)");
 });
 test("A switched on while the tab is hidden: the lock waits until the tab is visible", async () => {
   const e = fullEnv({ fs: false });
   e.doc.hidden = true;
-  e.D.fullscreen.toggle();
+  e.D.awake.set(true);
   await e.tick();
-  eq([e.locks.length, e.D.fullscreen.on()], [0, true], "A on, but no lock is requested from a hidden tab");
+  eq([e.locks.length, e.D.awake.on()], [0, true], "A on, but no lock is requested from a hidden tab");
   e.doc.hidden = false; e.doc.dispatchEvent(new e.Event("visibilitychange"));
   await e.tick();
   eq(e.held(), 1, "A taken once the tab is visible");
 });
+test("A switched on and off again before the browser answers: the lock that comes is let go", async () => {
+  const e = fullEnv({ fs: false });
+  e.D.awake.set(true);
+  e.D.awake.set(false);
+  await e.tick();
+  eq([e.held(), e.log, e.body.classList.contains("tr-awake")], [0, ["wake:request:screen", "wake:release"], false],
+     "A released as it arrives");
+});
 test("A neither API: the buttons stay hidden", async () => {
   const e = fullEnv({ fs: false, wake: false });
-  eq([e.full.hidden, e.um.hidden], [true, true], "A nothing to offer");
+  eq([e.full.hidden, e.um.hidden, e.aw.hidden], [true, true, true], "A nothing to offer");
+});
+test("A a phone or tablet keeps the screen awake from the start, no tap needed; each browser keeps its choice", async () => {
+  const e = fullEnv({ touch: true });
+  e.doc.dispatchEvent(new e.Event("visibilitychange"));   // the page in view again while the first request is out:
+  await e.tick();                                         // still one request
+  eq([e.held(), e.log, e.D.awake.on(), e.awLbl.textContent, e.stored("telerig.awake")],
+     [1, ["wake:request:screen"], true, "Let the screen sleep", null], "A held at load, not in full screen; nothing stored yet");
+  check(e.body.classList.contains("tr-awake") && !e.doc.fullscreenElement, "A body.tr-awake without full screen");
+  e.aw.click();
+  await e.tick();
+  eq([e.held(), e.D.awake.on(), e.stored("telerig.awake"), e.body.classList.contains("tr-awake")], [0, false, "0", false],
+     "A Let the screen sleep: released, and kept");
+  const f = fullEnv({ touch: true, store: { "telerig.awake": "0" } });
+  await f.tick();
+  eq([f.locks.length, f.D.awake.on(), f.awLbl.textContent], [0, false, "Keep screen awake"], "A the same browser again: still off");
+  f.aw.click();
+  await f.tick();
+  eq([f.held(), f.stored("telerig.awake")], [1, "1"], "A on again, and kept");
+  e.doc.hidden = true; e.doc.dispatchEvent(new e.Event("visibilitychange"));
+  e.doc.hidden = false; e.doc.dispatchEvent(new e.Event("visibilitychange"));
+  await e.tick();
+  eq(e.locks.length, 1, "A off: the page coming back takes nothing");
+});
+test("A a computer: Keep screen awake holds the lock without full screen, and is kept", async () => {
+  const e = fullEnv();
+  await e.tick();
+  e.aw.click();
+  await e.tick();
+  eq([e.held(), !!e.doc.fullscreenElement, e.stored("telerig.awake"), e.awLbl.textContent], [1, false, "1", "Let the screen sleep"],
+     "A on: a lock, no full screen");
+  const f = fullEnv({ store: { "telerig.awake": "1" } });
+  await f.tick();
+  eq(f.held(), 1, "A the same browser again: awake from the start");
+  e.doc.hidden = true; e.doc.dispatchEvent(new e.Event("visibilitychange"));
+  e.locks[0].release();                               // what a browser does on hide
+  await e.tick();
+  eq([e.held(), e.D.awake.on()], [0, true], "A hidden: no lock, still on");
+  e.doc.hidden = false; e.doc.dispatchEvent(new e.Event("visibilitychange"));
+  await e.tick();
+  eq([e.held(), e.locks.length], [1, 2], "A back in view: a new lock");
+});
+test("A Keep screen awake and full screen together: either one keeps the lock", async () => {
+  const e = fullEnv({ touch: true });
+  await e.tick();
+  e.full.click();
+  await e.tick();
+  eq([e.held(), e.locks.length, e.D.fullscreen.on()], [1, 1, true], "A full screen on: the same lock, no second request");
+  e.escape();
+  await e.tick();
+  eq([e.held(), e.D.fullscreen.on()], [1, false], "A left full screen: the screen is still kept awake");
+  e.full.click();
+  await e.tick();
+  e.aw.click();
+  await e.tick();
+  eq([e.held(), e.D.awake.on(), e.D.fullscreen.on()], [1, false, true], "A Let the screen sleep in full screen: full screen still keeps it");
+  e.full.click();
+  await e.tick();
+  eq([e.held(), e.D.fullscreen.on()], [0, false], "A full screen off too: the screen may sleep");
+  e.full.click();
+  await e.tick();
+  e.aw.click();
+  await e.tick();
+  e.full.click();
+  await e.tick();
+  eq([e.held(), e.D.awake.on()], [1, true], "A full screen off with Keep screen awake on: the lock stays");
+});
+test("A a refused request is asked again at the next tap or key; once one is held, a tap asks nothing", async () => {
+  const e = fullEnv({ touch: true, wake: "reject-first" });
+  await e.tick();
+  eq([e.held(), e.log], [0, ["wake:request:screen"]], "A refused at load");
+  e.tap();
+  await e.tick();
+  eq([e.held(), e.log.length], [1, 2], "A the next tap: asked again, held");
+  e.tap();
+  e.doc.dispatchEvent(new e.Event("keydown"));
+  e.doc.dispatchEvent(new e.Event("touchend"));
+  await e.tick();
+  eq(e.log.length, 2, "A held: taps and keys ask nothing");
+  e.locks[0].release();                               // the browser lets it go while the page is in view (battery saver)
+  await e.tick();
+  eq([e.held(), e.log.slice(2)], [0, ["wake:release"]], "A let go in view: nothing asked at once");
+  e.doc.dispatchEvent(new e.Event("keydown"));
+  await e.tick();
+  eq([e.held(), e.log.slice(3)], [1, ["wake:request:screen"]], "A ... the next key asks again");
+  const g = fullEnv({ touch: true, wake: "reject" });
+  await g.tick();
+  g.aw.click();                                       // turned off while refused
+  await g.tick();
+  g.tap();
+  await g.tick();
+  eq(g.log, ["wake:request:screen"], "A off: a tap asks nothing more");
+});
+test("A plain http on a phone: no Keep screen awake, told once in this browser; a computer is told nothing", async () => {
+  const e = fullEnv({ touch: true, wake: false, secure: false });
+  await e.tick();
+  eq([e.aw.hidden, e.toasts.length, e.stored("telerig.awake.told")], [true, 1, "1"], "A said at load");
+  check(/HTTPS/.test(e.toasts[0][1]) && /lock/.test(e.toasts[0][1]), "A the message says why and what to do: " + e.toasts[0][1]);
+  e.full.click();
+  await e.tick();
+  eq(e.toasts.length, 1, "A full screen on that page: not said again");
+  const f = fullEnv({ touch: true, wake: false, secure: false, store: { "telerig.awake.told": "1" } });
+  await f.tick();
+  eq(f.toasts, [], "A the same browser again: nothing");
+  const d = fullEnv({ wake: false, secure: false });
+  await d.tick();
+  eq(d.toasts, [], "A a computer over http: nothing at load");
 });
 
 // ---- B. the PTT hotkey dialog -----------------------------------------------------------------------

@@ -50,7 +50,7 @@
          (account.js) carry `hidden` until their script binds them, so a script that failed to load never
          leaves a dead control; data-perm="admin" keeps the admin entries off for other roles (§4.6). -->
     <!-- #bridgeBtn (bridge.js) shows only while the WSJT-X bridge is enabled; #fullBtn / #umFull /
-         #umHotkey (device.js) carry `hidden` until their script binds them. -->
+         #umAwake / #umHotkey (device.js) carry `hidden` until their script binds them. -->
     <div class="bridge-wrap">
       <button id="bridgeBtn" class="tb-btn bridge-btn" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="bridgePop" title="WSJT-X bridge" aria-label="WSJT-X bridge" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-bridge"/></svg><span class="bridge-dot" aria-hidden="true"></span></button>
       <div id="bridgePop" class="bridge-pop" role="dialog" aria-label="WSJT-X bridge" hidden></div>
@@ -68,6 +68,7 @@
         <button role="menuitem" type="button" id="umArrange" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-layout-grid"/></svg>Arrange panels</button>
         <button role="menuitem" type="button" id="umTheme" class="phone-only"><svg class="i" aria-hidden="true"><use href="#i-moon"/></svg><span>Theme</span></button>
         <button role="menuitem" type="button" id="umFull" class="phone-only" aria-pressed="false" hidden><svg class="i" aria-hidden="true"><use href="#i-tr-fullscreen"/></svg><span id="umFullLbl">Full screen</span></button>
+        <button role="menuitem" type="button" id="umAwake" aria-pressed="false" hidden><svg class="i" aria-hidden="true"><use href="#i-eye"/></svg><span id="umAwakeLbl">Keep screen awake</span></button>
         <button role="menuitem" type="button" id="umHotkey" data-tx hidden><svg class="i" aria-hidden="true"><use href="#i-keyboard"/></svg><span>PTT hotkey…</span></button>
         <button role="menuitem" type="button" id="umAdmin" class="phone-only" data-perm="admin" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Administration</button>
         <button role="menuitem" type="button" id="umChangePw" hidden><svg class="i" aria-hidden="true"><use href="#i-key-round"/></svg>Change password…</button>

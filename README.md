@@ -65,8 +65,9 @@ and only one operator transmits at a time.
 - **Modular panels** — VFO, Transmit, Audio, Meter, Scope, Controls and CW are cards you can
   move, resize, collapse, hide and add back (**Arrange** mode); the layout is saved per user,
   separately for desktop and phone.
-- **Full screen** that keeps the screen awake (top bar; needs HTTPS or localhost for the
-  keep-awake part), for a tablet or phone on the bench.
+- **The screen kept awake**: on a phone or tablet TeleRig keeps the screen on while it is open
+  (**Keep screen awake** in the account menu turns that off, or on, on a computer), and **full screen**
+  (top bar) keeps it awake too. Keeping the screen awake needs HTTPS or localhost.
 - **Mobile-friendly** responsive layout; remembers the radio + connection per
   radio (transport, ports, and audio devices).
 
@@ -208,7 +209,7 @@ backend/
   server.py       Starlette/uvicorn — /api/radios, connect/ports, WebSocket
 frontend/         adaptive multi-radio panel; controls render from the profile
                   (tr.js session layer, layout.js panel grid, account.js / admin.js dialogs,
-                  bridge.js bridge indicator, device.js full screen + PTT hotkey dialog,
+                  bridge.js bridge indicator, device.js keep awake, full screen + PTT hotkey dialog,
                   login.html / change-password.html)
 ```
 

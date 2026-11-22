@@ -161,7 +161,8 @@ Lockouts**, with **Unlock** buttons. Ways back in:
 
 [Tailscale Serve](https://tailscale.com/kb/1312/serve) puts TeleRig behind a tailnet-only HTTPS
 proxy with an automatic `*.ts.net` certificate. HTTPS is also what the browser needs for the
-**microphone** (TX audio): `getUserMedia` only works over HTTPS or on `localhost`.
+**microphone** (TX audio): `getUserMedia` only works over HTTPS or on `localhost`. So is keeping a
+phone's screen awake (the Screen Wake Lock): over plain http the screen may lock while TeleRig is open.
 
 **From the app (admin):** Administration → **Remote**. It detects Tailscale and shows the state.
 

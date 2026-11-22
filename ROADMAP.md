@@ -149,6 +149,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   the same square as the connection toggle beside it; the icon sat in its corner.
 - **No CW key on the scope.** The scope's bar keeps BAND PLAN and the band plan's legend; the Modem
   window's own CW key shows CW (and its decoder starts, as it does whenever CW comes into view).
+- **A phone keeps its screen on.** On a phone or a tablet TeleRig keeps the screen awake while it is
+  open, no full screen needed, so it no longer locks in the middle of a contact. **Keep screen awake** in
+  the account menu turns that off (or, on a computer, on), and each browser remembers the choice. The
+  browser lets the screen sleep while TeleRig is hidden (locked by hand, another app in front), and
+  TeleRig asks again when it is back; a request the browser refuses is asked again at the next tap. Full
+  screen keeps the screen awake too, as before. It needs HTTPS (or localhost), as the microphone does:
+  over plain http a phone says so once.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

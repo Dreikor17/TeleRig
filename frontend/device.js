@@ -1,22 +1,31 @@
-/* TeleRig — this device: full screen with the screen kept awake, and the PTT hotkey dialog.
- * Loads after app.js and account.js (TR.modal / TR.h). Nothing here is sent to the server: both are
- * per-browser conveniences (the hotkey lives in localStorage "telerig.pttkey").
+/* TeleRig — this device: the screen kept awake, full screen, and the PTT hotkey dialog.
+ * Loads after app.js and account.js (TR.modal / TR.h). Nothing here is sent to the server: all are
+ * per-browser conveniences (localStorage "telerig.pttkey" for the hotkey, "telerig.awake" for Keep
+ * screen awake).
+ *
+ * Keep screen awake (#umAwake in the account menu)
+ *   While it is on and the page is in view, the browser is asked to keep the screen on (Screen Wake
+ *   Lock), so a phone on the bench does not lock in the middle of a contact. It is on by default on
+ *   a phone or a tablet (a touch screen and no mouse) and off on a computer; each browser keeps its
+ *   choice. The browser drops the lock whenever the page is hidden (the screen locked by hand,
+ *   another app in front); it is taken again when the page is back. A request the browser refuses
+ *   (battery saver, a browser that grants it only after a tap), or a lock it lets go of while the
+ *   page is in view, is asked for again at the next tap, click or key. The wake lock needs HTTPS (or
+ *   localhost): over plain http the item is not shown, and a phone or tablet is told why once.
  *
  * Full screen (#fullBtn in the top bar, #umFull in the phone menu)
- *   One switch: the page goes full screen AND asks the browser to keep the screen awake (Screen
- *   Wake Lock), so a tablet or phone on the bench does not dim in the middle of a contact. Leaving
- *   full screen (the button, Esc or F11) lets the screen sleep again. The browser drops a wake lock
- *   whenever the tab is hidden; it is taken again when the tab is back and the switch is still on.
- *   Where the browser has no full-screen mode for pages (iPhone), the switch is "Keep screen awake"
- *   alone. The wake lock needs HTTPS (or localhost): without it the button still goes full screen
- *   and says so once.
+ *   One switch: the page goes full screen AND the screen is kept awake while it is, whatever Keep
+ *   screen awake says. Leaving full screen (the button, Esc or F11) ends both. Where the browser has
+ *   no full-screen mode for pages (iPhone) there is no full-screen switch: Keep screen awake is the
+ *   one. Without a wake lock (plain http) the button still goes full screen and says so once.
  *
  * PTT hotkey (#umHotkey in the user menu; operators and admins)
  *   Pick a key and how it acts: hold to talk, or press to toggle. The key handling itself is in
  *   app.js next to the PTT button (same fail-safe rule: a press while transmitting always unkeys);
  *   this dialog only captures the key and stores {code, mode, label}, then fires `tr:pttkey`.
  *
- * window.TRDevice = { fullscreen: {on(), toggle(), supported}, hotkey: {open(), get(), set(), clear()} }
+ * window.TRDevice = { fullscreen: {on(), toggle(), off(), supported, wake, held()}, awake: {on(), set(v), held()},
+ *                     hotkey: {open(), get(), set(), clear(), label()} }
  */
 (function () {
   "use strict";
@@ -25,26 +34,38 @@
   const $ = (id) => document.getElementById(id);
   const doc = document;
 
-  // ================= full screen + keep awake =======================================================
+  // ================= keep awake + full screen =======================================================
   const root = doc.documentElement;
   const canFs = !!(root && typeof root.requestFullscreen === "function" && doc.fullscreenEnabled !== false);
   const canWake = !!(window.navigator && navigator.wakeLock && typeof navigator.wakeLock.request === "function");
   const fullBtn = $("fullBtn"), umFull = $("umFull"), umFullLbl = $("umFullLbl");
-  let want = false;                                // the switch: on until the user (or leaving full screen) turns it off
+  const umAwake = $("umAwake"), umAwakeLbl = $("umAwakeLbl");
+  const AWAKE_KEY = "telerig.awake", TOLD_KEY = "telerig.awake.told";
+  const stored = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+  const keep = (k, v) => { try { localStorage.setItem(k, v); } catch (_) {} };
+  // a phone or a tablet: a touch screen and no mouse to hover with
+  const touchFirst = (() => {
+    try { return !!(window.matchMedia && window.matchMedia("(hover: none) and (pointer: coarse)").matches); }
+    catch (_) { return false; }
+  })();
+  let awake = stored(AWAKE_KEY) === "1" || (stored(AWAKE_KEY) !== "0" && touchFirst);   // Keep screen awake
+  let want = false;                                // the full-screen switch: on until the user (or leaving full screen) turns it off
   let lock = null;                                 // the WakeLockSentinel while we hold one
+  let asking = false;                              // a request is out
+  let retry = false;                               // refused, or let go while in view: ask again at the next tap or key
   let toldNoWake = false;
+  const wanted = () => awake || want;
 
   function isFull() { return !!doc.fullscreenElement; }
-  function isOn() { return canFs ? isFull() : want; }
+  function isOn() { return canFs && isFull(); }
   function setUse(el, name) {
     const use = el && el.querySelector ? el.querySelector("use") : null;
     if (use) use.setAttribute("href", "#i-" + name);
   }
-  function renderFull() {
+  function render() {
     const on = isOn();
-    const label = canFs ? (on ? "Leave full screen" : "Full screen") : (on ? "Let the screen sleep" : "Keep screen awake");
-    const tip = canFs ? (on ? "Leave full screen" : "Full screen" + (canWake ? " (keeps the screen awake)" : ""))
-                      : label;
+    const label = on ? "Leave full screen" : "Full screen";
+    const tip = on ? label : "Full screen" + (canWake ? " (keeps the screen awake)" : "");
     for (const b of [fullBtn, umFull]) {
       if (!b) continue;
       b.setAttribute("aria-pressed", on ? "true" : "false");
@@ -52,29 +73,50 @@
     }
     if (fullBtn) { fullBtn.title = tip; fullBtn.setAttribute("aria-label", label); }
     if (umFullLbl) umFullLbl.textContent = label;
+    if (umAwake) {                                 // like full screen's: the label and the icon say what a click does
+      umAwake.setAttribute("aria-pressed", awake ? "true" : "false");
+      setUse(umAwake, awake ? "eye-off" : "eye");
+    }
+    if (umAwakeLbl) umAwakeLbl.textContent = awake ? "Let the screen sleep" : "Keep screen awake";
     if (doc.body && doc.body.classList) doc.body.classList.toggle("tr-awake", !!lock);
   }
   async function takeLock() {
-    if (!canWake || !want || lock || doc.hidden) return;
-    try {
-      const l = await navigator.wakeLock.request("screen");
-      if (!want) { try { await l.release(); } catch (_) {} return; }   // switched off while we waited
+    if (!canWake || !wanted() || lock || asking || doc.hidden) return;
+    asking = true;
+    let l = null;
+    try { l = await navigator.wakeLock.request("screen"); }
+    catch (_) { retry = true; }                    // refused (battery saver, policy, no tap yet): full screen still works
+    asking = false;
+    if (l && (!wanted() || doc.hidden)) {          // turned off, or hidden, while we waited
+      try { await l.release(); } catch (_) {}
+    } else if (l) {
       lock = l;
-      l.addEventListener("release", () => { if (lock === l) lock = null; renderFull(); });
-    } catch (_) {
-      lock = null;                                 // refused (battery saver, policy): full screen still works
+      retry = false;
+      l.addEventListener("release", () => {
+        if (lock !== l) return;
+        lock = null;
+        if (wanted() && !doc.hidden) retry = true;   // let go while in view (battery saver): again at the next tap
+        render();
+      });
     }
-    renderFull();
+    render();
   }
   function dropLock() {
     const l = lock;
     lock = null;
     if (l) { try { const p = l.release(); if (p && p.catch) p.catch(() => {}); } catch (_) {} }
   }
+  function setAwake(v) {
+    awake = !!v;
+    keep(AWAKE_KEY, awake ? "1" : "0");
+    if (awake) takeLock(); else if (!wanted()) dropLock();
+    render();
+  }
   const FS_WAIT_MS = 3000;                         // a browser that never answers the request counts as "no"
   async function fullOn() {
+    if (!canFs) return false;
     want = true;
-    if (canFs && !isFull()) {
+    if (!isFull()) {
       let ok = false;
       try {
         await Promise.race([
@@ -84,9 +126,9 @@
       } catch (_) { ok = false; }
       if (!ok && !isFull()) {                      // refused, or no answer (some embedded browsers)
         want = false;
-        dropLock();
+        if (!wanted()) dropLock();
         TR.toast("The browser did not allow full screen.", "warn");
-        renderFull();
+        render();
         return false;
       }
     }
@@ -97,30 +139,43 @@
         ? "Full screen is on. Keeping the screen awake needs HTTPS (or localhost) — see Remote access."
         : "Full screen is on. This browser cannot keep the screen awake.", "info");
     }
-    renderFull();
+    render();
     return true;
   }
   function fullOff() {
     want = false;
-    dropLock();
+    if (!wanted()) dropLock();                     // Keep screen awake still on: the lock stays
     if (isFull() && typeof doc.exitFullscreen === "function") {
       try { const p = doc.exitFullscreen(); if (p && p.catch) p.catch(() => {}); } catch (_) {}
     }
-    renderFull();
+    render();
   }
   function fullToggle() { return isOn() ? (fullOff(), false) : fullOn(); }
   doc.addEventListener("fullscreenchange", () => {
-    if (canFs && !isFull() && want) { want = false; dropLock(); }      // left with Esc / F11
-    renderFull();
+    if (canFs && !isFull() && want) { want = false; if (!wanted()) dropLock(); }   // left with Esc / F11
+    render();
   });
-  doc.addEventListener("visibilitychange", () => { if (!doc.hidden && want) takeLock(); });
+  doc.addEventListener("visibilitychange", () => { if (!doc.hidden && wanted()) takeLock(); });
+  // a refused request is asked again at the next tap, click or key: the events a browser counts as the
+  // user's own (a touch's pointerup and touchend, a mouse's mousedown, a key)
+  const again = () => { if (retry && !lock && !asking) { retry = false; takeLock(); } };
+  for (const t of ["pointerup", "touchend", "mousedown", "keydown"]) doc.addEventListener(t, again, { capture: true, passive: true });
 
-  const bindFull = (b) => {
+  const bind = (b, fn) => {
     if (!b) return;
     b.hidden = false;
-    b.addEventListener("click", () => { if (TR.menu && TR.menu.close) TR.menu.close(false); fullToggle(); });
+    b.addEventListener("click", () => { if (TR.menu && TR.menu.close) TR.menu.close(false); fn(); });
   };
-  if (canFs || canWake) { bindFull(fullBtn); bindFull(umFull); renderFull(); }
+  if (canFs) { bind(fullBtn, fullToggle); bind(umFull, fullToggle); }
+  if (canWake) bind(umAwake, () => setAwake(!awake));
+  render();
+  if (wanted()) takeLock();
+  // over plain http a phone's screen can't be kept awake: say so once in this browser
+  if (!canWake && touchFirst && window.isSecureContext === false && stored(TOLD_KEY) !== "1") {
+    keep(TOLD_KEY, "1");
+    toldNoWake = true;
+    TR.toast("Over plain http the browser can't keep the screen awake, so it may lock. Open TeleRig over HTTPS to keep it on (see Remote access).", "info");
+  }
 
   // ================= the PTT hotkey dialog ============================================================
   const STORE = "telerig.pttkey";
@@ -279,6 +334,7 @@
 
   window.TRDevice = {
     fullscreen: { on: isOn, toggle: fullToggle, off: fullOff, supported: canFs, wake: canWake, held: () => !!lock },
+    awake: { on: () => awake, set: setAwake, held: () => !!lock },
     hotkey: { open: openHotkey, get: getKey, set: setKey, clear: clearKey, label: keyLabel },
   };
 })();

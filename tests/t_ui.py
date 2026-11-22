@@ -108,6 +108,8 @@ def icons_every_reference_resolves(ctx):
     # names tr.js builds from data (toast kinds, theme): listed here so a rename cannot slip by
     for n in ("info", "triangle-alert", "octagon-x", "check", "x", "sun", "moon", "radio"):
         check(n in full, f"tr.js dynamic icon {n}")
+    for n in ("tr-fullscreen", "tr-fullscreen-exit", "eye", "eye-off"):   # device.js setUse(): full screen, Keep screen awake
+        check(n in full, f"device.js dynamic icon {n}")
     for f in ("login.html", "change-password.html"):
         text = (FRONT / f).read_text(encoding="utf-8")
         names = set(pat.findall(text))
