@@ -17,8 +17,9 @@
  *  D6. the text screens (CW's chat, RTTY's text, FT8's list) keep their place: at the end when hidden,
  *      shown again at the new end; scrolled back, shown again where they were left (the browser's reset of
  *      a hidden box ignored); a resize keeps either
- *  T1. FT8 slots: one decode per 15 s UTC slot, once all of it has arrived, 15 s of samples from the slot's
- *      start (the arrival clock), in a worker loaded from the page's own script
+ *  T1. FT8 slots: one decode per 15 s UTC slot, once its window has arrived: 21 s of samples from 3 s before
+ *      the slot's start to 3 s after its end (the arrival clock, t0 -3), in a worker loaded from the page's
+ *      own script
  *  T2. the list: a header per slot, rows by frequency (dB, DT, Hz, message), CQs marked, text never markup;
  *      CQ only (kept); Clear; at most 400 rows, the oldest slot dropped first
  *  T3. a slot heard for under 10 s is skipped; a gap of more than 2 s starts the clock again
@@ -27,6 +28,10 @@
  *  T5. end to end: a made FT8 slot through the real decoder (on the page), at the right DT and frequency
  *  T6. the FT8 status helps when nothing shows: the radio in a mode FT8 is not heard in is named; three
  *      slots in a row with nothing decoded say what to check; a decode clears that
+ *  T8. a DT of 1.5 s or more (this computer's clock, the audio's delay) is said with the count
+ *  T9. audio arriving with gaps (5 % short of its time over 30 s) is said; unbroken audio isn't
+ *  T10. end to end: messages 3.5 s late and 2.8 s early still decode (the 15 s window lost them past 2.5 s),
+ *      at their DT
  *  D7. receive audio off: the window says so under its keys, and its key presses the Audio panel's RX key
  *      (never turning RX off); the line follows RX within a second
  *  D9. the operator's callsign (DigitalPanel.call()): typed into CW's field and kept by the browser (upper
@@ -265,16 +270,16 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq(e.taps.length >= 1, true, "T1 the FT8 tab taps the radio's audio");
   check(/the first slot is decoded after/.test(e.status.textContent), "T1 before any slot: " + e.status.textContent);
   // the clock starts at 1 000 000 ms: slots at 990 000 (heard from 1 000 000: 5 s), 1 005 000, 1 020 000 ...
-  e.play(ramp(RATE * 20.2), RATE);                         // until 1 020 200: not yet (300 ms of grace)
-  eq(e.workers.reduce((n, w) => n + w.posted.length, 0), 0, "T1 nothing yet: the 990 000 slot was heard for 5 s, the next isn't over + 0.3 s");
+  e.play(ramp(RATE * 23.2), RATE);                         // until 1 023 200: not yet (its window + 300 ms of grace)
+  eq(e.workers.reduce((n, w) => n + w.posted.length, 0), 0, "T1 nothing yet: the 990 000 slot was heard for 5 s, the next one's window isn't over + 0.3 s");
   e.play(ramp(RATE * 0.2), RATE);
   const w = e.workers[0];
   eq([e.workers.length, w && w.url], [1, "/static/ft8-decode.js?v=42"], "T1 a worker, from the page's own script (its ?v=)");
   const p = w && w.posted[0];
-  check(p && p.m.rate === RATE && p.m.samples.length === RATE * 15, "T1 one slot: 15 s at 16 kHz");
-  // the sample that arrived at 1 005 000 ms is sample (1 005 000 - 1 000 000) * 16 = 80 000 of the stream
-  check(p && p.m.samples[0] === ((80000 % 20000) - 10000) / 32768 && p.m.samples[1] === ((80001 % 20000) - 10000) / 32768,
-        "T1 ... from the slot's start (" + (p && p.m.samples[0]) + ")");
+  check(p && p.m.rate === RATE && p.m.samples.length === RATE * 21 && p.m.t0 === -3, "T1 one slot's window: 21 s at 16 kHz, from 3 s before it (t0 -3)");
+  // the sample that arrived at 1 002 000 ms (3 s before the slot) is sample (1 002 000 - 1 000 000) * 16 = 32 000
+  check(p && p.m.samples[0] === ((32000 % 20000) - 10000) / 32768 && p.m.samples[1] === ((32001 % 20000) - 10000) / 32768,
+        "T1 ... from 3 s before the slot's start (" + (p && p.m.samples[0]) + ")");
   check(p && p.transfer && p.transfer[0] === p.m.samples.buffer, "T1 ... handed over, not copied");
   check(/Decoding the 00:16:45 slot/.test(e.status.textContent), "T1 the panel says so: " + e.status.textContent);
   e.play(ramp(RATE * 5), RATE);
@@ -295,7 +300,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   e.cq.checked = true;
   e.cq.dispatchEvent(new e.Event("change", { bubbles: true }));
   check(e.list.classList.contains("cq-only") && e.ctx.localStorage.getItem("telerig.ft8.cq") === "1", "T2 CQ only: the list filters, kept");
-  // the next slot (1 020 000) is due at 1 035 300; then 400 rows at most
+  // the next slot (1 020 000) is due at 1 038 300 (its window ends 3 s after it); then 400 rows at most
   e.play(ramp(RATE * 10), RATE);
   const p2 = w.posted[1];
   check(!!p2, "T2 the next slot goes to the worker");
@@ -321,24 +326,25 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
 {
   const e = page();
   e.clock.advance(11000);                                  // 1 011 000: 6 s into the 1 005 000 slot
-  e.play(ramp(RATE * 9.5), RATE);                          // to 1 020 500: that slot heard for 9 s
-  eq(e.workers.reduce((n, w) => n + w.posted.length, 0), 0, "T3 a slot heard for under 10 s: skipped");
-  e.play(ramp(RATE * 15), RATE);                           // to 1 035 500: the 1 020 000 slot in full
+  e.play(ramp(RATE * 12.5), RATE);                         // to 1 023 500: its window is over, the slot heard for 9 s
+  eq(e.workers.reduce((n, w) => n + w.posted.length, 0), 0, "T3 a slot heard for under 10 s (its window's extra seconds don't count): skipped");
+  e.play(ramp(RATE * 15), RATE);                           // to 1 038 500: the 1 020 000 slot and its window in full
   eq(e.workers[0] && e.workers[0].posted.length, 1, "T3 the next, heard in full: decoded");
   const w = e.workers[0], before = w.posted.length;
   w.onmessage({ data: { id: w.posted[0].m.id, decodes: [] } });
-  e.clock.advance(3000);                                   // the audio stops for 3 s, comes back at 1 038 500
-  e.play(ramp(RATE * 15), RATE);                           // the 1 035 000 slot: heard from 1 038 500, 11.5 s
-  const last = w.posted[w.posted.length - 1];
-  check(w.posted.length === before + 1 && last.m.samples.slice(0, RATE * 3).every((v) => v === 0) && last.m.samples[RATE * 4] !== 0,
-        "T3 after a 3 s gap the clock starts again: the slot's unheard 3.5 s are silence, then the audio");
+  e.play(ramp(RATE * 7.5), RATE);                          // to 1 046 000
+  e.clock.advance(3000);                                   // the audio stops for 3 s, comes back at 1 049 000
+  e.play(ramp(RATE * 19.5), RATE);                         // to 1 068 500: the 1 035 000 slot heard for 1 s, skipped;
+  const last = w.posted[w.posted.length - 1];              // the 1 050 000 slot's window (from 1 047 000) in full but its first 2 s
+  check(w.posted.length === before + 1 && last.m.samples.slice(0, RATE * 2).every((v) => v === 0) && last.m.samples[RATE * 3] !== 0,
+        "T3 after a 3 s gap the clock starts again: the window's unheard 2 s are silence, then the audio");
 }
 
 // ---- T4: errors, no worker, RX off, off the grid ----
 {
   const e = page();
   const slot = () => e.play(ramp(RATE * 15), RATE);
-  e.play(ramp(RATE * 20.5), RATE);
+  e.play(ramp(RATE * 23.5), RATE);
   const w = e.workers[0];
   w.onerror({});
   check(/could not be decoded/.test(e.status.textContent), "T4 a worker error: a note: " + e.status.textContent);
@@ -347,10 +353,10 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   e.clock.advance(1);
   eq(e.rows(), ["-5 0.0 1000 CQ W9XYZ EN53"], "T4 ... the next slot decoded on the page instead");
   const f = page({ worker: false });
-  f.ctx.FT8 = { decodeSlot: () => [{ snr: 1, dt: 0.4, freq: 1234, text: "K1ABC W9XYZ RR73" }] };
-  f.play(ramp(RATE * 20.5), RATE);
+  f.ctx.FT8 = { decodeSlot: (s, r, t0) => (f.t0 = t0, [{ snr: 1, dt: 0.4, freq: 1234, text: "K1ABC W9XYZ RR73" }]) };
+  f.play(ramp(RATE * 23.5), RATE);
   f.clock.advance(1);
-  eq(f.rows(), ["+1 0.4 1234 K1ABC W9XYZ RR73"], "T4 no Worker in this browser: the decoder on the page");
+  eq([f.rows(), f.t0], [["+1 0.4 1234 K1ABC W9XYZ RR73"], -3], "T4 no Worker in this browser: the decoder on the page (told the window's start)");
   const g = page({ rxOff: true });
   eq(g.status.textContent, "", "T4 RX off: nothing here (the window's own line says so)");
   const h = page();
@@ -362,8 +368,9 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
 // ---- T5: the real decoder, end to end ----
 {
   const e = page({ worker: false, realDecoder: true });
-  // the clock starts 5 s before a slot: the message starts 0.5 s into it (DT 0), at 1000 Hz, -8 dB
-  const buf = new Float32Array(RATE * 21);
+  // the clock starts 5 s before a slot: the message starts 0.5 s into it (DT 0), at 1000 Hz, -8 dB; the
+  // window runs to 3 s past the slot's end
+  const buf = new Float32Array(RATE * 24);
   enc.noise(buf, RATE, 0.05, 31);
   enc.add(buf, RATE, enc.tones(enc.pack("CQ W9XYZ EN53")), { f0: 1000, start: 5.5, snr: -8, sigma: 0.05 });
   e.play(buf, RATE);
@@ -379,7 +386,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   const e = page();
   e.st = { connected: true, mode_name: "FM" };
   e.clock.advance(500);
-  eq(e.status.textContent, "The radio is in FM: FT8 is heard in USB or DATA-USB (Tune to sets it).", "T6 the radio in FM: said, with what to do");
+  eq(e.status.textContent, "The radio is in FM: FT8 is heard in USB or DATA-USB (an FT8 row of the Calling list sets it).", "T6 the radio in FM: said, with what to do");
   for (const m of ["DATA-USB", "USB"]) {
     e.st = { connected: true, mode_name: m }; e.clock.advance(500);
     check(/the first slot is decoded after/.test(e.status.textContent), "T6 in " + m + " it listens: " + e.status.textContent);
@@ -389,18 +396,69 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   e.st = { connected: true, mode_name: "USB" };
   // slots with nothing decoded
   const answer = (decodes) => { const w = e.workers[0], j = w.posted[w.posted.length - 1]; w.onmessage({ data: { id: j.m.id, decodes } }); };
-  e.play(ramp(RATE * 20.5), RATE); answer([]);
+  e.play(ramp(RATE * 23.5), RATE); answer([]);
   check(/^Nothing decoded in the \d\d:\d\d:\d\d slot\.$/.test(e.status.textContent), "T6 one slot with nothing: said for that slot: " + e.status.textContent);
   e.play(ramp(RATE * 15), RATE); answer([]);
   check(/^Nothing decoded in the /.test(e.status.textContent), "T6 two: still only that");
   e.play(ramp(RATE * 15), RATE); answer([]);
-  eq(e.status.textContent, "Nothing decoded for 45 s. Check the frequency (Tune to), the mode and this computer's clock.", "T6 three in a row: what to check");
+  eq(e.status.textContent, "Nothing decoded for 45 s. Check the frequency (the Calling list in the Spots panel has each band's FT8 dial), USB or DATA-USB, and this computer's clock.",
+     "T6 three in a row: what to check");
   e.play(ramp(RATE * 15), RATE); answer([]);
   check(/^Nothing decoded for 60 s\. Check/.test(e.status.textContent), "T6 ... and it keeps counting: " + e.status.textContent);
   e.play(ramp(RATE * 15), RATE); answer([{ snr: -3, dt: 0.1, freq: 700, text: "CQ K1ABC FN42" }]);
   check(/^1 message at /.test(e.status.textContent), "T6 a decode: back to the count: " + e.status.textContent);
   e.play(ramp(RATE * 15), RATE); answer([]);
   check(/^Nothing decoded in the /.test(e.status.textContent), "T6 ... and the run of empty slots starts again");
+}
+
+// ---- T8: a large DT is said ----
+{
+  const e = page();
+  const answer = (decodes) => { const w = e.workers[0], j = w.posted[w.posted.length - 1]; w.onmessage({ data: { id: j.m.id, decodes } }); };
+  e.play(ramp(RATE * 23.5), RATE);
+  answer([{ snr: -5, dt: 2.3, freq: 700, text: "CQ K1ABC FN42" }, { snr: -9, dt: 2.5, freq: 1200, text: "W9XYZ K1ABC -09" },
+          { snr: -11, dt: 2.4, freq: 1800, text: "K1ABC W9XYZ R-11" }]);
+  check(/^3 messages at \d\d:\d\d:\d\d UTC\. DT \+2\.4 s: this computer's clock or the audio's delay\.$/.test(e.status.textContent),
+        "T8 a DT of 2.4 s: said with the count: " + e.status.textContent);
+  e.play(ramp(RATE * 15), RATE);
+  answer([{ snr: -5, dt: -1.7, freq: 700, text: "CQ K1ABC FN42" }]);
+  check(/ DT -1\.7 s: /.test(e.status.textContent), "T8 ... early too: " + e.status.textContent);
+  e.play(ramp(RATE * 15), RATE);
+  answer([{ snr: -5, dt: 0.4, freq: 700, text: "CQ K1ABC FN42" }, { snr: -5, dt: 0.2, freq: 900, text: "CQ W9XYZ EN53" }]);
+  check(/^2 messages at \d\d:\d\d:\d\d UTC\.$/.test(e.status.textContent), "T8 a DT under 1.5 s: just the count: " + e.status.textContent);
+}
+
+// ---- T9: audio with gaps ----
+{
+  const e = page();
+  // 20 ms pieces, one in 20 missing (5 %), for 31 s: the clock moves on through the missing ones
+  const n = RATE / 50, pcm = ramp(RATE * 31);
+  let k = 0;
+  for (let i = 0; i < pcm.length; i += n) {
+    e.clock.advance(20);
+    if (++k % 20 === 0) continue;
+    for (const t of e.taps) t(pcm.subarray(i, i + n), RATE);
+  }
+  e.clock.advance(500);
+  eq(e.status.textContent, "The radio's audio is arriving with gaps (5 % missing over the last 30 s): FT8 needs it unbroken.",
+     "T9 audio 5 % short of its time: said");
+  const f = page();
+  f.play(ramp(RATE * 31), RATE);
+  f.clock.advance(500);
+  check(!/gaps/.test(f.status.textContent), "T9 unbroken audio: no word of gaps: " + f.status.textContent);
+}
+
+// ---- T10: the real decoder, a message late or early ----
+for (const [late, what] of [[3.5, "3.5 s late"], [-2.8, "2.8 s early"]]) {
+  const e = page({ worker: false, realDecoder: true });
+  const buf = new Float32Array(RATE * 24);                 // the clock starts 5 s before the slot, as in T5
+  enc.noise(buf, RATE, 0.05, 41);
+  enc.add(buf, RATE, enc.tones(enc.pack("CQ W9XYZ EN53")), { f0: 1400, start: 5.5 + late, snr: -10, sigma: 0.05 });
+  e.play(buf, RATE);
+  e.clock.advance(1);
+  const r = e.rows(), dt = Number((r[0] || "").split(" ")[1]);
+  eq(r.map((x) => x.split(" ").slice(3).join(" ")), ["CQ W9XYZ EN53"], "T10 a message " + what + ": still decoded");
+  check(Math.abs(dt - late) <= 0.15, "T10 ... at its DT: " + dt + " (made " + late + ")");
 }
 
 // ---- D7: receive audio off ----
@@ -469,7 +527,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   const mine = () => e.list.querySelectorAll(".ft8-row").filter((r) => r.classList.contains("me")).map((r) => r.querySelector(".msg").textContent);
   eq([e.me.textContent, e.me.classList.contains("on"), e.me.title], ["K1ABC", true, "Messages that name K1ABC are marked"],
      "T7 the callsign that is marked stands in the list's headings");
-  e.play(ramp(RATE * 20.5), RATE);
+  e.play(ramp(RATE * 23.5), RATE);
   answer([
     { snr: -12, dt: 0.3, freq: 500, text: "W9XYZ K1ABC -12" }, { snr: -3, dt: 0.1, freq: 700, text: "CQ K1ABC FN42" },
     { snr: 4, dt: -0.2, freq: 900, text: "<K1ABC> W9XYZ RR73" }, { snr: 1, dt: 0, freq: 1100, text: "K1ABCD W9XYZ 73" },
@@ -503,7 +561,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   // FT8's script without the Modem window's (it failed to load): the list still fills, nothing is marked
   const f = page({ noDigital: true, worker: false, localStorage: { "telerig.call": "K1ABC" } });
   f.ctx.FT8 = { decodeSlot: () => [{ snr: 1, dt: 0.4, freq: 1234, text: "K1ABC W9XYZ RR73" }] };
-  f.play(ramp(RATE * 20.5), RATE);
+  f.play(ramp(RATE * 23.5), RATE);
   f.clock.advance(1);
   eq([f.rows(), f.list.querySelectorAll(".ft8-row").filter((r) => r.classList.contains("me")).length], [["+1 0.4 1234 K1ABC W9XYZ RR73"], 0],
      "T7 without the Modem window's script: the list fills all the same, unmarked");

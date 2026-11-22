@@ -5,12 +5,15 @@
  * (ft8/message.c, ft8/text.c, demo/decode_ft8.c). The FFT and the SNR estimate are TeleRig's own.
  * Receive only: nothing here makes a signal.
  *
- * window.FT8 = { decodeSlot(samples, rate) -> [{ snr, dt, freq, text }], reset(), makeFft(n) }
- *   samples: one 15 s slot of the radio's audio (Float32, -1..1, any rate whose 0.16 s symbol is a whole
- *   number of samples whose factors are 2, 3 and 5: 12000, 16000, 48000 Hz), from the slot's start;
- *   dt is WSJT-X's (the start time less 0.5 s), freq the lowest tone in Hz, snr in a 2500 Hz bandwidth.
+ * window.FT8 = { decodeSlot(samples, rate, t0) -> [{ snr, dt, freq, text }], reset(), makeFft(n) }
+ *   samples: the radio's audio around one 15 s slot (Float32, -1..1, any rate whose 0.16 s symbol is a
+ *   whole number of samples whose factors are 2, 3 and 5: 12000, 16000, 48000 Hz), up to 30 s of it; t0:
+ *   where it starts, in seconds from the slot's start (0, or below 0 for a window that starts before the
+ *   slot: ft8.js gives 21 s from -3 s, so a message is still found 4 s or so late or early, with this
+ *   computer's clock off or the audio delayed on its way here). dt is WSJT-X's, from the slot's start (the
+ *   start time less 0.5 s), freq the lowest tone in Hz, snr in a 2500 Hz bandwidth.
  *   The callsign hash table (for <...> calls) lives on across slots, as in WSJT-X; reset() empties it.
- * As a worker (new Worker(this file)): { id, rate, samples } in, { id, decodes } or { id, error } out.
+ * As a worker (new Worker(this file)): { id, rate, samples, t0 } in, { id, decodes } or { id, error } out.
  *
  * ft8_lib's licence:
  *   MIT License
@@ -39,7 +42,7 @@
   "use strict";
 
   // ---- the protocol (ft8/constants.h) ----
-  const SYMBOL_PERIOD = 0.16, SLOT_TIME = 15.0;
+  const SYMBOL_PERIOD = 0.16, MAX_WINDOW = 30.0;            // seconds of audio looked at, at most
   const ND = 58, NN = 79, LENGTH_SYNC = 7, NUM_SYNC = 3, SYNC_OFFSET = 36;
   const LDPC_N = 174, LDPC_K = 91, LDPC_M = 83;
   const CRC_POLY = 0x2757, CRC_TOP = 1 << 13;
@@ -165,7 +168,7 @@
     const win = new Float64Array(nfft);
     for (let i = 0; i < nfft; i++) { const x = Math.sin((Math.PI * i) / nfft); win[i] = norm * x * x; }
     const minBin = Math.floor(F_MIN * SYMBOL_PERIOD), maxBin = Math.floor(F_MAX * SYMBOL_PERIOD) + 1;
-    const numBins = maxBin - minBin, maxBlocks = Math.floor(SLOT_TIME / SYMBOL_PERIOD);
+    const numBins = maxBin - minBin, maxBlocks = Math.min(Math.floor(samples.length / block), Math.floor(MAX_WINDOW / SYMBOL_PERIOD));
     const stride = TIME_OSR * FREQ_OSR * numBins;
     const mag = new Uint8Array(maxBlocks * stride);
     const last = new Float64Array(nfft), td = new Float64Array(nfft);
@@ -232,7 +235,9 @@
     let size = 0;
     for (let ts = 0; ts < TIME_OSR; ts++) {
       for (let fs = 0; fs < FREQ_OSR; fs++) {
-        for (let t = -10; t < 20; t++) {
+        // start times from 10 symbols before the window to where a whole message still fits in it
+        // (ft8_lib's -10..19 for a 15 s slot; more for a longer window)
+        for (let t = -10; t < Math.max(20, wf.blocks - 73); t++) {
           for (let f = 0; f + 7 < wf.numBins; f++) {
             const c = { t, ts, f, fs, score: 0 };
             c.score = syncScore(wf, c);
@@ -536,8 +541,9 @@
   }
 
   // ---- one slot ----
-  function decodeSlot(samples, rate) {
+  function decodeSlot(samples, rate, t0) {
     if (!samples || !samples.length) return [];  // nothing heard: nothing to do
+    const at = Number.isFinite(+t0) ? +t0 : 0;   // the window's start, seconds from the slot's
     const wf = waterfall(samples, rate);
     const cands = findCandidates(wf), noise = noiseFloor(wf);
     const seen = new Map(), out = [], plain = new Uint8Array(LDPC_N), a91 = new Uint8Array(12);
@@ -559,7 +565,7 @@
       // the waterfall frame (b, ts) ends (ts + 1) subblocks into block b, so it is centred on the symbol
       // that started one block earlier: the message starts at (t + ts / 2 - 1) symbols (ft8_lib reports
       // t + ts / 2); WSJT-X's DT counts from 0.5 s into the slot
-      const start = (c.t + c.ts / TIME_OSR - 1) * SYMBOL_PERIOD;
+      const start = (c.t + c.ts / TIME_OSR - 1) * SYMBOL_PERIOD + at;
       out.push({ snr: snrOf(wf, c, plain, noise), dt: Math.round((start - 0.5) * 10) / 10,
                  freq: Math.round((wf.minBin + c.f + c.fs / FREQ_OSR) / SYMBOL_PERIOD), text });
     }
@@ -576,7 +582,7 @@
       const d = (e && e.data) || {};
       try {
         const samples = d.samples instanceof Float32Array ? d.samples : new Float32Array(0);
-        G.postMessage({ id: d.id, decodes: decodeSlot(samples, +d.rate) });
+        G.postMessage({ id: d.id, decodes: decodeSlot(samples, +d.rate, +d.t0 || 0) });
       } catch (err) {
         G.postMessage({ id: d.id, error: String((err && err.message) || err) });
       }

@@ -227,6 +227,15 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   (3.0 kHz), because an Icom's data mode takes its audio from its own DATA MOD setting, which TeleRig
   leaves alone. A spot is only as exact as its spotter: one spotted by ear can be a few hundred hertz
   off, and the VFO's step keys fix that.
+- **FT8 decodes when this computer's clock is off or the audio comes late.** The slots are cut by this
+  computer's clock from the audio as it arrives, so its clock error and the audio's delay on the way
+  here add to every message's DT; past about 2.5 s a 15 s slot held no whole message, and nothing
+  decoded while the waterfall showed FT8 plainly. The decoder now takes 21 s around each slot (3 s
+  either side), so a message 4 s or so late or early still decodes (a neighbouring slot's message never
+  fits whole, so nothing is decoded twice). The status line names a DT of 1.5 s or more with the count
+  ("DT +2.4 s: this computer's clock or the audio's delay"), says when the audio arrives with gaps (FT8
+  needs it unbroken), and no longer sends the operator to the Tune-to menu, gone since 2026-11-21: the
+  Calling list in the Spots panel has each band's FT8 dial.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

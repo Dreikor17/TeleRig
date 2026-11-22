@@ -13,6 +13,9 @@
  *      then <CALL> (the hash table lives on across slots, aged out, emptied by reset())
  *  F5. no false decodes: noise and silence decode nothing; a short or empty slot doesn't throw
  *  F6. as a worker: { id, rate, samples } in, { id, decodes } out; garbage gives { id, error } or nothing
+ *  F7. a wider window (21 s from 3 s before the slot, t0 -3): messages 3 s early to 4 s late found at their
+ *      DT from the slot's start; the neighbouring slots' messages, partly inside it, never; t0 through the
+ *      worker
  */
 "use strict";
 const fs = require("fs");
@@ -189,6 +192,39 @@ function slot(rate, sigs, seed) {
   check(posted.length === 3 && Array.isArray(posted[2].decodes) && posted[2].decodes.length === 0, "F6 an empty message -> no decodes");
   const page = load({ document: {} });
   check(page.onmessage === undefined, "F6 in a page (not a worker) no handler is installed");
+}
+
+// ---- F7: a window wider than the slot ----
+{
+  // 45 s of audio, three slots from 0, 15 and 30 s; the window for the middle one runs from 12 to 33 s
+  const three = (sigs, seed) => {
+    const buf = new Float32Array(16000 * 45);
+    enc.noise(buf, 16000, 0.05, seed);
+    for (const g of sigs) enc.add(buf, 16000, enc.tones(enc.pack(g.text)), { f0: g.f0, start: g.at, snr: g.snr, sigma: 0.05 });
+    return buf.slice(16000 * 12, 16000 * 33);
+  };
+  FT8.reset();
+  const win = three([{ text: "CQ K1ABC FN42", f0: 700, at: 15 + 0.5 - 3.0, snr: -8 },      // the middle slot's, 3 s early
+                     { text: "W9XYZ K1ABC -12", f0: 1300, at: 15 + 0.5, snr: -8 },        // on time
+                     { text: "K1ABC W9XYZ R-08", f0: 1900, at: 15 + 0.5 + 4.0, snr: -8 }], 51);   // 4 s late
+  const got = FT8.decodeSlot(win, 16000, -3);
+  eq(got.map((d) => d.text).sort(), ["CQ K1ABC FN42", "K1ABC W9XYZ R-08", "W9XYZ K1ABC -12"], "F7 3 s early, on time, 4 s late: all found");
+  for (const [t, dt] of [["CQ K1ABC FN42", -3.0], ["W9XYZ K1ABC -12", 0], ["K1ABC W9XYZ R-08", 4.0]]) {
+    const d = got.find((x) => x.text === t);
+    check(d && Math.abs(d.dt - dt) <= 0.15, `F7 ${t}: DT ${d && d.dt} from the slot's start (made ${dt})`);
+  }
+  FT8.reset();
+  const near = three([{ text: "CQ DX K1ABC FN42", f0: 800, at: 0.5, snr: -5 },              // the slot before: its last 1.1 s inside
+                      { text: "CQ DX W9XYZ EN53", f0: 1600, at: 30.5, snr: -5 }], 52);      // the slot after: its first 2.5 s inside
+  eq(FT8.decodeSlot(near, 16000, -3), [], "F7 the slots either side, partly inside the window: not decoded");
+  FT8.reset();
+  eq(FT8.decodeSlot(slot(16000, [{ text: "CQ K1ABC FN42", f0: 1000, dt: 0.2, snr: -5 }], 9), 16000, 0).map((d) => d.dt),
+     [0.2], "F7 t0 0: the 15 s slot as before");
+  const posted = [];
+  const W = load({ importScripts: () => {}, postMessage: (m) => posted.push(m) });
+  W.onmessage({ data: { id: 3, rate: 16000, samples: three([{ text: "CQ K1ABC FN42", f0: 700, at: 15 + 0.5 + 3.5, snr: -6 }], 53), t0: -3 } });
+  eq(posted.map((m) => (m.decodes || []).map((d) => [d.text, Math.abs(d.dt - 3.5) <= 0.15])), [[["CQ K1ABC FN42", true]]],
+     "F7 the worker takes t0: a message 3.5 s late, at its DT");
 }
 
 console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);
