@@ -53,7 +53,7 @@ Conventions:
 | SPLIT LOCK | `1A 05 0045` | toggle | menus | 00=OFF,01=ON | TODO | |
 | FM SPLIT Offset | `1A 05 0044` | number | menus | dir(00=+,01=-)+offset BCD | TODO | FM quick-split default |
 | Duplex/simplex (set) | `0F 10`/`11`/`12`/`13` | enum | both | 10=Simplex,11=DUP-,12=DUP+,13=RPS(DD) | TODO | See TX area |
-| Read duplex offset | `0C` | readout | both | 3-byte BCD (1kHz–10MHz; 10MHz only 1.2G) | done | Polled into state `offset` |
+| Read duplex offset | `0C` | readout | both | 3-byte BCD (1kHz–10MHz; 10MHz only 1.2G) | done | Polled into state `offset` (0 until it answers); the VFO's DUP tag and TX line show it |
 | Set duplex offset | `0D` | number | both | 3-byte BCD (1kHz–10MHz) | done | `offset` action (`duplex_offset`); set by a Spots memory, no Controls key yet |
 | Cancel scan | `0E 00` | action | both | stop scan | TODO | |
 | Start Programmed/Memory scan | `0E 01` | action | both | per V/M mode | TODO | |

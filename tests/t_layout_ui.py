@@ -486,14 +486,14 @@ def _vfo_digit_problems(css: str) -> list:
     if not fq or fq[-1].get("overflow") != "visible":
         probs.append(".tile-vfo .b-center .band-freq{overflow:visible} is missing (the phone ellipsis rule would clip)")
     # 5. one-line (short, dual watch) rows: the digits never shrink; when narrow, labels step aside
-    short = lambda c: any("max-height:220px" in x for x in c)
+    short = lambda c: any("max-height:245px" in x for x in c)
     if not any(d.get("flex") == "0 0 auto" for d in get("#bands.dual .b-center .band-freq", short)):
         probs.append("short dual rows: #bands.dual .b-center .band-freq{flex:0 0 auto} is missing")
-    hidden = {s for c, sels, d in rules if any("max-height:220px" in x and "max-width:320px" in x for x in c)
+    hidden = {s for c, sels, d in rules if any("max-height:245px" in x and "max-width:380px" in x for x in c)
               and d.get("display") == "none" for s in sels}
     for s in ("#bands.dual .band-fil", "#bands.dual .b-vfo"):
         if s not in hidden:
-            probs.append(f"short narrow (<= 320 px) dual rows: {s} does not step aside")
+            probs.append(f"short narrow (<= 380 px, a phone) dual rows: {s} does not step aside")
     # 6. the TX/RX tag is never hidden by a layout rule; width-only queries never reach inside .b-center
     for c, sels, d in rules:
         if d.get("display") == "none" and any(re.search(r"(\.tx(?![-\w])|#txTag)", s) for s in sels):
@@ -518,9 +518,9 @@ def vfo_digits_fit_their_column_and_are_never_clipped(ctx):
     check(not probs, "VFO digits: " + "; ".join(probs))
     # the parser and the checks see real rules (a self-test, so an empty list means something)
     rules = _css_rules(css)
-    check(any(c and "max-height:220px" in c[-1] for c, _, _ in rules), "the parser sees the VFO container queries")
+    check(any(c and "max-height:245px" in c[-1] for c, _, _ in rules), "the parser sees the VFO container queries")
     check(_vfo_digit_problems(css.replace(".tile-vfo .b-center{container-type:inline-size;", ".tile-vfo .b-center{"))
-          and _vfo_digit_problems(css + "\n@container (max-height:220px){#bands.dual .b-center{overflow:hidden}}")
+          and _vfo_digit_problems(css + "\n@container (max-height:245px){#bands.dual .b-center{overflow:hidden}}")
           and _vfo_digit_problems(css + "\n@container (max-width:300px){#bands .tx{display:none}}"),
           "the checks catch a lost container, a hidden-overflow digits column and a hidden TX/RX tag")
 

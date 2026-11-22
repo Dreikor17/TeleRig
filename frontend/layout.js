@@ -66,9 +66,13 @@
   // "cw": CW had a panel of its own before it became a mode of the Modem window; foldCw) ----
   const TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"];
   const TILES = {
-    // vfo bodyPx: one band's lines + the meter along the bottom with 16 px digits (style.css: 112 px + 16);
-    // bodyPxAlt: two bands, each on one line (the short-body layout) + the meter
-    vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 130, bodyPxAlt: 108 },
+    // vfo bodyPx: one band's lines (with the line under the digits) + the meter along the bottom, with 16 px
+    // digits (style.css: 151 px + 16); bodyPxAlt: two bands, each on one line (the short-body layout) + the
+    // meter (102 px + 1.72 x 16). On a phone the meter's keys take two rows (21 px more) and the tile is
+    // exactly this tall, so it holds the digits at their phone size (~25 px: the width term, 7.4cqw of
+    // 333 px): one band 172 + 25, two bands 123 + 1.72 x 25
+    vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 167, bodyPxAlt: 130,
+                bodyPxPhone: 197, bodyPxAltPhone: 166 },
     // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
     // phone 44 + 6 + a 52 px row (its keys keep the 44 px touch height) + 2 -> 6 phone rows (§3.6)
     ptt:      { title: "Transmit", icon: "mic",                minW: 2, bodyPx: 52,  bodyPxAlt: 84, bodyPxAltPhone: 104 },
@@ -329,7 +333,7 @@
   function atasShown() { const a = $("atasTune"); return !!a && !a.hidden; }
   function bodyPx(id, d) {
     const t = TILES[id];
-    if (id === "vfo" && dualWatch()) return t.bodyPxAlt;
+    if (id === "vfo") return dualWatch() ? ((d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt) : ((d === "phone" && t.bodyPxPhone) || t.bodyPx);
     if (id === "ptt" && atasShown()) return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;
     return t.bodyPx;
   }

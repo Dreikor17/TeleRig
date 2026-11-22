@@ -196,7 +196,9 @@ def fresh_state(p) -> dict:
         "tbw": 0,
         "rit": 0, "rit_freq": 0,
         "split": 0, "duplex": 0,
-        "offset": 600000,
+        # the repeater offset in Hz, as the radio reports it (Icom CI-V 0C; a Yaesu's RPT SHIFT menu
+        # for the band it is on, profile.rpt_offset_menus); 0 = not known (yet), so nothing shows one
+        "offset": 0,
         # FM operating settings (Tone/DCS + repeater shift) and the NAR/WIDE toggle
         "narrow": 0,
         "tone_mode": 0,      # 0 OFF / 1 TSQL / 2 TONE / 3 DCS / 4 DCS-ENC (Yaesu CT P2)

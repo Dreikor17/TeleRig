@@ -310,6 +310,17 @@ def vfo_main_screen_and_typed_frequency_in_node_vm(ctx):
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", "fetch(", "WebSocket"):
         check(bad not in js, f"freqentry.js never uses {bad}")
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))), ["set_freq"], "freqentry.js sends only set_freq")
+    # the line under the digits (VFO option A): in each band row, after its function strip; built as text only
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    for band in ("main", "sub"):
+        check(f'<div class="ind-strip" id="{band}Ind"></div>\n          <div class="b-ctx" id="{band}Ctx"></div>' in html.replace("\r\n", "\n"),
+              f"index.html: #{band}Ctx right after #{band}Ind")
+    app = _strip_comments(_read("app.js"))
+    body = app.split("function setCtx(elId, s, isActive) {", 1)[1].split("\n  }\n", 1)[0] if "function setCtx(" in app else ""
+    check(body and "createTextNode(hit.name)" in body and "innerHTML" not in body and "insertAdjacentHTML" not in body,
+          "app.js setCtx: the name is text, never parsed as HTML")
+    check(body and "send(" not in body and "action:" not in body, "app.js setCtx sends nothing: it only shows")
+    check('document.addEventListener("tr:memories", ctxAgain);' in app, "app.js: a change of the memories redraws the line")
 
 
 @test("unit")

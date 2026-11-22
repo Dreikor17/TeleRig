@@ -387,6 +387,37 @@ def level_meters_colour_by_the_scale(ctx):
 
 
 @test("unit")
+def vfo_digits_leave_room_for_their_lines(ctx):
+    """The VFO's digits (style.css) take the height the tile body has left once the band's other lines and
+    the meter are in, and layout.js keeps the tile tall enough for them: both must use the same sizes (when
+    they didn't, the phone's VFO spilled its function strip over the meter). One band: 151 px of other
+    lines, 172 where the meter's keys take two rows (a body up to 380 px wide); two bands 195 / 216; two
+    bands in a short body (one line each) 102 / 123. layout.js: those plus the digits, 16 px (on a phone,
+    where the keys take two rows and the tile is exactly this tall, ~25 px, their width size). The short
+    two-band layout reaches up to where the tall one fits 16 px digits."""
+    css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
+    lay = (FRONT / "layout.js").read_text(encoding="utf-8")
+    one = re.findall(r"#bands:not\(\.dual\) \.bandrow\.active \.b-center \.band-freq\{font-size:clamp\(16px,min\(calc\(100cqh - (\d+)px\)", css)
+    eq(one, ["151", "172"], "style.css one band: its other lines, then with the meter's keys on two rows")
+    two = re.findall(r"(?m)^\s*\.bandrow\.active \.b-center \.band-freq\{font-size:clamp\(16px,min\(calc\(\(100cqh - (\d+)px\) / 1\.72\)", css)
+    eq(two, ["195", "216"], "style.css two bands")
+    short = re.findall(r"#bands\.dual \.bandrow\.active \.b-center \.band-freq\{font-size:clamp\(16px,min\(calc\(\(100cqh - (\d+)px\) / 1\.72\)", css)
+    eq(short, ["102", "123"], "style.css two bands in a short body")
+    eq(re.findall(r"@container \(max-width:(\d+)px\) and \(min-height:1px\)\{\s*\.b-center \.band-freq", css), ["380"],
+       "the keys-on-two-rows sizes apply up to 380 px (a height test too, so the query reaches the tile body)")
+    low = re.search(r"@container \(max-height:(\d+)px\)\{\s*#bands\.dual\{", css)
+    check(low and int(low.group(1)) >= 216 + 1.72 * 16, f"the short two-band layout reaches up to where the tall one fits 16 px digits: {low and low.group(1)}")
+    m = re.search(r"vfo:\s*\{[^}]*bodyPx: (\d+), bodyPxAlt: (\d+),\s*bodyPxPhone: (\d+), bodyPxAltPhone: (\d+)", lay)
+    check(m, "layout.js TILES.vfo minimums")
+    if m:
+        bp, alt, ph, alt_ph = map(int, m.groups())
+        eq([bp, alt, ph, alt_ph], [151 + 16, 102 + 28, 172 + 25, 123 + 43],
+           "layout.js: one band and two bands with 16 px digits (1.72 x 16 = 28), a phone's with ~25 px (1.72 x 25 = 43)")
+    check('if (id === "vfo") return dualWatch() ? ((d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt) : ((d === "phone" && t.bodyPxPhone) || t.bodyPx);' in lay,
+          "layout.js: the VFO's minimum is device-aware")
+
+
+@test("unit")
 def vfo_meter_with_the_step_keys(ctx):
     """The VFO's meter (the operator, 11-22): no number beside the bar (the S reading, and on transmit the TX
     meter's, is gone: the bar and its scales say it); the step keys (- the step +) stand on its right, beside

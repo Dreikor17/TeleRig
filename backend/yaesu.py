@@ -128,6 +128,8 @@ class YaesuRadio:
         self._ex_width = max((getattr(it, "ex_width", 3) for it in _menu), default=3)
         self._sh_onoff = bool(getattr(self.profile, "sh_onoff", False))
         self._menu_vals = {}
+        self._rpt_offsets = {}    # RPT SHIFT menu number -> offset in Hz, as the radio answered
+        self.state["offset"] = 0  # not known until the radio's menu answers
         transport.start(self._on_bytes)
         self.state["connected"] = True
         self.state["transport"] = transport.name
@@ -137,7 +139,11 @@ class YaesuRadio:
         # state channel (ATAS TUNER SELECT, CW BFO, CW FREQ DISPLAY — whichever this radio
         # has), so the UI knows when to show ATAS tuning and how to draw CW on the AF scope.
         ex = tuple(c for c in (getattr(self.profile, a, "") for a, _ in self._EX_STATE) if c)
-        self._panel_cmds = self._SETTINGS + ex
+        # ...and the RPT SHIFT items (the repeater offset of each band), so the VFO can show where a
+        # shifted transmission goes (_note_rpt_offset)
+        rpt = tuple(menu_engine.yaesu_read_cmd(self._menu_index[n])
+                    for n, _lo, _hi in getattr(self.profile, "rpt_offset_menus", ()) if n in self._menu_index)
+        self._panel_cmds = self._SETTINGS + ex + rpt
         # AF (the radio's own speaker, in the room with the radio) starts at 0 on every connect, before
         # the panel is read back (as in radio.py; the page asks before turning it up)
         self._send("AG0000;")
@@ -389,6 +395,31 @@ class YaesuRadio:
     def _set_freq_state(self, hz: int) -> None:
         self.state["freq"] = hz
         self.state["main"]["freq"] = hz
+        self._sync_offset()                          # another band: its own repeater offset
+
+    def _note_rpt_offset(self, num: int, val) -> bool:
+        """An RPT SHIFT menu item answered (kHz): kept for its band. True when the offset of the
+        band the radio is on changed (state["offset"])."""
+        if not any(n == num for n, _lo, _hi in getattr(self.profile, "rpt_offset_menus", ())):
+            return False
+        if isinstance(val, bool) or not isinstance(val, int) or val < 0:
+            return False
+        self._rpt_offsets[num] = val * 1000
+        return self._sync_offset()
+
+    def _sync_offset(self) -> bool:
+        """state["offset"] = the repeater offset of the band the radio is on, as its menu answered
+        (0: not known yet, or a band without one). True when it changed."""
+        f = int(self.state.get("freq", 0) or 0)
+        off = 0
+        for n, lo, hi in getattr(self.profile, "rpt_offset_menus", ()):
+            if lo <= f <= hi:
+                off = getattr(self, "_rpt_offsets", {}).get(n, 0)
+                break
+        if self.state.get("offset") == off:
+            return False
+        self.state["offset"] = off
+        return True
 
     def _max_watts(self) -> int:
         return HF_MAX_W if int(self.state.get("freq", 0)) < 54_000_000 else VU_MAX_W
@@ -918,6 +949,8 @@ class YaesuRadio:
             return
         self._menu_vals[it.num] = val
         self._emit_menu({it.num: val})
+        if self._note_rpt_offset(it.num, val):     # a repeater offset: it rides the state channel too
+            self._emit_state()
 
     def _emit_menu(self, values: dict) -> None:
         if self.on_menu:

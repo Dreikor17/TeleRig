@@ -714,6 +714,8 @@ class YaesuSimTransport(Transport):
             val = it.min if it.kind == "int" else 0    # enum -> index 0, signed -> 0
             if it.name == "CW FREQ DISPLAY":
                 val = 1                                # the radio's factory default: PITCH (offset)
+            elif it.name.startswith("RPT SHIFT "):     # the repeater offsets (kHz): the usual US ones
+                val = {"28MHz": 100, "50MHz": 1000, "144MHz": 600, "430MHz": 5000}.get(it.name[10:], val)
             w = getattr(it, "ex_width", 3)
             return menu_engine.yaesu_encode(it, val)[2 + w:-1]   # strip EX<num> and ';'
         except Exception:

@@ -36,11 +36,16 @@
  *  P21. delete: the X arms at the first tap and deletes at the second
  *  P22. the two filters      P23. operators only      P24. when the memories are read; a failed read
  *  P25. the mark follows the radio in place; a row drawn for another radio tunes nothing
- *  P26. SpotsPanel is the folded panel's summary and the view only
+ *  P26. SpotsPanel is the folded panel's summary, the view and here() only
  *  P27. a memory keeps a repeater's shift and tone, in FM (the shift in DV too), as far as the radio has
  *       them (an Icom's DUP and the IC-9700's offset, TONE / TSQL; a Yaesu's shift, DCS too): SAVE takes
  *       them, a click sets them every time after the mode (the offset before the shift, the tone before
  *       its mode), the row shows them; a tone the tables don't have, or no tables, leaves the tone alone
+ *  P28. SpotsPanel.here(hz), for the VFO's line under the digits: one of your memories for this radio
+ *       (within 100 Hz), else a calling frequency on its bands (with its band and note), else null; the
+ *       memories are read the first time it is asked, whatever the panel shows, not again while they are
+ *       in (a failed read again after 30 s); "tr:memories" after a read, a save and a delete; a viewer
+ *       gets the calling frequencies only and nothing is read for them
  */
 "use strict";
 const fs = require("fs");
@@ -1037,7 +1042,7 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
   {
     const e = page();
     await settle(e);
-    eq(Object.keys(e.ctx.SpotsPanel).sort(), ["summary", "view"], "P26 SpotsPanel: the folded panel's summary and the view, nothing more");
+    eq(Object.keys(e.ctx.SpotsPanel).sort(), ["here", "summary", "view"], "P26 SpotsPanel: the folded panel's summary, the view and here(), nothing more");
   }
   // P27: a memory keeps a repeater's shift and tone
   const OFF = (hz) => ({ action: "offset", hz }), DUP = (mode) => ({ action: "duplex", mode }), RS = (value) => ({ action: "rpt_shift", value });
@@ -1171,6 +1176,49 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     e.submit(); e.submit(); await settle(e);
     const got = e.posts()[0] ? e.posts()[0].item : null;
     eq(got, { hz: 145250000, mode: "FM", filter: 1, data: false, shift: "-", offset: 600000, name: got ? got.name : "?" }, "P27 ... SAVE keeps the shift, not a tone it can't read");
+  }
+  // P28: SpotsPanel.here(hz), for the VFO
+  {
+    const e = page({ mem: MEMS() });                        // the FT-991A, LIVE in view: no memory read yet
+    await settle(e);
+    let news = 0;
+    e.ctx.document.addEventListener("tr:memories", () => { news++; });
+    const here = (hz) => e.ctx.SpotsPanel.here(hz);
+    eq([e.gets(), here(146520000)], [0, { kind: "call", name: "2 m FM calling", note: CALLS.find((g) => g.band === "2 m").rows.find((r) => r[0] === 146520)[3] }],
+       "P28 the first ask: the calling frequency (the memories not in yet)");
+    eq(e.gets(), 1, "P28 ... and the memories are read, whatever the panel shows");
+    await settle(e);
+    eq([here(146520050), news], [{ kind: "mem", name: "Simplex" }, 1], "P28 in: your memory (within 100 Hz), and tr:memories said so");
+    eq([here(14074000), here(7074000).name, here(146520200), here(0), e.gets()], [{ kind: "mem", name: "FT8 20 m" }, "40 m FT8", null, null, 1],
+       "P28 a memory before a calling frequency; 200 Hz off: nothing; asked again: not read again");
+    eq(here(144390000), { kind: "call", name: "2 m APRS", note: "Packet positions, North America" }, "P28 ... a calling frequency's band, name and note");
+    e.click(e.tab("mem")); await settle(e);
+    e.st = Object.assign({}, e.st, { freq: 28074000, mode_name: "DATA-USB" });
+    news = 0;
+    e.submit(); e.submit(); await settle(e);
+    eq([here(28074000), news], [{ kind: "mem", name: "28.074.0" }, 1], "P28 a memory saved: here() has it, tr:memories said so");
+    news = 0;
+    e.click(e.del("28.074.0")); e.click(e.del("28.074.0")); await settle(e);
+    eq([here(28074000).kind, news], ["call", 1], "P28 ... deleted: the calling frequency again, tr:memories said so");
+    const nine = page({ radio: R("ic9700"), mem: MEMS() });
+    await settle(nine);
+    eq(nine.ctx.SpotsPanel.here(14074000), null, "P28 a calling frequency off this radio's bands: nothing (the IC-9700 at 14.074)");
+    await settle(nine);
+    eq(nine.ctx.SpotsPanel.here(145230000), { kind: "mem", name: "Repeater" }, "P28 ... its own memories");
+    const v = page({ viewer: true, mem: MEMS() });
+    await settle(v);
+    eq([v.ctx.SpotsPanel.here(146520000).kind, v.ctx.SpotsPanel.here(14074000).name], ["call", "20 m FT8"], "P28 a viewer: the calling frequencies");
+    await settle(v);
+    eq(v.gets(), 0, "P28 ... and nothing is read for them");
+    const f = page({ mem: MEMS(), memFail: { status: 500, body: { ok: false, error: "store_error" } } });
+    await settle(f);
+    f.ctx.SpotsPanel.here(146520000); await settle(f);
+    f.ctx.SpotsPanel.here(146520000); f.clock.advance(20000); f.ctx.SpotsPanel.here(146520000); await settle(f);
+    eq(f.gets(), 1, "P28 a read that failed is not asked over and over");
+    f.clock.advance(11000); await settle(f);
+    eq([f.ctx.SpotsPanel.here(146520000).kind, f.gets()], ["call", 2], "P28 ... again after 30 s");
+    await settle(f);
+    eq(f.ctx.SpotsPanel.here(146520000), { kind: "mem", name: "Simplex" }, "P28 ... and then it has them");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

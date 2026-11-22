@@ -191,6 +191,12 @@ class RadioProfile:
     cw_pitch_hz: int = 0
     cw_bfo_read: str = ""
     cw_disp_read: str = ""
+    # Yaesu repeater offset: a SET-menu item per band holds it (FT-991A 080-083 RPT SHIFT, in kHz).
+    # (menu number, band low Hz, band high Hz) for each; read on connect and with the panel
+    # round-robin, so state["offset"] is the offset of the band the radio is on (0 = not known, or a
+    # band with none) and the VFO can show where a shifted transmission goes. An Icom reports its
+    # own (CI-V 0C). () = none. See docs/ADDING-A-RADIO.md.
+    rpt_offset_menus: tuple = ()
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
     # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
@@ -467,6 +473,9 @@ FT991A = RadioProfile(
     atas_read="EX143;",             # TUNER SELECT (0 OFF/1 INT/2 EXT/3 ATAS/4 LAMP) -> ATAS = 3
     cw_sides={"CW-USB": 1, "CW-LSB": -1},   # CW-U (MD3) / CW-L (MD7): the mode is the side
     cw_disp_read="EX059;",          # 059 CW FREQ DISPLAY: 0 DIRECT FREQ / 1 PITCH OFFSET (default)
+    # 080-083 RPT SHIFT 28 / 50 / 144 / 430 MHz (kHz): the offset a + or - shift (OS) uses there
+    rpt_offset_menus=((80, 28_000_000, 29_700_000), (81, 50_000_000, 54_000_000),
+                      (82, 144_000_000, 148_000_000), (83, 420_000_000, 450_000_000)),
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -529,6 +538,8 @@ FT891 = RadioProfile(
     cw_sides={"CW-USB": 1, "CW-LSB": -1},
     cw_bfo_read="EX0707;",          # 07-07 CW BFO: 0 USB (default) / 1 LSB / 2 AUTO
     cw_disp_read="EX0711;",         # 07-11 CW FREQ DISPLAY: 0 FREQ / 1 PITCH (default)
+    # 09-04 / 09-05 RPT SHIFT 28 / 50 MHz (kHz): the offset a + or - shift (OS) uses there
+    rpt_offset_menus=((904, 28_000_000, 29_700_000), (905, 50_000_000, 54_000_000)),
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],

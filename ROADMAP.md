@@ -10,8 +10,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
 ### The VFO with its meter, typing a frequency; SSTV: no false pictures, a viewer (unreleased)
 - **The VFO, laid out like an Icom main screen** (picked from the VFO examples, look A). Each band: a top
   line (TX/RX, the mode with -D, the filter and, on an Icom, its width, the VFO and the band), the digits
-  with the ones under the kHz small, the offsets beside them (RIT with its kHz, split, duplex with its
-  offset, the FM tone, the dial lock) and the lit functions (AGC, the radio's own preamp name, ATT, NB,
+  with the ones under the kHz small, the offsets beside them (RIT with its kHz, split, the repeater shift
+  with its offset, the FM tone with its CTCSS tone or DCS code, the dial lock) and the lit functions (AGC, the radio's own preamp name, ATT, NB,
   NR / DNR, AN / DNF, MN, NAR, COMP, VOX, MON). With two bands the operating one takes the room.
 - **The meter is in the VFO panel**, along its bottom; the Meter panel is gone (a saved layout gives its
   rows to the panels right above it). On receive it is the S-meter, its scale above the bar, S9+ in red; on
@@ -156,6 +156,18 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   TeleRig asks again when it is back; a request the browser refuses is asked again at the next tap. Full
   screen keeps the screen awake too, as before. It needs HTTPS (or localhost), as the microphone does:
   over plain http a phone says so once.
+- **The VFO says what you are tuned to.** A line under the operating band's frequency names it: your
+  memory (MEM and its name), else a calling frequency of the Spots panel's list, else the band plan's
+  segment (its description when you point at it). When a repeater shift moves the transmission, the
+  line shows where you transmit (TX 146.340.000), and the tags beside the digits carry their values
+  (DUP− 600k, TSQL 100.0, DCS 036). The offset is always the radio's own: an Icom reports it, and the
+  FT-991A and FT-891 now have it read from their RPT SHIFT menu for the band, so nothing shows a guessed
+  600 kHz (without it the shift shows no value and no TX frequency). With both receivers in a short
+  panel the line sits under the operating band's digits, its tags beside it, so the values never
+  squeeze the digits; on a phone the filter and the VFO step aside there. The digits now leave room for
+  the line and for the meter's keys on two rows: since the step keys moved, a phone's VFO was too short
+  for its contents (the function strip ran over the box's edge). On a phone the VFO is now two rows
+  taller, and at a small desktop window (1280×720) it may take a row more.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

@@ -162,6 +162,14 @@ renders/gates itself from it:
   `fm_tone` (a Yaesu's repeater shift lives in its FM panel), the offset with `duplex_offset` (Icom
   CI-V `0D`; the server refuses the `offset` action without it), TONE / TSQL with `fm_tone`, DCS
   with `fm_dcs` (`backend/memory_store.py`).
+- **The repeater offset in the state** (`state["offset"]`, Hz; 0 = not known) is what the VFO shows
+  beside the shift and uses for the TX frequency under the digits. An Icom reports it (CI-V `0C`,
+  read on connect and with the panel). A Yaesu keeps it in a SET-menu item per band: list them in
+  `rpt_offset_menus` as `(menu number, band low Hz, band high Hz)` (FT‑991A `080`–`083` RPT SHIFT
+  28 / 50 / 144 / 430 MHz, FT‑891 `09-04` / `09-05`), each an item of the profile's `menu` in kHz;
+  the handler reads them on connect and with the panel round-robin and keeps the offset of the band
+  the radio is on (`backend/rpt_offset_test.py`). Without them the VFO shows the shift without a value
+  and no TX frequency: never a made-up offset.
 - **`menu`** — a declarative `MenuItem` list driving the data‑driven **Setup tab**.
 
 When `transports`/`capabilities` are omitted they are **synthesized from the flat `has_*`

@@ -289,7 +289,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
    function strip; the meter runs along the bottom of the tile (below). ---- */
 .bands{display:flex;flex-direction:column;gap:6px;margin:0}
 .bands.tft{gap:6px}
-.bandrow{display:grid;grid-template-columns:minmax(auto,1fr) minmax(min-content,auto);grid-template-areas:"top top" "freq offs" "ind ind";
+.bandrow{display:grid;grid-template-columns:minmax(auto,1fr) minmax(min-content,auto);grid-template-areas:"top top" "freq offs" "ind ind" "ctx ctx";
   align-items:center;column-gap:10px;row-gap:4px;padding:6px 10px 7px;
   border:1px solid var(--tft-border);border-radius:var(--r-ctl);background:var(--tft-row);cursor:pointer;color:var(--tft-digit)}
 .bandrow:hover{border-color:#3a3d42}
@@ -300,6 +300,19 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .b-offs:empty{display:none}
 .ind-strip{grid-area:ind;display:flex;flex-wrap:wrap;gap:3px;min-height:15px;align-items:center}
 .bandrow:not(.active) .ind-strip{display:none}               /* only the operating band's functions are tracked */
+/* the line under the digits (app.js setCtx): what the frequency is (MEM and your memory's name, a calling
+   frequency, or, dimmer, the band plan's segment) and on the right where a repeater shift transmits. One
+   line, always there on the operating band (so the digits don't jump when it fills): a long name is cut
+   with an ellipsis, the TX frequency never. */
+.b-ctx{grid-area:ctx;display:flex;align-items:center;gap:8px;min-width:0;min-height:14px;padding-top:3px;
+  border-top:1px dashed var(--tft-border);font-size:11px;line-height:14px;white-space:nowrap}
+.ctx-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--tft-digit)}
+.ctx-name.plan{color:var(--tft-digit-dim)}
+.ctx-tag{font-size:10px;font-weight:700;letter-spacing:.04em;padding:0 4px;margin-right:5px;border-radius:3px;
+  background:var(--tft-pill-bg);color:var(--tft-pill-fg)}
+.ctx-tx{flex:0 0 auto;margin-left:auto;color:var(--tft-amber);font-variant-numeric:tabular-nums}
+.bandrow:not(.active) .b-ctx{display:none}
+.bandrow:not(.active){grid-template-areas:"top top" "freq offs"}   /* no empty rows for them (each would add a gap) */
 .band-tag{font-size:10px;font-weight:700;letter-spacing:.1em;color:var(--tft-digit-dim)}
 #bands:not(.dual) .band-tag{display:none}                    /* MAIN / SUB matter only with two receivers */
 #rowSub .band-tag{color:var(--tft-sub)}
@@ -1270,16 +1283,26 @@ body.arranging .tile-body{opacity:.6}
 .tile-vfo .b-center .band-freq{min-width:auto;overflow:visible;text-overflow:clip}
 .tile-vfo .band-mode,.tile-vfo .band-fil,.tile-vfo .band-bw,.tile-vfo .tx,.tile-vfo .b-vfo,.tile-vfo .b-band{white-space:nowrap}
 /* digit size follows the VFO tile body (container-type:size, §4.2): the height the body has left once the
-   band's lines and the meter are in (one band: 112 px of them; two: 160 px, the digits shared 1 : 0.72),
+   band's lines and the meter are in. One band: its top line, function strip and the line under the digits
+   with the row's padding (80 px), the gap (6) and the meter (65; 86 where its keys take two rows, a body
+   up to 380 px wide): 151 px, or 172. Two bands: the other band's top line and padding (38) and the gap
+   between the bands (6) as well, 195 px or 216, the digits shared 1 : 0.72,
    the §4.2 width term (7.4cqw of the tile body: --vfo-wcap is a registered <length> resolved on #bands, so
    it computes there, against the tile body, and inherits as px) and the digits column itself (13.5cqw =
    100 % / 7.4 em, the widest readout: 12 characters, 1296.200.000); never under 16 px. layout.js keeps the
    tile tall enough for the 16 px digits (TILES.vfo bodyPx / bodyPxAlt). */
 @property --vfo-wcap{syntax:"<length>";inherits:true;initial-value:64px}
 #bands{--vfo-wcap:7.4cqw}
-.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 160px) / 1.72),var(--vfo-wcap),13.5cqw),64px))}
-.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 160px) / 1.72),var(--vfo-wcap),13.5cqw),64px)}
-#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc(100cqh - 112px),var(--vfo-wcap),13.5cqw),72px)}
+.b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 195px) / 1.72),var(--vfo-wcap),13.5cqw),64px))}
+.bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 195px) / 1.72),var(--vfo-wcap),13.5cqw),64px)}
+#bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc(100cqh - 151px),var(--vfo-wcap),13.5cqw),72px)}
+/* the meter's keys on two rows (a body up to 380 px wide). The height test makes the query reach the tile
+   body: a width-only one on the digits would query their own column, .b-center (see below) */
+@container (max-width:380px) and (min-height:1px){
+  .b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 216px) / 1.72),var(--vfo-wcap),13.5cqw),64px))}
+  .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 216px) / 1.72),var(--vfo-wcap),13.5cqw),64px)}
+  #bands:not(.dual) .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc(100cqh - 172px),var(--vfo-wcap),13.5cqw),72px)}
+}
 /* a narrow VFO body (e.g. the 4-column default in a 900-1000 px window): tighter row chrome and a smaller mode
    pill, so the digits keep their room. (A width-only query on an element INSIDE .b-center would query
    .b-center itself; the queries below that reach in there also test the height, which only the tile body
@@ -1289,10 +1312,13 @@ body.arranging .tile-body{opacity:.6}
   .b-top{gap:4px}
   .band-mode{font-size:12px;padding:1px 6px}
 }
-/* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar) with BOTH receivers: each receiver
-   becomes one line (its top line, the digits, the offsets), and the function strip steps aside, so the
-   digits stay readable */
-@container (max-height:220px){
+/* a short VFO body (small cells, e.g. 1280x720 with the two-row top bar; a phone) with BOTH receivers: each
+   receiver becomes one line (its top line, the digits, the offsets), the function strip steps aside, and the
+   operating one keeps the line under its digits, so the digits stay readable. The other lines: each row's
+   padding (6 + 6), the line under the digits (15), the gaps (4 + 6) and the meter (65, or 86): 102 px, or
+   123. Up to 245 px (two bands at 16 px need 223 px of the tall layout, 244 with the meter's keys on two
+   rows). */
+@container (max-height:245px){
   #bands.dual{gap:4px}
   #bands.dual .bandrow{grid-template-columns:auto minmax(auto,1fr) minmax(min-content,auto);grid-template-areas:"top freq offs";
     row-gap:0;padding:2px 8px}
@@ -1300,15 +1326,24 @@ body.arranging .tile-body{opacity:.6}
   #bands.dual .b-center{flex-direction:row;align-items:center}
   #bands.dual .b-center .band-freq{flex:0 0 auto}
   #bands.dual .ind-strip,#bands.dual .ve-hint{display:none}
-  #bands.dual .b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 70px) / 1.72),var(--vfo-wcap),13.5cqw),40px))}
-  #bands.dual .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 70px) / 1.72),var(--vfo-wcap),13.5cqw),40px)}
+  /* the operating one: the digits take the whole line after its top line; the line under them carries its
+     offsets, side by side, so their values never squeeze the digits */
+  #bands.dual .bandrow.active{grid-template-areas:"top freq freq" "ctx ctx offs";row-gap:1px}
+  #bands.dual .bandrow.active .b-offs{flex-direction:row;align-items:center;align-self:center}
+  #bands.dual .b-ctx{border-top:0;padding-top:0}
+  #bands.dual .b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 102px) / 1.72),var(--vfo-wcap),13.5cqw),40px))}
+  #bands.dual .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 102px) / 1.72),var(--vfo-wcap),13.5cqw),40px)}
+}
+@container (max-height:245px) and (max-width:380px){
+  #bands.dual .b-center .band-freq{font-size:calc(.72 * clamp(16px,min(calc((100cqh - 123px) / 1.72),var(--vfo-wcap),13.5cqw),40px))}
+  #bands.dual .bandrow.active .b-center .band-freq{font-size:clamp(16px,min(calc((100cqh - 123px) / 1.72),var(--vfo-wcap),13.5cqw),40px)}
 }
 /* ...and when that short body is also narrow, the digits win: the band name steps aside */
-@container (max-height:220px) and (max-width:460px){
+@container (max-height:245px) and (max-width:460px){
   #bands.dual .b-band{display:none}
 }
-/* ...and at <= 320 px the filter, its width and the VFO step aside too: TX/RX, mode, digits stay */
-@container (max-height:220px) and (max-width:320px){
+/* ...and at <= 380 px (a phone) the filter, its width and the VFO step aside too: TX/RX, mode, digits stay */
+@container (max-height:245px) and (max-width:380px){
   #bands.dual .band-fil,#bands.dual .band-bw,#bands.dual .b-vfo{display:none}
 }
 .tile:has(#bands){border-color:rgba(16,185,129,.30)}

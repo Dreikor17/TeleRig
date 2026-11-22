@@ -12,8 +12,10 @@
  *      radio is not 144.2 kHz); a profile without rx_ranges uses its bands
  *  T2. the digits: the sub-kHz ones small; the operating band's are a button that says what it does; the
  *      filter's width beside the filter (an Icom's slot; a Yaesu's WIDTH code; none where it isn't known)
- *  T3. beside the digits: RIT with its kHz, split, duplex with its offset, the FM tone, the dial lock; the
- *      lit strip: the radio's own preamp name, AN / DNF, COMP, VOX, MON, NAR; none of it on the other band
+ *  T3. beside the digits: RIT with its kHz, split, the repeater shift with its offset (600k, 5M, 1.6M; an
+ *      Icom's DUP, a Yaesu's shift in FM; no value while the radio hasn't said it), the FM tone with its
+ *      CTCSS tone or DCS code (TONE, TSQL, DCS, DCS-ENC), the dial lock; the lit strip: the radio's own
+ *      preamp name, AN / DNF, COMP, VOX, MON, NAR; none of it on the other band
  *  T4. typing: a click on the digits (or Enter on them) opens the entry with a hint; Enter tunes (set_freq)
  *      and closes it; Esc cancels; a frequency the radio can't receive is refused, the entry stays; the
  *      other band's row still selects that band; a viewer can't type
@@ -28,6 +30,12 @@
  *      2.4 kHz whatever its WIDTH), and once the profiles are in it is drawn again with the radio's own:
  *      a Yaesu's WIDTH and its own function names. Both when the server's hello names the radio and when
  *      the page starts on another profile.
+ *  T8. the line under the operating band's digits: your memory ("MEM" and its name) or a calling frequency
+ *      (SpotsPanel.here), else the band plan's segment (bandplan.js, its description as the title), else
+ *      nothing; on the right the frequency a repeater shift transmits on (an Icom's DUP -/+, a Yaesu's
+ *      shift in FM, with the offset the radio reports), none for split, an unknown offset or another mode;
+ *      only the operating band's, nothing while disconnected; "tr:memories" redraws it; text stays text;
+ *      the same line is not built again
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -79,6 +87,7 @@ function bandRow(e, parent, name, active) {
   e.el("div", { class: "band-freq", id: name + "Freq" }, e.el("div", { class: "b-center" }, row));
   e.el("div", { class: "b-offs", id: name + "Offs" }, row);
   e.el("div", { class: "ind-strip", id: name + "Ind" }, row);
+  e.el("div", { class: "b-ctx", id: name + "Ctx" }, row);
   return row;
 }
 // the page, booted: tr.js + app.js + freqentry.js run, the socket opens, /api/radios answers
@@ -114,6 +123,7 @@ async function page(opts) {
   e.el("button", { id: "freqSet", class: "key" });
   e.load("tr.js");
   e.load("waterfall.js");                                  // Passband (the page loads it before app.js)
+  e.load("bandplan.js");                                   // the band plan's segments (the line under the digits)
   e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };   // no canvas here
   e.load("app.js");
   e.load("freqentry.js");
@@ -181,9 +191,17 @@ async function main() {
     eq([e.text("mainMode"), e.text("mainFil"), e.text("mainBw")], ["USB", "FIL2", "2.4 kHz"], "T2 mode, filter and its width (Icom)");
     eq(e.inds("mainOffs"), ["RIT −0.05", "SPLIT", "LOCK"], "T3 beside the digits: RIT with its kHz, split, the dial lock");
     eq(e.inds("mainInd"), ["AGC-M", "P.AMP", "NB", "AN", "COMP", "VOX"], "T3 the lit strip (Icom names)");
-    e.state({ duplex: 2, offset: 600000, mode_name: "FM", tone_mode: 2 });
-    for (let i = 0; i < 2; i++) await e.flush();
-    eq(e.inds("mainOffs"), ["DUP+ 0.600", "TONE"], "T3 duplex with its offset, the FM tone");
+    const offs = async (o) => { e.state(o); for (let i = 0; i < 2; i++) await e.flush(); return e.inds("mainOffs"); };
+    eq(await offs({ duplex: 2, offset: 600000, mode_name: "FM", tone_mode: 2, tone_freq: 12 }), ["DUP+ 600k", "TONE 100.0"],
+       "T3 an Icom's duplex with its offset, the FM tone with its CTCSS tone");
+    eq([await offs({ duplex: 1, offset: 5000000, mode_name: "FM", tone_mode: 1, tone_freq: 0 }),
+        await offs({ duplex: 1, offset: 1600000, mode_name: "FM" }), await offs({ duplex: 2, offset: 0, mode_name: "FM" })],
+       [["DUP− 5M", "TSQL 67.0"], ["DUP− 1.6M"], ["DUP+"]], "T3 ... 5M, 1.6M; TSQL; an offset not known yet: no value");
+    eq([await offs({ radio: "ft991a", rpt_shift: 2, offset: 600000, mode_name: "FM", tone_mode: 3, dcs_code: 5 }),
+        await offs({ radio: "ft991a", rpt_shift: 1, offset: 600000, mode_name: "FM", tone_mode: 4, dcs_code: 0 }),
+        await offs({ radio: "ft991a", rpt_shift: 2, offset: 600000, mode_name: "USB", tone_mode: 3 })],
+       [["DUP− 600k", "DCS 036"], ["DUP+ 600k", "DCS-ENC 023"], ["DUP−"]],
+       "T3 a Yaesu's shift with its offset in FM (DCS, DCS-ENC with the code); in USB no value and no tone");
     e.state({ radio: "ft991a", preamp: 1, anotch: 1, nr: 1, narrow: 1 });
     for (let i = 0; i < 4; i++) await e.flush();
     eq(e.inds("mainInd"), ["AGC-M", "AMP1", "DNR", "DNF", "NAR"], "T3 a Yaesu's own names (AMP1, DNR, DNF, NAR)");
@@ -296,6 +314,43 @@ async function main() {
     for (let i = 0; i < 4; i++) await e.flush();
     eq([blk.classList.contains("no-meter"), blk.style.display === "none"], [true, false],
        "T6 a radio with no meters: the meter hidden (style.css .meter.no-meter), the block and its step keys still there");
+  }
+  // T8: the line under the operating band's digits
+  {
+    const e = await page();
+    const ctx = (id) => e.$(id || "mainCtx").children.map((c) => [c.className, c.textContent]);
+    const go = async (o) => { e.state(o); for (let i = 0; i < 3; i++) await e.flush(); return ctx(); };
+    const RPT = { radio: "ic9700", freq: 146940000, mode_name: "FM" };
+    const plan = await go(RPT);
+    eq(plan, [["ctx-name plan", "Rptr outputs"]], "T8 no memory, no calling frequency: the band plan's segment, nothing on the right");
+    check(/^Band plan: FM repeater outputs/.test(e.$("mainCtx").children[0].title), "T8 ... its description as the title: " + e.$("mainCtx").children[0].title);
+    eq([await go(Object.assign({ duplex: 1, offset: 600000 }, RPT)), await go(Object.assign({ duplex: 2, offset: 600000 }, RPT))],
+       [[["ctx-name plan", "Rptr outputs"], ["ctx-tx", "TX 146.340.000"]], [["ctx-name plan", "Rptr outputs"], ["ctx-tx", "TX 147.540.000"]]],
+       "T8 an Icom's DUP- / DUP+: where it transmits");
+    eq([(await go(Object.assign({ duplex: 1, offset: 0 }, RPT))).length, (await go(Object.assign({ split: 1, offset: 600000 }, RPT))).length], [1, 1],
+       "T8 ... nothing while the offset isn't known, nothing for split");
+    let ask = null;
+    e.ctx.SpotsPanel = { here: (hz) => (ask = hz, { kind: "mem", name: "Club <b>rpt</b>" }) };
+    eq([await go(Object.assign({ duplex: 1, offset: 600000 }, RPT)), ask], [[["ctx-name mem", "MEMClub <b>rpt</b>"], ["ctx-tx", "TX 146.340.000"]], 146940000],
+       "T8 your memory: MEM and its name (text stays text), asked for the operating frequency");
+    eq([e.$("mainCtx").querySelectorAll(".ctx-tag").map((t) => t.textContent), e.$("mainCtx").children[0].title], [["MEM"], "Your memory: Club <b>rpt</b>"], "T8 ... its tag and title");
+    const kept = e.$("mainCtx").children[0];
+    await go(Object.assign({ duplex: 1, offset: 600000, smeter: 50 }, RPT));
+    check(e.$("mainCtx").children[0] === kept, "T8 the same line is not built again");
+    e.ctx.SpotsPanel = { here: () => ({ kind: "call", name: "2 m FM calling", note: "National simplex" }) };
+    e.doc.dispatchEvent(new e.Event("tr:memories"));
+    eq([ctx(), e.$("mainCtx").children[0].title], [[["ctx-name call", "2 m FM calling"], ["ctx-tx", "TX 146.340.000"]], "2 m FM calling. National simplex"],
+       "T8 tr:memories redraws it (a calling frequency: its name and note)");
+    e.ctx.SpotsPanel = { here: () => null };
+    eq([await go({ radio: "ft991a", freq: 146940000, mode_name: "FM", rpt_shift: 1, offset: 600000 }),
+        await go({ radio: "ft991a", freq: 146940000, mode_name: "USB", rpt_shift: 1, offset: 600000 }),
+        await go({ radio: "ft991a", freq: 442100000, mode_name: "FM", rpt_shift: 2, offset: 5000000 })],
+       [[["ctx-name plan", "Rptr outputs"], ["ctx-tx", "TX 147.540.000"]], [["ctx-name plan", "Rptr outputs"]], [["ctx-name plan", "Repeaters"], ["ctx-tx", "TX 437.100.000"]]],
+       "T8 a Yaesu: its shift in FM (+600k, -5M), none in USB");
+    eq(await go({ radio: "ic7300mk2", freq: 10000000, mode_name: "AM" }), [], "T8 off the band plan (WWV): an empty line");
+    eq([await go({ radio: "ic9700", freq: 432100000, dual_watch: true, subFreq: 432100000, active_band: "sub" }), ctx("subCtx")],
+       [[], [["ctx-name plan", "SSB/CW call"]]], "T8 only the operating band's line (here SUB)");
+    eq(await go({ radio: "ic9700", connected: false, freq: 146940000, mode_name: "FM", duplex: 1, offset: 600000 }), [], "T8 disconnected: nothing");
   }
   // T7: a reload, a state frame before the profiles
   for (const [tag, status] of [["the hello names the FT-991A", { connected: true, radio: "ft991a" }],

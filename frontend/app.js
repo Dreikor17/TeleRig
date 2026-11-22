@@ -541,6 +541,8 @@
     setInd("subInd", s, s.active_band === "sub");
     setOffs("mainOffs", s, s.active_band !== "sub");
     setOffs("subOffs", s, s.active_band === "sub");
+    setCtx("mainCtx", s, s.active_band !== "sub");
+    setCtx("subCtx", s, s.active_band === "sub");
     // a frequency being typed: closed once its band is not the operating one, or the radio goes away
     if (window.FreqEntry && FreqEntry.isOpen()) {
       const r = FreqEntry.row();
@@ -710,7 +712,10 @@
     el.textContent = "";
     for (const [t, c] of inds) { const sp = document.createElement("span"); sp.className = "ind" + (c ? " " + c : ""); sp.textContent = t; el.appendChild(sp); }
   }
-  // beside the digits: RIT with its offset (kHz), split, duplex with its offset (MHz), the tone, the dial lock
+  // beside the digits: RIT with its offset (kHz), split, the repeater shift with its offset, the tone with
+  // its CTCSS tone or DCS code (as the Controls panel names them), the dial lock. The offset is the radio's
+  // own (state.offset: an Icom's 0C answer, a Yaesu's RPT SHIFT menu for the band; 0 = not known: no value)
+  const offTag = (hz) => (hz >= 1e6 ? +(hz / 1e6).toFixed(3) + "M" : +(hz / 1e3).toFixed(1) + "k");   // 600k, 5M, 1.6M
   function setOffs(elId, s, isActive) {
     const el = $(elId);
     if (!el) return;
@@ -721,15 +726,76 @@
         out.push("RIT " + (k > 0 ? "+" : k < 0 ? "\u2212" : "\u00b1") + Math.abs(k).toFixed(2));
       }
       if ((s.split || 0) > 0) out.push("SPLIT");
-      if ((s.duplex || 0) > 0) out.push((s.duplex === 1 ? "DUP\u2212" : "DUP+") + (s.offset ? " " + (s.offset / 1e6).toFixed(3) : ""));
-      else if ((s.rpt_shift || 0) > 0) out.push(s.rpt_shift === 1 ? "DUP+" : "DUP\u2212");
-      const tone = ["", "TSQL", "TONE", "DCS", "DCS"][s.tone_mode || 0];
-      if (tone && /FM/.test(s.mode_name || "")) out.push(tone);
+      const off = (s.offset || 0) > 0 ? " " + offTag(s.offset) : "";
+      if ((s.duplex || 0) > 0) out.push((s.duplex === 1 ? "DUP\u2212" : "DUP+") + off);
+      else if ((s.rpt_shift || 0) > 0) out.push((s.rpt_shift === 1 ? "DUP+" : "DUP\u2212") + (FM_FAMILY.includes(s.mode_name) ? off : ""));
+      const tm = s.tone_mode || 0, tone = ["", "TSQL", "TONE", "DCS", "DCS-ENC"][tm];
+      if (tone && /FM/.test(s.mode_name || "")) {
+        const v = tm <= 2 ? CTCSS_TONES[s.tone_freq || 0] : DCS_CODES[s.dcs_code || 0];
+        out.push(tone + (v ? " " + v : ""));
+      }
       if (s.lock) out.push("LOCK");
     }
     el.textContent = "";
     for (const t of out) { const sp = document.createElement("span"); sp.className = "ind amber"; sp.textContent = t; el.appendChild(sp); }
   }
+  // ---- the line under the operating band's digits (the VFO's option A, 2026-11-22) ----
+  // Left: what the frequency is: one of your memories ("MEM", its name) or a calling frequency (spots.js
+  // SpotsPanel.here), else the band plan's segment there (bandplan.js), else nothing. Right: where a
+  // transmission goes when the radio's repeater shift moves it (txShifted), with the offset the radio
+  // itself reports; nothing when that isn't known, or for split (the other VFO's frequency isn't read).
+  // Built again only when what it says changes.
+  function txShifted(s) {
+    const off = +s.offset || 0, f = +s.freq || 0;
+    if (!(off > 0) || !(f > 0)) return 0;
+    if (currentRadio && currentRadio.protocol === "yaesu") {      // OS: 1 + / 2 -, in FM only
+      if (!FM_FAMILY.includes(s.mode_name) || !((s.rpt_shift || 0) > 0)) return 0;
+      return s.rpt_shift === 1 ? f + off : f - off;
+    }
+    if (!((s.duplex || 0) > 0)) return 0;                         // Icom 0F: 1 DUP- / 2 DUP+
+    return s.duplex === 1 ? f - off : f + off;
+  }
+  function whatsHere(hz) {
+    let hit = null;
+    try { const S = window.SpotsPanel; if (S && typeof S.here === "function") hit = S.here(hz); } catch (_) { hit = null; }
+    if (hit && hit.name) return hit;
+    const mhz = hz / 1e6;
+    for (const g of window.BANDPLAN || []) if (mhz >= g.lo && mhz < g.hi) return { kind: "plan", name: g.label, note: g.desc };
+    return null;
+  }
+  function setCtx(elId, s, isActive) {
+    const el = $(elId);
+    if (!el) return;
+    const on = isActive && !!s.connected && !blanked && (s.freq || 0) > 0;
+    const hit = on ? whatsHere(s.freq) : null, tx = on ? txShifted(s) : 0;
+    const key = (hit ? hit.kind + "|" + hit.name + "|" + (hit.note || "") : "") + "|" + tx;
+    if (el._key === key) return;
+    el._key = key;
+    el.textContent = "";                              // nothing to say: an empty line (it keeps its height)
+    if (hit) {
+      const name = document.createElement("span");
+      name.className = "ctx-name " + hit.kind;
+      if (hit.kind === "mem") {
+        const tag = document.createElement("b");
+        tag.className = "ctx-tag";
+        tag.textContent = "MEM";
+        name.appendChild(tag);
+      }
+      name.appendChild(document.createTextNode(hit.name));
+      name.title = hit.kind === "mem" ? "Your memory: " + hit.name
+        : hit.kind === "call" ? hit.name + (hit.note ? ". " + hit.note : "") : "Band plan: " + (hit.note || hit.name);
+      el.appendChild(name);
+    }
+    if (tx) {
+      const t = document.createElement("span");
+      t.className = "ctx-tx";
+      t.textContent = "TX " + formatFreq(tx);
+      t.title = "The repeater shift transmits on " + formatFreq(tx) + " MHz";
+      el.appendChild(t);
+    }
+  }
+  const ctxAgain = () => { setCtx("mainCtx", state, state.active_band !== "sub"); setCtx("subCtx", state, state.active_band === "sub"); };
+  document.addEventListener("tr:memories", ctxAgain);
   // how wide the operating band listens (waterfall.js Passband, the scope's band too): an Icom's filter slot
   // from the server (filter_bw), a Yaesu's WIDTH code by mode and NAR; 0 = not known (a Yaesu in AM / FM)
   function passbandHz() {
