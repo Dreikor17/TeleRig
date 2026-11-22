@@ -104,6 +104,8 @@ C("HamQTH: DIGI stays DIGI; a junk frequency is skipped",
   (by[("dx", "JA0CALL")]["mode"], ("dx", "VK0CALL") in by), ("DIGI", False))
 C("modes normalised", [S.norm_mode(m) for m in ("ft8", "USB", "psk31", "", None, "Olivia", "C4FM", "AM")],
   ["DIGI", "SSB", "DIGI", "", "", "DIGI", "", "AM"])
+C("SSTV is a category of its own, not data (the page tunes it as SSB, by band)",
+  [S.norm_mode(m) for m in ("SSTV", "sstv", " Sstv ")], ["SSTV", "SSTV", "SSTV"])
 C("every spot has the same keys", {tuple(sorted(x)) for x in r["spots"]},
   {("call", "hz", "mode", "name", "note", "ref", "spotter", "src", "time")})
 

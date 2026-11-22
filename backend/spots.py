@@ -39,7 +39,7 @@ MAX_AGE = 30 * 60                     # a spot older than 30 minutes is gone (PO
 MAX_SPOTS = 300                       # per source, newest kept
 TIMEOUT = 8.0
 _TEXT = {"call": 20, "ref": 24, "name": 80, "spotter": 20, "note": 120}
-DIGI = {"FT8", "FT4", "JS8", "RTTY", "PSK", "PSK31", "PSK63", "DATA", "DIGI", "DIGITAL", "OLIVIA", "SSTV",
+DIGI = {"FT8", "FT4", "JS8", "RTTY", "PSK", "PSK31", "PSK63", "DATA", "DIGI", "DIGITAL", "OLIVIA",
         "MFSK", "JT65", "JT9", "Q65", "FST4", "VARAC", "THOR", "HELL", "WSPR"}
 
 
@@ -54,7 +54,7 @@ def norm_mode(m: Any) -> str:
     m = _txt(m, 16).upper()
     if not m:
         return ""
-    if m in ("CW", "SSB", "FM", "AM"):
+    if m in ("CW", "SSB", "FM", "AM", "SSTV"):          # SSTV: a category of its own (the page tunes it as SSB)
         return m
     if m in ("USB", "LSB"):
         return "SSB"

@@ -559,13 +559,13 @@
           <input type="text" id="memName" maxlength="32" aria-label="Name for this memory" enterkeyhint="done" autocapitalize="off" spellcheck="false" hidden>
           <button type="button" class="key sm" id="memCancel" aria-label="Cancel" title="Cancel" hidden>&times;</button>
         </form>
-        <select id="spotsMode" aria-label="Mode"><option value="">All modes</option><option value="CW">CW</option><option value="SSB">SSB</option><option value="DIGI">Data</option><option value="FMAM">FM / AM</option></select>
+        <select id="spotsMode" aria-label="Mode"><option value="">All modes</option><option value="CW">CW</option><option value="SSB">SSB</option><option value="DIGI">Data</option><option value="SSTV">SSTV</option><option value="FMAM">FM / AM</option></select>
         <label class="spots-band"><input type="checkbox" id="spotsBand"> This band</label>
       </div>
       <p class="spots-status" id="spotsStatus" aria-live="polite">Loading spots…</p>
       <div class="spots-list" id="spotsList" role="tabpanel" aria-labelledby="spotsTabLive"></div>
       <p class="spots-credit" id="spotsCredit">Spots from POTA and WWFF. DX spots: <a href="https://www.hamqth.com/" target="_blank" rel="noopener">data provided by HamQTH.com</a>; register there and keep your profile current.</p>
-      <p class="spots-credit" id="callCredit" hidden>United States frequencies, from the ARRL band plan and frequency guide, QRP ARCI, WSJT-X, NCDXF and ARISS. A click only tunes.</p>
+      <p class="spots-credit" id="callCredit" hidden>United States frequencies, from the ARRL band plan, frequency guide and W1AW schedule, QRP ARCI, WSJT-X, NCDXF, ARISS and NIST. A click tunes, and a CW, FT8 or SSTV one shows that mode in the Modem window; nothing transmits.</p>
     </div></div>
   </section>
 </div>
@@ -595,8 +595,8 @@
         <button type="button" class="dm-mode" id="dmSstv" role="tab" aria-selected="false" aria-controls="dmPaneSstv" tabindex="-1">SSTV</button>
       </div>
       <!-- every mode decodes the radio's audio: while RX is off this says so, and its key turns RX on (the Audio
-           panel's own RX key, pressed for the operator). The "Tune to" menu in CW, FT8 and SSTV lists that mode's
-           frequencies of callfreqs.js on this radio's bands and tunes as the Spots panel's CALLING rows do. -->
+           panel's own RX key, pressed for the operator). A CW, FT8 or SSTV pick in the Spots panel shows that
+           mode here (spots.js modemTo). -->
       <div class="dm-rx" id="dmRx" hidden>
         <span>RX is off: nothing is decoded.</span>
         <button type="button" class="key sm" id="dmRxOn" title="Turn on receive audio (the Audio panel's RX key)">RX on</button>

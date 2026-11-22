@@ -26,7 +26,8 @@
  *  P14. the keys are a tablist (the arrow keys)      P15. each view keeps its place in the list (which scrolls
  *       on its own, under the keys and filters)
  *  P16. an answer that arrives after the view changed
- *  P17. the list itself: well-formed, inside the US bands, in order, short; every radio tunes every row
+ *  P17. the list itself: well-formed, inside the US bands (the time signals off them), in order, short;
+ *       a Modem mode that fits the row's mode; every radio tunes every row
  *  The Memory view (/api/me/memories):
  *  P18. the list: this radio's memories, read once, lowest first, one line each with its delete key
  *  P19. a click brings the radio back: the mode by its name, a Yaesu's NAR + WIDTH code, an Icom's FIL
@@ -44,6 +45,11 @@
  *  P28. SpotsPanel.here(hz), for the VFO's line under the digits: a calling frequency on this radio's
  *       bands (within 100 Hz, with its band and note), else null; never a memory, and asking reads no
  *       memories (the VFO doesn't name them)
+ *  P29. SSTV is a category of its own (its tag, the mode filter; a spot's too) and tunes the voice
+ *       sideband (FM for the space station); a CW, FT8 or SSTV pick (a calling row; a CW or SSTV spot)
+ *       shows that mode in the Modem window, which opens if folded and stays closed if closed, and not
+ *       while it is sending; the time signals where the radio receives them (AM, by their own name on the
+ *       VFO); the 60 m channels in USB; W1AW; the QRP frequencies of QRP ARCI
  */
 "use strict";
 const fs = require("fs");
@@ -172,7 +178,7 @@ function page(opts) {
   e.nameEl.select = () => { e.selects++; };
   e.nameEl.setSelectionRange = (a, b) => { e.selRange = [a, b]; };
   const sel = e.el("select", { id: "spotsMode" });
-  for (const v of ["", "CW", "SSB", "DIGI", "FMAM"]) e.el("option", { value: v }, sel);
+  for (const v of ["", "CW", "SSB", "DIGI", "SSTV", "FMAM"]) e.el("option", { value: v }, sel);
   sel.value = "";
   e.el("input", { id: "spotsBand", type: "checkbox" });
   e.el("p", { id: "spotsStatus" });
@@ -185,7 +191,13 @@ function page(opts) {
   e.toasts = [];
   e.ctx.TR.toast = (msg, kind) => { e.toasts.push([msg, kind]); };
   e.vis = opts.visible !== false;
-  e.ctx.RadioLayout = { visible: (id) => id === "spots" && e.vis };
+  // the Modem window (opts.modem: digital.js's DigitalPanel, recorded; e.modemOk false = a mode is sending)
+  // and its tile (opts.modemTile "grid" | "parked"; e.modemFolded: folded on the grid)
+  e.modemShown = []; e.tilesShown = []; e.modemOk = true; e.modemFolded = false;
+  e.ctx.RadioLayout = { visible: (id) => (id === "spots" ? e.vis : id === "sstv" ? opts.modemTile === "grid" && !e.modemFolded : false),
+                        showTile: (id) => { e.tilesShown.push(id); return true; } };
+  if (opts.modem) e.ctx.DigitalPanel = { show: (m) => { e.modemShown.push(m); return e.modemOk; } };
+  if (opts.modemTile) e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, e.el("div", { id: opts.modemTile === "grid" ? "grid" : "tileParking" }));
   e.sent = [];
   const radio = opts.radio || FT991A;
   e.el("select", { id: "radioSel" }).value = radio.id;      // the radio picker: the profile while no radio is connected
@@ -221,7 +233,10 @@ function page(opts) {
 // from the real file in a vm (the tests below compare the page against it and against fixed landmarks).
 const CALLS = (() => { const e = makeEnv({}); e.load("callfreqs.js"); return JSON.parse(JSON.stringify(e.ctx.CALL_FREQS)); })();
 const inBands = (p, hz) => p.bands.some((b) => hz >= b.lo && hz <= b.hi);
-const callsOf = (p) => CALLS.map((g) => ({ band: g.band, rows: g.rows.filter((r) => inBands(p, Math.round(r[0] * 1000))) })).filter((g) => g.rows.length);
+// where the radio receives (its rx_ranges, else its bands): a listen group's rows show there
+const inRx = (p, hz) => (Array.isArray(p.rx_ranges) && p.rx_ranges.length ? p.rx_ranges.some(([lo, hi]) => hz >= lo && hz <= hi) : inBands(p, hz));
+const callsOf = (p) => CALLS.map((g) => ({ band: g.band, rows: g.rows.filter((r) => (g.listen ? inRx : inBands)(p, Math.round(r[0] * 1000))) }))
+  .filter((g) => g.rows.length);
 const calling = (opts) => page(Object.assign({ localStorage: { "telerig.spots": JSON.stringify({ view: "call" }) } }, opts || {}));
 // a page that opens on the Memory view, the account holding MEMS
 const memory = (opts) => page(Object.assign({ localStorage: { "telerig.spots": JSON.stringify({ view: "mem" }) }, mem: MEMS() }, opts || {}));
@@ -450,7 +465,7 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     check(e.doc.getElementById("spotsCredit").hidden && !e.doc.getElementById("callCredit").hidden, "P8 the calling list's own credit shows, the spots' is hidden");
     const want = callsOf(FT991A);
     eq(e.heads(), want.map((g) => g.band), "P8 one heading per band the radio has");
-    eq(e.heads(), HF60.concat(["6 m", "2 m", "70 cm"]), "P8 ... an FT-991A: 160 m to 70 cm, lowest first, no 23 cm");
+    eq(e.heads(), HF60.concat(["6 m", "2 m", "70 cm", "Time signals"]), "P8 ... an FT-991A: 160 m to 70 cm, lowest first, no 23 cm; then the time signals");
     const rows = e.rows();
     eq(rows.length, want.reduce((n, g) => n + g.rows.length, 0), "P8 every frequency on those bands is listed");
     check(rows.length > 30 && rows.every((r) => r.tagName === "BUTTON" && r.classList.contains("spot-call")), "P8 each is a button");
@@ -463,7 +478,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const firsts = e.list.children.map((c) => (c.classList.contains("spots-bandh") ? c.textContent : e.text(c)[0]));
     eq(firsts.slice(0, 2), ["160 m", e.text(rows[0])[0]], "P8 a band's name, then its rows");
     const i20 = firsts.indexOf("20 m");
-    eq(firsts.slice(i20, i20 + 8), ["20 m", "14.060.0", "14.074.0", "14.100.0", "14.230.0", "14.285.0", "14.300.0", "17 m"], "P8 ... lowest first, then the next band");
+    eq(firsts.slice(i20, i20 + 11), ["20 m", "14.047.5", "14.060.0", "14.074.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0", "14.300.0", "17 m"],
+       "P8 ... lowest first, then the next band");
     e.clock.advance(65000); await settle(e);
     eq(e.asked.length, 1, "P8 nothing is asked of the server while the calling view shows");
     e.click(e.tab("live")); await settle(e);
@@ -534,7 +550,10 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     check(e.rows().length > 5, "P11 mode CW: there are CW rows");
     eq(modes(), ["CW"], "P11 ... and only CW rows");
     sel.value = "FMAM"; e.change(sel);
-    eq([modes(), e.heads()], [["FM"], ["10 m", "6 m", "2 m", "70 cm"]], "P11 FM / AM: the FM rows; a band with nothing left loses its heading");
+    eq([modes(), e.heads()], [["AM", "FM"], ["10 m", "6 m", "2 m", "70 cm", "Time signals"]],
+       "P11 FM / AM: the FM rows and the time signals (AM); a band with nothing left loses its heading");
+    sel.value = "SSTV"; e.change(sel);
+    eq([modes(), e.heads()], [["SSTV"], ["80 m", "40 m", "20 m", "15 m", "10 m", "2 m"]], "P11 SSTV, a category of its own");
     sel.value = "DIGI"; e.change(sel);
     eq(modes(), ["DATA"], "P11 data");
     sel.value = "SSB"; e.change(sel);
@@ -542,7 +561,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     sel.value = ""; e.change(sel);
     chk.checked = true; e.change(chk);
     eq([e.heads(), e.rows().map((r) => e.text(r)[0]), e.status()],
-       [["20 m"], ["14.060.0", "14.074.0", "14.100.0", "14.230.0", "14.285.0", "14.300.0"], "6 frequencies"], "P11 this band: the band the radio is on");
+       [["20 m"], ["14.047.5", "14.060.0", "14.074.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0", "14.300.0"], "9 frequencies"],
+       "P11 this band: the band the radio is on (never the time signals: they are off the amateur bands)");
     e.st = Object.assign({}, e.st, { freq: 146520000 }); e.clock.advance(500);
     eq(e.heads(), ["2 m"], "P11 the radio changes band: the list follows within half a second");
     sel.value = "DIGI"; e.change(sel);
@@ -558,7 +578,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
   }
   // P12: each radio lists its own bands; a switched radio's list follows
   {
-    const BANDS = { ic9700: ["2 m", "70 cm", "23 cm"], ic7300mk2: HF60.concat(["6 m"]), ft891: HF60.concat(["6 m"]), ic728: HF };
+    const BANDS = { ic9700: ["2 m", "70 cm", "23 cm"], ic7300mk2: HF60.concat(["6 m", "Time signals"]), ft891: HF60.concat(["6 m", "Time signals"]),
+                    ic728: HF.concat(["Time signals"]) };
     for (const [id, want] of Object.entries(BANDS)) {
       const e = calling({ radio: R(id) });
       await settle(e);
@@ -645,26 +666,39 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
                 [24890, 24990], [28000, 29700], [50000, 54000], [144000, 148000], [420000, 450000], [1240000, 1300000]];
     const usBand = (khz) => US.findIndex(([lo, hi]) => khz >= lo && khz <= hi);
     check(Array.isArray(CALLS) && CALLS.length >= 10, "P17 callfreqs.js: a list of bands");
-    const seen = new Set();
-    let last = 0;
+    // a row's Modem mode fits it: CW decodes CW, FT8 a data row, SSTV the voice sideband on HF and FM above
+    const FITS = { cw: (mode) => mode === "CW", ft8: (mode) => mode === "DIGI", sstv: (mode, khz) => mode === (khz < 30000 ? "SSB" : "FM") };
+    const seen = new Set(), LISTEN = new Set();
+    let last = 0, listening = false;
     for (const g of CALLS) {
-      check(typeof g.band === "string" && /^\d+ (m|cm)$/.test(g.band), "P17 a band's name: " + JSON.stringify(g.band));
+      const listen = g.listen === true;
+      if (listen) {
+        check(g.band === "Time signals", "P17 the listen group: " + JSON.stringify(g.band));
+        if (!listening) { listening = true; last = 0; }       // after the bands, lowest first among themselves
+      } else {
+        check(!listening, "P17 " + g.band + ": the bands come before the time signals");
+        check(typeof g.band === "string" && /^\d+ (m|cm)$/.test(g.band) && g.listen === undefined, "P17 a band's name: " + JSON.stringify(g.band));
+      }
       check(Array.isArray(g.rows) && g.rows.length > 0, "P17 " + g.band + " has rows");
       const bands = new Set();
       for (const r of g.rows || []) {
-        const [khz, mode, name, note] = r, what = "P17 " + g.band + " " + JSON.stringify(r) + ": ";
-        check(r.length === 4 && typeof khz === "number" && Number.isInteger(khz * 1000) && khz > 0, what + "kHz, mode, name, note");
-        check(["CW", "SSB", "DIGI", "FM"].includes(mode), what + "a spot's mode");
+        const [khz, mode, name, note, modem] = r, what = "P17 " + g.band + " " + JSON.stringify(r) + ": ";
+        const cat = modem === "sstv" ? "SSTV" : mode;
+        check((r.length === 4 || (r.length === 5 && Object.keys(FITS).includes(modem))) && typeof khz === "number" && Number.isInteger(khz * 1000) && khz > 0,
+              what + "kHz, mode, name, note (and the Modem window's mode)");
+        check(["CW", "SSB", "DIGI", "FM", "AM"].includes(mode), what + "a spot's mode");
+        if (r.length === 5) check(FITS[modem](mode, khz), what + "a Modem mode that fits the row's mode");
         // short enough to read whole in the narrowest panel (3 of 12 columns, about 250 px)
         check(typeof name === "string" && name.trim() === name && name.length >= 2 && name.length <= 14, what + "a name of at most 14 characters");
         check(typeof note === "string" && note.trim() === note && note.length >= 4 && note.length <= 34, what + "a note of at most 34 characters");
-        check(usBand(khz) >= 0, what + "inside a US amateur band");
-        check(khz > last, what + "above the row before it (bands and rows lowest first, no frequency twice)");
-        check(!seen.has(khz), what + "listed once");
-        check(RADIOS.some((p) => inBands(p, Math.round(khz * 1000))), what + "on at least one radio");
-        seen.add(khz); last = khz; bands.add(usBand(khz));
+        check(listen ? usBand(khz) < 0 : usBand(khz) >= 0, what + (listen ? "off the amateur bands (that is why it is a listen row)" : "inside a US amateur band"));
+        check(khz > last || (khz === last && !seen.has(khz + "|" + cat)), what + "above the row before it (bands and rows lowest first; a frequency twice only in two categories)");
+        check(!seen.has(khz + "|" + cat), what + "listed once in its category");
+        check(RADIOS.some((p) => (listen ? inRx : inBands)(p, Math.round(khz * 1000))), what + "on at least one radio");
+        seen.add(khz + "|" + cat); last = khz;
+        if (listen) LISTEN.add(Math.round(khz * 1000)); else bands.add(usBand(khz));
       }
-      eq(bands.size, 1, "P17 " + g.band + ": its rows are all in one band");
+      if (!listen) eq(bands.size, 1, "P17 " + g.band + ": its rows are all in one band");
     }
     const OK = ["set_mode", "narrow", "width", "set_filter", "data_mode"];
     for (const p of RADIOS) {
@@ -674,11 +708,15 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
         const freq = e.text(row)[0], mode = e.text(row)[1];
         e.sent.length = 0; e.click(row);
         const what = "P17 " + p.id + " " + freq + " " + mode + ": ";
-        check(e.sent.length >= 1 && e.sent[0].action === "set_freq" && inBands(p, e.sent[0].hz), what + "the frequency first, on the radio's bands");
+        const hz = e.sent[0] && e.sent[0].hz, listen = LISTEN.has(hz);
+        check(e.sent.length >= 1 && e.sent[0].action === "set_freq" && (listen ? inRx(p, hz) : inBands(p, hz)),
+              what + "the frequency first, on the radio's bands (a time signal: where it receives)");
         check(e.sent.slice(1).every((m) => OK.includes(m.action)), what + "then only the mode and the filter: " + JSON.stringify(e.sent));
         const sm = e.sent.find((m) => m.action === "set_mode");
         check(!sm || p.modes.includes(sm.mode), what + "a mode the radio has");
-        if (mode === "CW" || mode === "FM") check(!!sm && sm.mode.startsWith(mode), what + "from USB: the mode is set");
+        if (mode === "CW" || mode === "FM" || mode === "AM") check(!!sm && sm.mode.startsWith(mode), what + "from USB: the mode is set");
+        if (mode === "SSTV") check(hz < 30e6 ? (hz < 10e6 ? !!sm && sm.mode === "LSB" : !sm) : !!sm && sm.mode === "FM",
+                                   what + "SSTV: from USB, LSB below 10 MHz, USB above it, FM for the space station");
       }
     }
   }
@@ -1193,6 +1231,92 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const v = page({ viewer: true, mem: MEMS() });
     await settle(v);
     eq([v.ctx.SpotsPanel.here(146520000).kind, v.ctx.SpotsPanel.here(14074000).name, v.gets()], ["call", "20 m FT8", 0], "P28 a viewer: the same");
+  }
+  // P29: SSTV, the Modem window, the time signals, 60 m, W1AW, the QRP frequencies
+  {
+    const e = calling({ modem: true, modemTile: "grid" });
+    await settle(e);
+    const sel = e.doc.getElementById("spotsMode");
+    const byName = (name) => e.rows().find((r) => e.text(r)[2] === name);
+    eq([e.text(e.row("14.230.0")), e.row("14.230.0").title],
+       [["14.230.0", "SSTV", "SSTV", "Analog pictures, the busiest", ""], "Tune to SSTV 14.230.0 SSTV · Analog pictures, the busiest"],
+       "P29 an SSTV row says SSTV, not SSB");
+    sel.value = "SSTV"; e.change(sel);
+    eq(e.rows().map((r) => e.text(r)[0] + " " + e.text(r)[2]),
+       ["3.845.0 SSTV", "7.171.0 SSTV", "14.227.0 SSTV overflow", "14.230.0 SSTV", "14.233.0 SSTV overflow", "21.340.0 SSTV", "28.680.0 SSTV", "145.800.0 ISS SSTV"],
+       "P29 the SSTV filter: the SSTV rows, the space station's pictures among them");
+    sel.value = "SSB"; e.change(sel);
+    check(e.rows().length > 5 && e.rows().every((r) => e.text(r)[1] === "SSB") && !e.row("14.230.0"), "P29 ... and SSB no longer lists them");
+    sel.value = ""; e.change(sel);
+    const pick = (row, st) => {
+      if (st) e.st = Object.assign({}, e.st, st);
+      e.sent.length = 0; e.modemShown.length = 0;
+      e.click(typeof row === "string" ? e.row(row) : row);
+      return [e.sent.slice(), e.modemShown.slice()];
+    };
+    eq(pick("7.171.0"), [[F(7171000), M("LSB"), NAR, W(14)], ["sstv"]], "P29 40 m SSTV: LSB, and the Modem window shows SSTV");
+    e.clock.advance(20);
+    eq(e.doc.getElementById("srLive").textContent, "Tuned to SSTV, 7.171.0; the Modem window shows SSTV", "P29 ... a screen reader hears both");
+    eq(pick("14.230.0", { mode_name: "LSB" }), [[F(14230000), M("USB"), NAR, W(14)], ["sstv"]], "P29 20 m SSTV: USB");
+    eq(pick(byName("ISS SSTV"), { mode_name: "USB" }), [[F(145800000), M("FM"), NAR], ["sstv"]], "P29 the space station's pictures: FM, SSTV");
+    eq(pick(byName("ISS downlink")), [[F(145800000), M("FM"), NAR], []], "P29 ... its voice, on the same frequency: FM, the Modem window left alone");
+    eq([pick("14.060.0", { mode_name: "USB" })[1], pick("14.100.0")[1], pick("14.074.0")[1], pick("14.047.5")[1]], [["cw"], ["cw"], ["ft8"], ["cw"]],
+       "P29 QRP CW, the beacons (their calls decoded) and W1AW: CW; FT8: FT8");
+    eq([pick("14.285.0")[1], pick("146.520.0")[1], pick("14.300.0")[1], pick("10.000.0")[1]], [[], [], [], []],
+       "P29 voice, FM and a time signal leave the Modem window alone");
+    eq(e.tilesShown, [], "P29 a Modem window open on the grid: nothing else changes");
+    e.modemFolded = true;
+    pick("14.230.0");
+    eq(e.tilesShown, ["sstv"], "P29 a folded Modem window opens");
+    e.modemFolded = false; e.tilesShown.length = 0; e.modemOk = false;
+    eq(pick("21.340.0"), [[F(21340000)], ["sstv"]], "P29 a mode sending (DigitalPanel.show says no): tuned all the same");
+    e.clock.advance(20);
+    eq([e.tilesShown, e.doc.getElementById("srLive").textContent], [[], "Tuned to SSTV, 21.340.0"], "P29 ... the window kept, and nothing said of it");
+    e.modemOk = true;
+    // the time signals, 60 m, W1AW, the QRP frequencies
+    eq([e.text(e.row("10.000.0")), pick("10.000.0", { mode_name: "USB" })[0]],
+       [["10.000.0", "AM", "WWV", "NIST time signals. Listen only.", ""], [F(10000000), M("AM"), NAR]], "P29 WWV, where the FT-991A receives: AM");
+    eq(e.ctx.SpotsPanel.here(10000000), { kind: "call", name: "WWV", note: "NIST time signals. Listen only." }, "P29 ... the VFO names it by its own name");
+    eq([e.text(e.row("5.330.5")), pick("5.330.5", { mode_name: "LSB" })[0]],
+       [["5.330.5", "SSB", "Channel 5332", "USB, 100 W ERP at most", ""], [F(5330500), M("USB"), NAR, W(14)]], "P29 a 60 m channel: USB, the dial 1.5 kHz below its center");
+    eq(["5.346.5", "5.357.0", "5.371.5", "5.403.5"].map((f) => e.text(e.row(f))[2]), ["Channel 5348", "FT8", "Channel 5373", "Channel 5405"],
+       "P29 ... the four channels and the FT8 frequency in the segment");
+    eq([e.text(e.row("18.077.5"))[2], e.text(e.row("1.802.5"))[2], e.text(e.row("10.106.0"))[2], e.text(e.row("18.096.0"))[2], e.row("10.116.0"), e.row("18.086.0")],
+       ["W1AW", "W1AW", "QRP calling", "QRP calling", undefined, undefined], "P29 W1AW's 17 m CW (18.0775, today's schedule); QRP ARCI's 10.106 and 18.096");
+    const nine = calling({ radio: R("ic9700"), modem: true, modemTile: "grid" });
+    await settle(nine);
+    eq([nine.row("10.000.0"), nine.ctx.SpotsPanel.here(10000000)], [undefined, null], "P29 the IC-9700 doesn't receive WWV: no row, nothing on the VFO");
+    // a closed Modem window stays closed; a viewer changes nothing
+    const shut = calling({ modem: true, modemTile: "parked" });
+    await settle(shut);
+    shut.click(shut.row("14.230.0"));
+    eq([shut.modemShown, shut.tilesShown], [["sstv"], []], "P29 a closed Modem window: its mode set for when it opens, the panel left closed");
+    const v = calling({ viewer: true, modem: true, modemTile: "grid" });
+    await settle(v);
+    v.click(v.row("14.230.0"));
+    eq([v.sent, v.modemShown], [[], []], "P29 a viewer: nothing");
+  }
+  // P29 (live): an SSTV spot is SSTV and tunes the voice sideband; a CW or SSTV spot shows that mode in the Modem window
+  {
+    const LIVE = [
+      { src: "dx", call: "S0CALL", hz: 7171000, mode: "SSTV", ref: "", name: "Sample", spotter: "K3CALL", time: at(1), note: "" },
+      { src: "pota", call: "N4CALL", hz: 14230000, mode: "SSTV", ref: "US-0003", name: "Sample Park", spotter: "N5CALL", time: at(2), note: "" },
+      { src: "wwff", call: "F1CALL/P", hz: 7032500, mode: "CW", ref: "FFF-0002", name: "SAMPLE WOOD", spotter: "OK1CALL", time: at(3), note: "" },
+      { src: "pota", call: "N6CALL", hz: 14275000, mode: "SSB", ref: "US-0004", name: "Sample Lake", spotter: "N7CALL", time: at(4), note: "" },
+      { src: "dx", call: "JA1CALL", hz: 14074000, mode: "DIGI", ref: "", name: "Japan", spotter: "K4CALL", time: at(5), note: "" },
+    ];
+    const e = page({ modem: true, modemTile: "grid", answer: { spots: LIVE, sources: { pota: { ok: true }, wwff: { ok: true }, dx: { ok: true } }, now: NOW / 1000 } });
+    await settle(e);
+    const byCall = (c) => e.rows().find((r) => e.text(r)[3] === c);
+    eq(e.text(byCall("S0CALL")).slice(1, 4), ["7.171.0", "SSTV", "S0CALL"], "P29 an SSTV spot says SSTV");
+    const pick = (c) => { e.sent.length = 0; e.modemShown.length = 0; e.click(byCall(c)); return [e.sent.slice(), e.modemShown.slice()]; };
+    eq(pick("S0CALL"), [[F(7171000), M("LSB"), NAR, W(14)], ["sstv"]], "P29 ... on 40 m it tunes LSB (no longer DATA-USB), and the Modem window shows SSTV");
+    eq(pick("F1CALL/P")[1], ["cw"], "P29 a CW spot: CW");
+    eq([pick("N6CALL")[1], pick("JA1CALL")[1]], [[], []], "P29 an SSB spot, and a data spot (FT8 or not, it doesn't say): the Modem window left alone");
+    const sel = e.doc.getElementById("spotsMode");
+    sel.value = "SSTV"; e.change(sel);
+    eq(e.rows().map((r) => e.text(r)[3]), ["JA1CALL", "S0CALL", "N4CALL"],
+       "P29 the SSTV filter on the live list: the SSTV spots, newest first, under the spot last tuned (pinned whatever the filters)");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

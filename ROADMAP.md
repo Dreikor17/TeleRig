@@ -193,6 +193,19 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   collapsed Audio panel takes the Transmit panel's place, in full, so PTT stays where it was. The
   default VFO is 6 columns wide now, the Audio panel beside it; on a phone the Audio panel is right under
   the VFO. A radio that can't transmit (IC-728) and a listener don't see PTT, as before.
+- **The calling frequencies, checked again, and the Modem window follows a pick.** Every row was read
+  against its source again: two were wrong and are fixed (QRP CW on 17 m is 18.096, QRP ARCI's, not
+  G-QRP's 18.086; on 30 m 10.106, the US one, not 10.116). SSTV is its own category now: its rows say
+  SSTV, the mode filter has SSTV, and a spot the sources call SSTV is one too (it was data, so a 40 m
+  SSTV spot tuned DATA-USB; it tunes LSB now, USB from 20 m up). A click on a CW, FT8 or SSTV
+  frequency, or on a CW or SSTV spot, shows that mode in the Modem window too (a folded window opens, a
+  closed one stays closed; never while it is sending). New rows: 14.227 and 14.233 beside 14.230 for
+  SSTV, the space station's SSTV events on 145.800 FM, W1AW's code practice and CW bulletins (1.8025,
+  3.5815, 7.0475, 14.0475, 18.0775, 21.0675, 28.0675, today's ARRL schedule), the four 60 m channels
+  that keep 100 W ERP (USB, dial 1.5 kHz below the center), and WWV on 2.5, 5, 10, 15 and 20 MHz in AM
+  on the radios that receive there (not the IC-9700), which the VFO names "WWV". Heard voice on an SSTV
+  frequency is normal: SSTV operators talk between pictures, and those frequencies are in the phone
+  band.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

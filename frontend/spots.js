@@ -5,20 +5,23 @@
  * list itself.
  *
  *   tune: set_freq, then the spot's mode in this radio's own names (CW -> CW or CW-USB, SSB -> USB /
- *   LSB by band, digital -> DATA-USB, or USB with the Icom DATA switch on, FM / AM) and the filter
- *   for that mode (FILTER below: an Icom FIL slot, a Yaesu NAR off + WIDTH; the IC-728 has no filter
+ *   LSB by band, digital -> DATA-USB, or USB with the Icom DATA switch on, FM / AM; SSTV, a category of
+ *   its own, as SSB) and the filter for that mode (FILTER below: an Icom FIL slot, a Yaesu NAR off + WIDTH; the IC-728 has no filter
  *   command, so the mode only, and its CW-NAR stays). Each is sent only when the radio is not there
  *   already, with the same WS actions the frequency box, the mode / DATA keys and the RX filter keys
  *   send, so the server's rules apply (operators, no retune under someone else's transmission). A
  *   spot whose mode is not known tunes the frequency only. A spot outside the radio's bands, or seen
- *   by a viewer, is shown but cannot be clicked. The spot clicked stays at the top ("Tuned"), whatever
+ *   by a viewer, is shown but cannot be clicked. A CW or SSTV spot shows that mode in the Modem window
+ *   too (modemTo below). The spot clicked stays at the top ("Tuned"), whatever
  *   the filters and after the sources drop it, until the radio is tuned more than 3 kHz away from it.
  *
  * Three views, the keys at the top (this browser keeps the choice with the filters):
  *   LIVE     the spots, as above.
  *   CALLING  the fixed frequencies of callfreqs.js (each band's calling frequencies and FT8 dial
- *            frequency, SSTV, a few things to listen to) that are on this radio's bands, by band, lowest
- *            first. A click tunes as a spot's does. Nothing is asked of the server while it shows.
+ *            frequency, SSTV, W1AW, a few things to listen to) that are on this radio's bands, by band,
+ *            lowest first, then the time signals where the radio receives them. A click tunes as a
+ *            spot's does; a row with a Modem mode (CW, FT8, SSTV) shows that mode in the Modem window too.
+ *            Nothing is asked of the server while it shows.
  *   MEMORY   the operator's own frequencies for this radio, lowest first, kept by the server for the
  *            account (GET / POST / DELETE /api/me/memories), so every device has them. SAVE takes the
  *            radio as it is (frequency, the mode by its own name, the filter as the radio says it: an
@@ -92,7 +95,7 @@
     const usb = spot.hz >= 10e6 || (spot.hz >= 5.25e6 && spot.hz <= 5.45e6);   // 60 m is USB too
     switch (spot.mode) {
       case "CW": return pick("CW", "CW-USB");               // a Yaesu's normal CW is CW-USB on every band
-      case "SSB": return pick(usb ? "USB" : "LSB");
+      case "SSB": case "SSTV": return pick(usb ? "USB" : "LSB");   // SSTV: the voice sideband
       case "DIGI": return pick("DATA-USB", "USB");
       case "FM": return pick("FM");
       case "AM": return pick("AM");
@@ -104,7 +107,7 @@
   // SSB FIL2 2.4 kHz, CW FIL2 500 Hz, SSB-D FIL1 3.0 kHz); AM and FM get their normal FIL1 (on FIL2 /
   // FIL3 an Icom FM transmits narrow). A Yaesu's DATA-USB width defaults to 500 Hz: 3 kHz hears the
   // whole FT8 / FT4 subband.
-  const FILTER = { SSB: [2, 2400], CW: [2, 500], DIGI: [1, 3000], AM: [1, 0], FM: [1, 0] };
+  const FILTER = { SSB: [2, 2400], SSTV: [2, 2400], CW: [2, 500], DIGI: [1, 3000], AM: [1, 0], FM: [1, 0] };
   // What tunes the spot after set_freq: the mode, the Icom DATA switch and the filter, each only when
   // the radio is not already there. A mode change re-sends a Yaesu's NAR and WIDTH: the radio keeps its
   // own per mode, and a code means another width in another mode. Unknown mode: nothing.
@@ -131,11 +134,12 @@
     }
     return out;
   }
-  // A spot or a calling frequency ({hz, mode}): the frequency, then what its mode needs. False when this
-  // page may not tune there (a viewer, a frequency off the radio's bands): nothing is sent.
+  // A spot or a calling frequency ({hz, mode, listen?}): the frequency, then what its mode needs. False when
+  // this page may not tune there (a viewer, a frequency off the radio's bands; a listen row, the time
+  // signals: off where the radio receives): nothing is sent.
   function sendTune(x) {
     const c = ctl(), p = profile();
-    if (!c || !canTune() || !bandOf(p, x.hz)) return false;
+    if (!c || !canTune() || !(x.listen ? covers(p, x.hz) : bandOf(p, x.hz))) return false;
     const st = radioState();
     c.send({ action: "set_freq", hz: x.hz });
     for (const m of settings(p, x, st)) c.send(m);
@@ -145,10 +149,30 @@
     if (!sendTune(spot)) return;
     picked = { key: keyOf(spot), spot, hz: spot.hz, at: Date.now() };
     try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
-    say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz));
+    say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz) + modemSay(modemTo(MODEM_OF[spot.mode])));
     render();
     list.scrollTop = 0;                                     // the list back at its top, where the pin is
   }
+
+  // ---- a pick that names a Modem mode (a calling row's CW, FT8 or SSTV, a CW or SSTV spot): the Modem
+  // window (digital.js) shows that mode, to decode what the radio now hears. Receive only: nothing is keyed,
+  // and a mode sending (an SSTV picture, CW) keeps the window (DigitalPanel.show says no). A folded window
+  // opens; a closed one stays closed and shows that mode when it is opened. Returns the mode shown, or "".
+  const MODEM_OF = { CW: "cw", SSTV: "sstv" }, MODEM_LABEL = { cw: "CW", ft8: "FT8", sstv: "SSTV" };
+  function modemTo(m) {
+    const D = window.DigitalPanel;
+    if (!MODEM_LABEL[m] || !D || typeof D.show !== "function") return "";
+    let ok = false;
+    try { ok = D.show(m) === true; } catch (_) { ok = false; }
+    if (!ok) return "";
+    try {
+      const L = window.RadioLayout, t = document.querySelector('.grid-stack-item[data-tile="sstv"]');
+      const onGrid = !!(t && t.parentElement && t.parentElement.id === "grid");
+      if (onGrid && L && typeof L.visible === "function" && !L.visible("sstv") && typeof L.showTile === "function") L.showTile("sstv");
+    } catch (_) {}
+    return m;
+  }
+  const modemSay = (m) => (m ? "; the Modem window shows " + MODEM_LABEL[m] : "");
 
   // ---- the spot you are on: the one clicked, pinned at the top until the radio is tuned away from it
   // (more than AWAY_HZ off the frequency it was tuned to; the first SETTLE_MS let the radio get there).
@@ -248,11 +272,16 @@
   }
   function setStatus(msg) { if (status.textContent !== msg) status.textContent = msg; }
 
-  // ---- the Calling view: callfreqs.js, the bands this radio has ----
+  // ---- the Calling view: callfreqs.js, the bands this radio has (a listen group: where it receives) ----
+  // A row: {hz, mode (what tunes it), cat (its tag and the mode filter's: SSTV for an SSTV row, else the
+  // mode), name, note, modem (the Modem window's mode for it, or ""), listen}.
   const CALLS = (Array.isArray(window.CALL_FREQS) ? window.CALL_FREQS : []).map((g) => ({
-    band: String(g.band),
-    rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note]) => ({ hz: Math.round(khz * 1000), mode, name: String(name), note: String(note || "") })),
+    band: String(g.band), listen: g.listen === true,
+    rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note, modem]) => ({
+      hz: Math.round(khz * 1000), mode, cat: modem === "sstv" ? "SSTV" : mode, name: String(name), note: String(note || ""),
+      modem: MODEM_LABEL[modem] ? modem : "", listen: g.listen === true })),
   }));
+  const onRadio = (p, r) => (r.listen ? covers(p, r.hz) : !!bandOf(p, r.hz));
   let callSig = null, callRows = [];
   function renderCall() {
     const p = profile(), op = canTune(), here = bandHere(p, radioState());
@@ -262,7 +291,7 @@
       callRows = [];
       list.textContent = "";
       for (const g of CALLS) {
-        const rows = g.rows.filter((r) => bandOf(p, r.hz) && modeOk(r.mode) && bandOk(here, r.hz));
+        const rows = g.rows.filter((r) => onRadio(p, r) && modeOk(r.cat) && bandOk(here, r.hz));
         if (!rows.length) continue;
         const h = document.createElement("h3");
         h.className = "spots-bandh";
@@ -270,14 +299,14 @@
         list.appendChild(h);
         for (const r of rows) {
           const row = document.createElement(op ? "button" : "div"), src = cell("sp-src", "");
-          const title = (on) => (on ? "Tuned to " : op ? "Tune to " : "") + r.name + " " + fmtFreq(r.hz) + " " + modeLabel(r.mode) + (r.note ? " · " + r.note : "");
+          const title = (on) => (on ? "Tuned to " : op ? "Tune to " : "") + r.name + " " + fmtFreq(r.hz) + " " + modeLabel(r.cat) + (r.note ? " · " + r.note : "");
           row.className = "spot spot-call";
           if (op) {
             row.type = "button";
-            row.addEventListener("click", () => { if (sendTune(r)) say("Tuned to " + r.name + ", " + fmtFreq(r.hz)); });
+            row.addEventListener("click", () => { if (sendTune(r)) say("Tuned to " + r.name + ", " + fmtFreq(r.hz) + modemSay(modemTo(r.modem))); });
           }
           row.title = title(false);
-          row.append(cell("sp-freq", fmtFreq(r.hz)), cell("sp-mode", modeLabel(r.mode)), cell("sp-call", r.name), cell("sp-ref", r.note), src);
+          row.append(cell("sp-freq", fmtFreq(r.hz)), cell("sp-mode", modeLabel(r.cat)), cell("sp-call", r.name), cell("sp-ref", r.note), src);
           list.appendChild(row);
           callRows.push({ hz: r.hz, el: row, src, on: false, title });
         }
@@ -738,15 +767,16 @@
   schedule();
 
   // ---- what a frequency is, for the VFO's line under the digits (app.js): a calling frequency of
-  // callfreqs.js on this radio's bands (within ON_HZ of it, as its row would be marked Tuned), else null
-  // (the VFO then names the band plan's segment). Not your memories: the VFO doesn't name them (the
-  // operator, 2026-11-22), so nothing here reads them.
+  // callfreqs.js on this radio's bands (within ON_HZ of it, as its row would be marked Tuned; a time
+  // signal where the radio receives it, by its own name), else null (the VFO then names the band plan's
+  // segment). Not your memories: the VFO doesn't name them (the operator, 2026-11-22), so nothing here
+  // reads them.
   function here(hz) {
     if (!(hz > 0)) return null;
     const p = profile();
     for (const g of CALLS) {
-      const r = g.rows.find((x) => Math.abs(x.hz - hz) <= ON_HZ && bandOf(p, x.hz));
-      if (r) return { kind: "call", name: g.band + " " + r.name, note: r.note };
+      const r = g.rows.find((x) => Math.abs(x.hz - hz) <= ON_HZ && onRadio(p, x));
+      if (r) return { kind: "call", name: g.listen ? r.name : g.band + " " + r.name, note: r.note };
     }
     return null;
   }
