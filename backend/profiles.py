@@ -249,7 +249,9 @@ class RadioProfile:
                 split=True, rit=True, duplex=True,
                 rx_dsp=["nb", "nr", "anotch", "mnotch"],
                 mnotch_widths=[0, 1, 2] if self.protocol != "yaesu" else ([0, 2] if self.notch_width_menu else []),
-                tx_funcs=["comp", "vox", "mon"], tbw=True,
+                # VOX keys the transmitter off the mic: an Icom's is a TX claim (the PTT rules), a Yaesu's is
+                # never armed (yaesu.py), so its VOX key and level are not offered
+                tx_funcs=["comp", "mon"] if self.protocol == "yaesu" else ["comp", "vox", "mon"], tbw=True,
                 meters=["S", "PO", "SWR", "ALC", "COMP", "Vd", "Id"],
                 cw_tx=bool(self.cw_send), menus=bool(self.menu),
                 narrow=self.protocol == "yaesu",
@@ -563,7 +565,7 @@ FT891 = RadioProfile(
         vfo_swap=True, split=True, rit=True, duplex=True,
         rx_dsp=["nb", "nr", "anotch", "mnotch"],
         mnotch_widths=[0, 2],      # WIDE / NAR: its IF NOTCH WIDTH menu item (12-04)
-        tx_funcs=["comp", "vox", "mon"], tbw=True,
+        tx_funcs=["comp", "mon"], tbw=True,   # no VOX: TeleRig never arms it on a Yaesu (yaesu.py)
         meters=["S", "PO", "SWR", "ALC", "COMP", "Id"],   # FT-891 RM: 7=ID is the top; no VDD (8)
         cw_tx=False, menus=True,
         narrow=True, fm_tone=True, ext_ops=True,

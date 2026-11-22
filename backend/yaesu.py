@@ -616,7 +616,8 @@ class YaesuRadio:
             key, cmd = "pbt1", f"IS0{'+' if off >= 0 else '-'}{abs(off):04d};"
         elif sub == 0x15:                             # monitor level ML1 000-100
             key, cmd = "mon_level", f"ML1{_scale(value, 100):03d};"
-        # vox/pbt2 have no safe FT-991A mapping (vox arms TX) -> ignored.
+        # vox gain: VOX is never armed on a Yaesu, so its key and level are not offered (capabilities
+        # tx_funcs); pbt2: one IF SHIFT, which pbt1 drives -> both ignored.
         if cmd is None:
             return
         if key:

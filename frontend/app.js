@@ -2127,6 +2127,10 @@
       const list = ["nb", "nr", "anotch", "mnotch"].includes(fn) ? cap.rx_dsp : cap.tx_funcs;
       if (Array.isArray(list)) b.style.display = list.includes(fn) ? "" : "none";
     });
+    // the VOX level goes with the VOX key: a radio without VOX in its TX functions (a Yaesu: TeleRig never
+    // arms VOX there) shows neither
+    { const vg = $("vox_gain"), row = vg && vg.closest(".sl");
+      if (row) row.style.display = !Array.isArray(cap.tx_funcs) || cap.tx_funcs.includes("vox") ? "" : "none"; }
     // the manual notch's widths: an Icom's three, a Yaesu's two (WIDE / NAR, its IF NOTCH WIDTH menu item);
     // the row goes with the notch. (While a Yaesu hasn't answered that item, updateState hides the row.)
     { const mnw = Array.isArray(cap.mnotch_widths) ? cap.mnotch_widths : [0, 1, 2];

@@ -600,6 +600,13 @@ def controls_panel_shorter_with_every_control_in_node_vm(ctx):
     app = _strip_comments(_read("app.js"))
     for gone in ('$("freqSet")', '$("freqEntry")', '$("step")', '"opsGrp"', '"tunerGrp"', '"widthGrp"', '"contourGrp"', '"apfGrp"'):
         check(gone not in app, f"app.js no longer looks for {gone}")
+    # VOX (the operator, 11-22): never armed on a Yaesu, so its profiles don't offer it; the Icoms do (a TX claim)
+    import sys
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
+    from backend import profiles
+    eq({pid: "vox" in profiles.PROFILES[pid].capabilities.tx_funcs for pid in ("ft991a", "ft891", "ic9700", "ic7300mk2")},
+       {"ft991a": False, "ft891": False, "ic9700": True, "ic7300mk2": True}, "VOX in the TX functions: the Icoms only")
 
 
 @test("unit")

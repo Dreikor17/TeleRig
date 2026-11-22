@@ -180,6 +180,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   them and sets that item (it showed WIDE / MID / NAR, which did nothing). TeleRig reads the item first
   and writes it only once the radio has answered it as NARROW or WIDE, so a radio whose menu is
   numbered otherwise is never written to. The NOTCH slider now shows the radio's own notch frequency.
+- **No VOX key or VOX level on the FT-991A and FT-891.** They did nothing: TeleRig never arms VOX on a
+  Yaesu (with VOX on the radio transmits whenever the mic hears sound, with no PTT press). On the Icoms
+  VOX stays, under the same transmit rules as PTT. docs/ADDING-A-RADIO.md now keeps a list of what the
+  radios so far turned up (controls that did nothing on one maker, menus numbered per firmware, values
+  that must come from the radio) to check on every new radio.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

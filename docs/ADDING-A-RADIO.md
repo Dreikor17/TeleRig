@@ -145,9 +145,47 @@ How to be exhaustive and not miss things:
   controls when out of mode (Tone/DCS only in FM, WIDTH/CONTOUR only in SSB/CW/RTTY/DATA, APF/keyer
   only in CW). Adaptive UI beats a wall of dead buttons.
 - **Never ship a dead control.** If a button/slider exists in the HTML, its handler must be real
-  (not a `_noop`). A stub that silently does nothing is worse than an absent control.
+  (not a `_noop`). A stub that silently does nothing is worse than an absent control. (It happened
+  anyway on the Yaesus: see the lessons below.)
 - **Verify a sample on the real radio** (read → echo) before trusting new commands, and remember
   the transmit‑safety contract above for anything that can key TX (`KY` keyer playback, `MX` MOX).
+
+### Lessons from the radios so far: check each one on a new radio
+
+What went wrong on the radios TeleRig already drives, kept so the next radio doesn't repeat it. Add to
+this list whenever a radio turns up something new.
+
+- **Controls built around one maker show on every radio.** The Controls panel grew around the
+  Icoms, and on the Yaesus several of its controls were quietly `_noop`: the manual notch's WIDE / MID /
+  NAR (fixed 2026‑11‑22: a Yaesu has two widths, in a menu item), PBT2 (a Yaesu has one IF SHIFT, which
+  PBT1 drives; still shown), and the VOX key and its level (hidden 2026‑11‑22, see VOX below). For a new
+  radio, go through every key, slider and menu in every tab and check that its handler does something on
+  that radio; where it can't, the profile's `capabilities` must hide it.
+- **The same control can have fewer, or other, choices.** An Icom's manual notch has three widths (CI‑V
+  `16 57`), a Yaesu's two (`capabilities.mnotch_widths`). Check the choices of every multi-choice key
+  (AGC, TBW, APF, the filter slots, the notch) against the radio's own manual.
+- **Some settings live in a menu, not in a front-panel command.** On the Yaesus the repeater offset (RPT
+  SHIFT, per band), the notch width (IF NOTCH WIDTH), the CW side (CW BFO) and TUNER SELECT are SET-menu
+  items: name them in the profile (`rpt_offset_menus`, `notch_width_menu`, `cw_bfo_read`, `atas_read`)
+  and read them with the panel, so the page follows the radio.
+- **Menu numbers change between firmware versions.** The FT‑991A CAT reference (2016) and its later
+  operating manual (the DG‑ID firmware) number the menu two apart from item 088 on: IF NOTCH WIDTH is 116
+  in one and 114 in the other, TUNER SELECT 143 and 141. Note which firmware a menu table was compiled
+  for, and read back any menu item TeleRig uses outside the Settings tab before writing it: the notch
+  width (`notch_width_menu`) is written only after the radio has answered it as NARROW or WIDE. (Which
+  numbering the FT‑991A in use here has is still to be checked on the radio.)
+- **A value the page shows must come from the radio.** The repeater offset used to start as a made-up
+  600 kHz, so the VFO could show a wrong one; it is now 0 (not known) until the radio answers. The
+  FT‑991A's notch frequency was never read back, so its slider showed TeleRig's own guess (fixed
+  2026‑11‑22: `BP01;` with the panel). Every setting on the page needs a read on connect and with the panel.
+- **Teach the simulator every read the handler sends.** The FT‑991A simulator answered no `BP` and no
+  IF NOTCH WIDTH, so the preview could not show those controls working (it does now): add each new read
+  and its default to `backend/transport.py` with the handler.
+- **A transmit-capable function is a decision per radio.** VOX keys the transmitter from the mic, with no
+  PTT press. On the Icoms it is a TX claim under the PTT rules (one owner, the same time-out, off when the
+  browser drops); on the Yaesus TeleRig never arms it, and the VOX key and level are not offered
+  (`capabilities.tx_funcs`; the operator's choice, 2026‑11‑22). Decide VOX, MOX, keyer playback and TUNE
+  explicitly for each new radio, under the transmit-safety contract above.
 
 ## The profile is the declarative source of truth
 

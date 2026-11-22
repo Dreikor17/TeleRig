@@ -12,6 +12,8 @@
  *  C2. a Yaesu's WIDTH, CONTOUR and APF rows each in the modes they work in, their group only while one of
  *      them shows (FM: none; USB: WIDTH and CONTOUR; AM: CONTOUR; CW: all three); an Icom: none of it
  *  C3. the scan / FAST row (a Yaesu's ext_ops) and the antenna tuner row (has_tuner), per radio
+ *  C4. VOX: its key and its level slider go together; a radio without VOX in its TX functions (a Yaesu:
+ *      TeleRig never arms VOX there) shows neither
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -29,7 +31,7 @@ const PROFILES = [
     capabilities: caps({ tuner: true }) },
   { id: "yaesu", make: "Yaesu", name: "Yaesu", protocol: "yaesu", has_scope: false, has_tuner: true, default_step: 10,
     bands: [{ name: "20", lo: 14000000, hi: 14350000 }], modes: ["USB", "AM", "CW-USB", "FM"], steps: [{ v: 10, label: "10 Hz" }],
-    capabilities: caps({ mnotch_widths: [0, 2], ext_ops: true, tuner: true }) },
+    capabilities: caps({ mnotch_widths: [0, 2], ext_ops: true, tuner: true, tx_funcs: ["comp", "mon"] }) },
   { id: "old", make: "Icom", name: "Old", protocol: "civ", has_scope: false, has_tuner: false, default_step: 10,
     bands: [{ name: "20", lo: 14000000, hi: 14350000 }], modes: ["USB"], steps: [{ v: 10, label: "10 Hz" }],
     capabilities: caps({ rx_dsp: [], tx_funcs: [], meters: [], tuner: false }) },
@@ -55,6 +57,11 @@ async function page() {
   e.el("div", { class: "grp", id: "cwGrp" });
   e.el("div", { class: "row", id: "opsRow" });
   e.el("div", { class: "row", id: "tunerRow" });
+  // the TX group's VOX key and VOX level slider (index.html)
+  e.el("button", { class: "key tog", "data-act": "rxfunc", "data-fn": "vox", id: "voxBtn", "data-tx": "" });
+  const vox = e.el("label", { class: "sl", "data-tx": "" });
+  e.el("input", { type: "range", id: "vox_gain", "data-target": "vox_gain" }, vox);
+  e.voxLevel = vox;
   e.load("tr.js");
   e.load("waterfall.js");
   e.ctx.Scope = function () { return new Proxy({ meta: {} }, { get: (t, k) => (k in t ? t[k] : () => []) }); };
@@ -123,6 +130,17 @@ async function page() {
     eq([e.shown(e.$("opsRow")), e.shown(e.$("tunerRow"))], [false, true], "C3 an Icom with a tuner: no scan row, the tuner row");
     await e.state({ radio: "old" });
     eq([e.shown(e.$("opsRow")), e.shown(e.$("tunerRow"))], [false, false], "C3 a radio with neither: neither");
+  }
+  // C4: VOX's key and level
+  {
+    const e = await page();
+    const both = () => [e.shown(e.$("voxBtn")), e.shown(e.voxLevel)];
+    await e.state({ radio: "icom" });
+    eq(both(), [true, true], "C4 an Icom: the VOX key and its level");
+    await e.state({ radio: "yaesu" });
+    eq(both(), [false, false], "C4 a Yaesu (no VOX in its TX functions): neither");
+    await e.state({ radio: "icom" });
+    eq(both(), [true, true], "C4 ... back on the Icom: both again");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);
