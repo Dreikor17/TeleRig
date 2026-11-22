@@ -156,9 +156,9 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   TeleRig asks again when it is back; a request the browser refuses is asked again at the next tap. Full
   screen keeps the screen awake too, as before. It needs HTTPS (or localhost), as the microphone does:
   over plain http a phone says so once.
-- **The VFO says what you are tuned to.** A line under the operating band's frequency names it: your
-  memory (MEM and its name), else a calling frequency of the Spots panel's list, else the band plan's
-  segment (its description when you point at it). When a repeater shift moves the transmission, the
+- **The VFO says what you are tuned to.** A line under the operating band's frequency names it: a
+  calling frequency of the Spots panel's list, else the band plan's segment (its description when you
+  point at it). (It named your memory too at first; the memory names are not shown there.) When a repeater shift moves the transmission, the
   line shows where you transmit (TX 146.340.000), and the tags beside the digits carry their values
   (DUP− 600k, TSQL 100.0, DCS 036). The offset is always the radio's own: an Icom reports it, and the
   FT-991A and FT-891 now have it read from their RPT SHIFT menu for the band, so nothing shows a guessed

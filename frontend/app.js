@@ -741,8 +741,8 @@
     for (const t of out) { const sp = document.createElement("span"); sp.className = "ind amber"; sp.textContent = t; el.appendChild(sp); }
   }
   // ---- the line under the operating band's digits (the VFO's option A, 2026-11-22) ----
-  // Left: what the frequency is: one of your memories ("MEM", its name) or a calling frequency (spots.js
-  // SpotsPanel.here), else the band plan's segment there (bandplan.js), else nothing. Right: where a
+  // Left: what the frequency is: a calling frequency (spots.js SpotsPanel.here), else the band plan's segment
+  // there (bandplan.js), else nothing (your memories' names are not shown: the operator, 2026-11-22). Right: where a
   // transmission goes when the radio's repeater shift moves it (txShifted), with the offset the radio
   // itself reports; nothing when that isn't known, or for split (the other VFO's frequency isn't read).
   // Built again only when what it says changes.
@@ -776,15 +776,8 @@
     if (hit) {
       const name = document.createElement("span");
       name.className = "ctx-name " + hit.kind;
-      if (hit.kind === "mem") {
-        const tag = document.createElement("b");
-        tag.className = "ctx-tag";
-        tag.textContent = "MEM";
-        name.appendChild(tag);
-      }
       name.appendChild(document.createTextNode(hit.name));
-      name.title = hit.kind === "mem" ? "Your memory: " + hit.name
-        : hit.kind === "call" ? hit.name + (hit.note ? ". " + hit.note : "") : "Band plan: " + (hit.note || hit.name);
+      name.title = hit.kind === "call" ? hit.name + (hit.note ? ". " + hit.note : "") : "Band plan: " + (hit.note || hit.name);
       el.appendChild(name);
     }
     if (tx) {
@@ -795,8 +788,6 @@
       el.appendChild(t);
     }
   }
-  const ctxAgain = () => { setCtx("mainCtx", state, state.active_band !== "sub"); setCtx("subCtx", state, state.active_band === "sub"); };
-  document.addEventListener("tr:memories", ctxAgain);
   // how wide the operating band listens (waterfall.js Passband, the scope's band too): an Icom's filter slot
   // from the server (filter_bw), a Yaesu's WIDTH code by mode and NAR; 0 = not known (a Yaesu in AM / FM)
   function passbandHz() {

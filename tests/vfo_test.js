@@ -30,12 +30,12 @@
  *      2.4 kHz whatever its WIDTH), and once the profiles are in it is drawn again with the radio's own:
  *      a Yaesu's WIDTH and its own function names. Both when the server's hello names the radio and when
  *      the page starts on another profile.
- *  T8. the line under the operating band's digits: your memory ("MEM" and its name) or a calling frequency
- *      (SpotsPanel.here), else the band plan's segment (bandplan.js, its description as the title), else
- *      nothing; on the right the frequency a repeater shift transmits on (an Icom's DUP -/+, a Yaesu's
+ *  T8. the line under the operating band's digits: a calling frequency (SpotsPanel.here, its note as the
+ *      title), else the band plan's segment (bandplan.js, its description as the title), else nothing (no
+ *      memory names); on the right the frequency a repeater shift transmits on (an Icom's DUP -/+, a Yaesu's
  *      shift in FM, with the offset the radio reports), none for split, an unknown offset or another mode;
- *      only the operating band's, nothing while disconnected; "tr:memories" redraws it; text stays text;
- *      the same line is not built again
+ *      only the operating band's, nothing while disconnected; text stays text; the same line is not built
+ *      again
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -316,17 +316,14 @@ async function main() {
     eq([(await go(Object.assign({ duplex: 1, offset: 0 }, RPT))).length, (await go(Object.assign({ split: 1, offset: 600000 }, RPT))).length], [1, 1],
        "T8 ... nothing while the offset isn't known, nothing for split");
     let ask = null;
-    e.ctx.SpotsPanel = { here: (hz) => (ask = hz, { kind: "mem", name: "Club <b>rpt</b>" }) };
-    eq([await go(Object.assign({ duplex: 1, offset: 600000 }, RPT)), ask], [[["ctx-name mem", "MEMClub <b>rpt</b>"], ["ctx-tx", "TX 146.340.000"]], 146940000],
-       "T8 your memory: MEM and its name (text stays text), asked for the operating frequency");
-    eq([e.$("mainCtx").querySelectorAll(".ctx-tag").map((t) => t.textContent), e.$("mainCtx").children[0].title], [["MEM"], "Your memory: Club <b>rpt</b>"], "T8 ... its tag and title");
+    e.ctx.SpotsPanel = { here: (hz) => (ask = hz, { kind: "call", name: "2 m <b>FM</b> calling", note: "National simplex" }) };
+    eq([await go(Object.assign({ duplex: 1, offset: 600000 }, RPT)), ask, e.$("mainCtx").children[0].title],
+       [[["ctx-name call", "2 m <b>FM</b> calling"], ["ctx-tx", "TX 146.340.000"]], 146940000, "2 m <b>FM</b> calling. National simplex"],
+       "T8 a calling frequency: its name (text stays text) and its note as the title, asked for the operating frequency");
+    check(!e.$("mainCtx").querySelector(".ctx-tag") && !/MEM/.test(e.$("mainCtx").textContent), "T8 ... no MEM tag");
     const kept = e.$("mainCtx").children[0];
     await go(Object.assign({ duplex: 1, offset: 600000, smeter: 50 }, RPT));
     check(e.$("mainCtx").children[0] === kept, "T8 the same line is not built again");
-    e.ctx.SpotsPanel = { here: () => ({ kind: "call", name: "2 m FM calling", note: "National simplex" }) };
-    e.doc.dispatchEvent(new e.Event("tr:memories"));
-    eq([ctx(), e.$("mainCtx").children[0].title], [[["ctx-name call", "2 m FM calling"], ["ctx-tx", "TX 146.340.000"]], "2 m FM calling. National simplex"],
-       "T8 tr:memories redraws it (a calling frequency: its name and note)");
     e.ctx.SpotsPanel = { here: () => null };
     eq([await go({ radio: "ft991a", freq: 146940000, mode_name: "FM", rpt_shift: 1, offset: 600000 }),
         await go({ radio: "ft991a", freq: 146940000, mode_name: "USB", rpt_shift: 1, offset: 600000 }),

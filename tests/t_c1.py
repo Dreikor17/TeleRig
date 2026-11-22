@@ -320,7 +320,7 @@ def vfo_main_screen_and_typed_frequency_in_node_vm(ctx):
     check(body and "createTextNode(hit.name)" in body and "innerHTML" not in body and "insertAdjacentHTML" not in body,
           "app.js setCtx: the name is text, never parsed as HTML")
     check(body and "send(" not in body and "action:" not in body, "app.js setCtx sends nothing: it only shows")
-    check('document.addEventListener("tr:memories", ctxAgain);' in app, "app.js: a change of the memories redraws the line")
+    check(body and '"MEM"' not in body and "Your memory" not in body, "app.js setCtx names no memory (the operator, 11-22)")
 
 
 @test("unit")

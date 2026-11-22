@@ -37,8 +37,8 @@
  *   pinned or moved, and a row with the keyboard focus keeps it.
  *
  * Text from the sources and the names of memories are shown with textContent only.
- * window.SpotsPanel = { summary(), view() } (layout.js), here(hz) (app.js: the VFO names the memory or
- * the calling frequency the radio is on); "tr:memories" fires when the memories change.
+ * window.SpotsPanel = { summary(), view() } (layout.js), here(hz) (app.js: the VFO names the calling
+ * frequency the radio is on).
  */
 (function () {
   "use strict";
@@ -297,13 +297,10 @@
   // dcs?}]}; seq counts every change
   // of it here; draft: the radio as it was when SAVE was pressed, waiting for its name
   const mem = { radios: {}, max: 100, seq: 0, at: 0, loaded: false, error: false, loading: false, busy: false, draft: null };
-  // the memories changed (read, saved, deleted): the VFO's line under the digits names them (app.js)
-  const memNews = () => { try { document.dispatchEvent(new CustomEvent("tr:memories")); } catch (_) {} };
   function adopt(radio, j) {                                // a write's answer carries that radio's whole list
     if (!j || !Array.isArray(j.items)) return;
     mem.radios[radio] = j.items;
     mem.seq++;
-    memNews();
   }
   async function loadMem(force) {
     if (mem.loading || !canTune()) return;
@@ -323,7 +320,6 @@
       mem.loading = false;
       mem.seq++;
       if (filt.view === "mem") render();
-      memNews();
     }
   }
   function memList(p) {                                     // this radio's, lowest first
@@ -741,20 +737,13 @@
   render();
   schedule();
 
-  // ---- what a frequency is, for the VFO's line under the digits (app.js): one of your memories for
-  // this radio (within ON_HZ of it, as its row would be marked Tuned), else a calling frequency of
-  // callfreqs.js on this radio's bands, else null (the VFO then names the band plan's segment). An
-  // operator's memories are read the first time this is asked, whatever the panel shows (a read that
-  // failed is tried again after MEM_FRESH_MS); "tr:memories" says when they change. A viewer has none.
-  let memAsked = -Infinity;
+  // ---- what a frequency is, for the VFO's line under the digits (app.js): a calling frequency of
+  // callfreqs.js on this radio's bands (within ON_HZ of it, as its row would be marked Tuned), else null
+  // (the VFO then names the band plan's segment). Not your memories: the VFO doesn't name them (the
+  // operator, 2026-11-22), so nothing here reads them.
   function here(hz) {
     if (!(hz > 0)) return null;
     const p = profile();
-    if (canTune()) {
-      if (!mem.loaded && !mem.loading && Date.now() - memAsked >= MEM_FRESH_MS) { memAsked = Date.now(); loadMem(false); }
-      const m = memList(p).find((x) => Math.abs(x.hz - hz) <= ON_HZ);
-      if (m) return { kind: "mem", name: m.name };
-    }
     for (const g of CALLS) {
       const r = g.rows.find((x) => Math.abs(x.hz - hz) <= ON_HZ && bandOf(p, x.hz));
       if (r) return { kind: "call", name: g.band + " " + r.name, note: r.note };

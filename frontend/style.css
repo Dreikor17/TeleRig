@@ -300,16 +300,14 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .b-offs:empty{display:none}
 .ind-strip{grid-area:ind;display:flex;flex-wrap:wrap;gap:3px;min-height:15px;align-items:center}
 .bandrow:not(.active) .ind-strip{display:none}               /* only the operating band's functions are tracked */
-/* the line under the digits (app.js setCtx): what the frequency is (MEM and your memory's name, a calling
-   frequency, or, dimmer, the band plan's segment) and on the right where a repeater shift transmits. One
+/* the line under the digits (app.js setCtx): what the frequency is (a calling frequency, or, dimmer, the
+   band plan's segment) and on the right where a repeater shift transmits. One
    line, always there on the operating band (so the digits don't jump when it fills): a long name is cut
    with an ellipsis, the TX frequency never. */
 .b-ctx{grid-area:ctx;display:flex;align-items:center;gap:8px;min-width:0;min-height:14px;padding-top:3px;
   border-top:1px dashed var(--tft-border);font-size:11px;line-height:14px;white-space:nowrap}
 .ctx-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--tft-digit)}
 .ctx-name.plan{color:var(--tft-digit-dim)}
-.ctx-tag{font-size:10px;font-weight:700;letter-spacing:.04em;padding:0 4px;margin-right:5px;border-radius:3px;
-  background:var(--tft-pill-bg);color:var(--tft-pill-fg)}
 .ctx-tx{flex:0 0 auto;margin-left:auto;color:var(--tft-amber);font-variant-numeric:tabular-nums}
 .bandrow:not(.active) .b-ctx{display:none}
 .bandrow:not(.active){grid-template-areas:"top top" "freq offs"}   /* no empty rows for them (each would add a gap) */
