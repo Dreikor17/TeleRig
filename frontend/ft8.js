@@ -16,7 +16,7 @@
  * is marked in the list, shows even under "CQ only", and the callsign stands at the end of the list's
  * headings; tr:call (the callsign changed) marks the list again.
  *
- * window.Ft8Panel = { summary(), feed(pcm, rate), markers(), text() } (the window; tests; text(): the list,
+ * window.Ft8Panel = { summary(), feed(pcm, rate), text() } (the window; tests; text(): the list,
  * for the window's Copy key)
  */
 (function () {
@@ -58,7 +58,7 @@
   }
 
   // ---- the slots ----
-  let done = 0, busy = false, lastSlot = null, lastCount = 0, lastFreqs = [], note = "", empty = 0;
+  let done = 0, busy = false, lastSlot = null, lastCount = 0, note = "", empty = 0;
   function schedule(now) {
     if (busy || !ring || !anchors.length) return;
     const start = Math.floor((now - SLOT_MS - LATE_MS) / SLOT_MS) * SLOT_MS;   // the newest slot that has ended
@@ -130,7 +130,7 @@
   document.addEventListener("tr:call", remark);            // digital.js: as it starts, and at every change
   function cell(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
   function show(start, decodes) {
-    lastSlot = start; lastCount = decodes.length; lastFreqs = decodes.map((d) => d.freq);
+    lastSlot = start; lastCount = decodes.length;
     empty = decodes.length ? 0 : empty + 1;
     note = decodes.length ? ""
       : empty >= EMPTY_SLOTS ? "Nothing decoded for " + empty * 15 + " s. Check the frequency (Tune to), the mode and this computer's clock."
@@ -167,7 +167,7 @@
     list.classList.toggle("cq-only", cqOnly.checked);
     cqOnly.addEventListener("change", () => { ls(KEY_CQ, cqOnly.checked ? "1" : "0"); list.classList.toggle("cq-only", cqOnly.checked); });
   }
-  if (clearBtn) clearBtn.addEventListener("click", () => { while (list.firstChild) list.removeChild(list.firstChild); rows = 0; lastFreqs = []; render(); });
+  if (clearBtn) clearBtn.addEventListener("click", () => { while (list.firstChild) list.removeChild(list.firstChild); rows = 0; render(); });
   // FT8 is sent in USB: heard in USB, or in a data mode on USB (an Icom's DATA is USB with its switch on)
   const usbMode = (m) => /^(USB|DATA-USB|USB-D)$/.test(String(m || ""));
 
@@ -194,7 +194,6 @@
   window.Ft8Panel = {
     summary: () => (lastSlot === null ? "" : "FT8 " + lastCount + " at " + hms(lastSlot).slice(0, 5)),
     feed: (pcm, r) => { if (pcm && pcm.length && r > 0) feed(pcm, r); },
-    markers: () => lastFreqs.map((hz) => ({ hz: hz + 25, dim: true })),   // the middle of each message's 50 Hz
     // the list as it shows, as text: a line for each slot's time, then its messages (dB, DT, Hz and the
     // message, tab-separated); under "CQ only", only the rows that show
     text: () => {

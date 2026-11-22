@@ -467,6 +467,9 @@ def spots_panel_in_node_vm(ctx):
                  ".mem-form.naming{flex:1 1 100%}",
                  '.spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}',
                  '.spot-mem>.spot.rpt{grid-template-areas:"freq mode call call" "ref ref ref src"}',
+                 ".tile-spots>.tile-fit{display:flex;flex-direction:column;height:100%}",
+                 ".tile-spots>.tile-fit>*{flex:none}",
+                 ".tile-spots>.tile-fit>.spots-list{flex:1 1 auto;min-height:64px;overflow-y:auto;overscroll-behavior:contain;",
                  ".mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}",
                  ".spots-tab,.spots-bar select,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:44px}"):
         check(rule in css, f"style.css: {rule}")
@@ -582,13 +585,13 @@ def digital_modes_window_in_node_vm(ctx):
     out; CW is the CW panel moved in (cwtool.js: tests/cw_chat_test.js), the CW tile gone; RTTY (rtty.js:
     tests/rtty_test.js) and FT8 (ft8-decode.js against a real recording and WSJT-X's own decodes of it:
     tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). With RX off the
-    window says so under its keys and has the key that turns it on; CW, FT8 and SSTV have a Tune-to menu
-    (the Spots panel's list tunes); FT8's list has column headings and its status says what to check when
-    nothing decodes. The operator's callsign (typed in CW, kept by the browser) is marked in FT8's list;
-    Copy puts a mode's text on the clipboard; CW has an audio strip with a gate at the radio's pitch, which
-    gives way to the chat. Static: RTTY and FT8 decode only (no radio action, no socket, no fetch) and
+    window says so under its keys and has the key that turns it on; each mode's bar sits right under the
+    keys (no audio strip, no Tune-to menu: the operator asked for neither); FT8's list has column headings
+    and its status says what to check when nothing decodes; RTTY listens on the radios' own RTTY tones.
+    The operator's callsign (typed in CW, kept by the browser) is marked in FT8's list; Copy puts a mode's
+    text on the clipboard. Static: RTTY and FT8 decode only (no radio action, no socket, no fetch) and
     never parse text as HTML; the decoder carries ft8_lib's MIT notice, and the test recording its own;
-    the page's RX line, menus, headings, CW's strip and quick keys, the Copy keys and touch sizes."""
+    the page's RX line, headings, quick keys, the Copy keys and touch sizes."""
     for name in ("ft8_test.js", "rtty_test.js", "digital_test.js"):
         r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=600, cwd=str(REPO))
         eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
@@ -624,11 +627,14 @@ def digital_modes_window_in_node_vm(ctx):
         check(re.search(r'<p class="[a-z-]+" id="%s"[^>]*></p>' % sid, html), f"index.html: #{sid} starts empty")
     for f, n in (("rtty.js", 0), ("ft8.js", 0), ("sstv.js", 0), ("cwtool.js", 0)):
         check("Audio panel" not in _strip_comments(_read(f)), f"{f} no longer sends the operator to the Audio panel for RX")
-    # Tune to: a menu in CW, SSTV and FT8 (the page's order), for operators, hidden until it has entries
-    gos = re.findall(r'<select class="dm-go" id="(\w+)" data-gate="operate" aria-label="[^"]+" title="[^"]+" hidden>'
-                     r'<option value="">Tune to\u2026</option></select>', html)
-    eq(gos, ["cwGo", "sstvGo", "ft8Go"], "index.html: the three Tune-to menus")
-    check("sp.tuneTo(r)" in dig and "sp.calls(g.pick)" in dig, "digital.js: the menus list and tune through the Spots panel")
+    # no audio strip and no Tune-to menu in any mode (the operator, 2026-11-22), nor the code behind them
+    for gone in ('class="dm-strip"', 'class="dm-go"', 'id="cwStrip"', 'id="rttyStrip"', 'id="ft8Strip"', 'id="cwGo"', 'id="ft8Go"', 'id="sstvGo"'):
+        check(gone not in html, f"index.html: no {gone}")
+    for f, gone in (("digital.js", ("Strip", "getContext", "renderGo", "tuneTo", "cwMarkers")), ("rtty.js", ("telerig.rtty.center", "nudge")),
+                    ("ft8.js", ("markers",)), ("spots.js", ("tuneTo", "calls:"))):
+        js = _strip_comments(_read(f))
+        for g in gone:
+            check(g not in js, f"{f}: no {g} (the strips and menus are gone)")
     # CW: one status line; FT8: column headings right over its list
     check('<p class="dm-status" id="cwStatus" aria-live="polite">' in html and 'id="cwHint"' not in html, "index.html: CW has one status line")
     check(re.search(r'<div class="ft8-row ft8-head" aria-hidden="true"><span class="db"[^>]*>dB</span><span class="dt"[^>]*>DT</span>'
@@ -636,14 +642,12 @@ def digital_modes_window_in_node_vm(ctx):
                     r'<div class="dm-screen ft8-list" id="ft8List"', html),
           "index.html: FT8's column headings sit right over its list")
     check('<b class="sl-val" id="cwToneVal">600 Hz</b>' in html, "index.html: the sidetone's pitch is shown beside its slider")
-    # CW's pane, top to bottom: the audio strip, the bar (Decode, Tune to, Copy, Clear), the status, the chat,
-    # the quick keys with the callsign, the message. Copy before Clear in RTTY's and FT8's bars too
+    # CW's pane, top to bottom: the bar (Decode, Copy, Clear), the status, the chat, the quick keys with the
+    # callsign, the message. Copy before Clear in RTTY's and FT8's bars too
     cw = html.split('<div class="tool-panel" id="cwTool">', 1)[1].split('<div id="dmPaneRtty"', 1)[0]
-    order = [cw.find('id="%s"' % i) for i in ("cwStrip", "cwDecodeBtn", "cwGo", "cwCopy", "cwClear", "cwStatus", "cwOut", "cwQCq", "cwQDe", "cwQ73",
+    order = [cw.find('id="%s"' % i) for i in ("cwDecodeBtn", "cwCopy", "cwClear", "cwStatus", "cwOut", "cwQCq", "cwQDe", "cwQ73",
                                              "cwCall", "cwSend", "cwPlay", "cwTx")]
-    check(min(order) >= 0 and order == sorted(order), f"index.html: CW's strip, bar, status, chat, quick keys, callsign, message, in that order: {order}")
-    strip = re.search(r'<canvas class="dm-strip" id="cwStrip" height="44" aria-label="[^"]+"\s+title="[^"]+"></canvas>', html)
-    check(strip and "tabindex" not in strip.group(0), "index.html: CW's audio strip only shows (nothing to focus)")
+    check(min(order) >= 0 and order == sorted(order), f"index.html: CW's bar, status, chat, quick keys, callsign, message, in that order: {order}")
     check(re.search(r'<div class="cw-row cw-quick" role="group" aria-label="Quick messages">\s*'
                     r'<button type="button" class="key sm" id="cwQCq" title="[^"]+">CQ</button>\s*'
                     r'<button type="button" class="key sm" id="cwQDe" title="[^"]+">DE</button>\s*'
@@ -658,8 +662,9 @@ def digital_modes_window_in_node_vm(ctx):
           "index.html: CQ only says what else it keeps in view")
     check(0 < dig.find("window.DigitalPanel = {") < dig.rfind("\n  render();\n  renderCall();"),
           "digital.js: DigitalPanel is set before the first render (what that announces is answered by asking it)")
-    check('{ id: "sstv", y: 7, h: 17, hidden: true }' in _read("layout.js"),
-          "layout.js: a Modem window added to a phone layout is tall enough for CW's pane with its strip")
+    lay = _read("layout.js")
+    check('{ id: "spots", y: 6, h: 16, hidden: true }, { id: "sstv", y: 7, h: 15, hidden: true }' in lay,
+          "layout.js: on a new phone layout the Spots panel has room for its list under its keys, the Modem window for CW's pane")
     # the window is as tall as its panel, never its text: the text screens take the room left and scroll
     # inside (a window that grew with its text made the whole panel scroll, the keys and controls with it)
     css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
@@ -676,10 +681,11 @@ def digital_modes_window_in_node_vm(ctx):
                  ".ft8-head .ft8-me.on{color:var(--warn-hi);font-weight:700}",
                  ".cw-quick .cw-call{flex:1 1 70px;min-width:0;font-size:12px;padding:4px 8px;text-transform:uppercase}",
                  ".dm-copybuf{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0}",
-                 "#cwStrip,#ft8Strip{cursor:default}",
+                 ".dm-bar{display:flex;align-items:center;gap:6px;flex:none;margin-top:0}",
                  ".dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{min-height:44px}",
                  ".tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{font-size:16px}"):
         check(rule in css, f"style.css: {rule}")
+    check(".dm-strip" not in css and "#cwStrip" not in css, "style.css: no strip rules left")
     check(re.search(r"@media \(max-width:680px\),\(hover:none\) and \(pointer:coarse\)\{\s*\.dm-mode,\.sstv-tab,", css),
           "style.css: thumb-high mode keys, tabs, menus and fields on a phone and on any touch screen")
     for sel, scroll in ((".dm-screen", "overflow:auto"), (".cw-out", "overflow-y:auto")):

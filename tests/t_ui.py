@@ -310,6 +310,12 @@ def onair_chip_layout_rules(ctx):
     idx = (FRONT / "index.html").read_text(encoding="utf-8")
     check(re.search(r'<div class="tb-brand">.*?</div>\s*<div class="onair" id="onAir"', idx, re.S),
           "the chip must follow the brand in the markup (the desktop bar keeps that order)")
+    # phone: the account button is its icon alone, a square like the connection toggle's, the icon in its
+    # middle (the desktop rule is a flex row for the name and the badge, which left the icon in a corner)
+    user = {k: v for d in find(".tb-btn.user", PHONE) for k, v in d.items()}
+    tb = {k: v for d in find(".tb-btn") for k, v in d.items()}
+    eq([user.get("display"), user.get("place-items"), user.get("width"), user.get("padding")], ["inline-grid", "center", tb.get("width"), "0"],
+       "phone: the account button is the toggle's square, its icon centred")
 
 
 def _s_scale_pct(label: str) -> float:

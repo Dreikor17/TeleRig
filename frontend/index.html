@@ -648,11 +648,8 @@
             <span class="tp-title">CW</span>
           </div>
           <div class="tp-body">
-            <canvas class="dm-strip" id="cwStrip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with a gate at the radio's CW pitch: a station tuned in runs between its lines"
-                    title="The radio's audio, 0 to 3 kHz. Tuned in, a CW station runs between the two lines at the radio's CW pitch."></canvas>
             <div class="dm-bar cw-bar">
               <button type="button" class="key sm tog" id="cwDecodeBtn" aria-pressed="false" title="The CW decoder on or off">Decode</button>
-              <select class="dm-go" id="cwGo" data-gate="operate" aria-label="Tune the radio to a CW frequency" title="Tune the radio to a CW frequency on one of its bands" hidden><option value="">Tune to…</option></select>
               <button type="button" class="key sm" id="cwCopy" title="Copy the text to the clipboard">Copy</button>
               <button type="button" class="key sm" id="cwClear" title="Clear the text">Clear</button>
             </div>
@@ -695,7 +692,6 @@
       <div id="sstvRx" role="tabpanel" aria-labelledby="sstvTabRx">
         <div class="sstv-bar">
           <select id="sstvMode" aria-label="SSTV mode"><option value="auto">Auto (VIS)</option></select>
-          <select class="dm-go" id="sstvGo" data-gate="operate" aria-label="Tune the radio to an SSTV frequency" title="Tune the radio to a band's SSTV frequency" hidden><option value="">Tune to…</option></select>
           <button type="button" class="key sm" id="sstvClear" title="Stop this picture and listen again">Clear</button>
         </div>
         <p class="sstv-status" id="sstvStatus"></p>
@@ -720,8 +716,6 @@
       </div>
       </div>
       <div id="dmPaneRtty" role="tabpanel" aria-labelledby="dmRtty" hidden>
-        <canvas class="dm-strip" id="rttyStrip" height="44" tabindex="0"
-                aria-label="The radio's audio from 0 to 3 kHz, with RTTY's mark and space. Click a signal to tune to it; the arrow keys move the tuning by 10 Hz."></canvas>
         <div class="dm-bar">
           <select id="rttyMode" aria-label="RTTY speed in baud and shift in Hz" title="Speed (baud) / shift: amateur RTTY is 45.45 / 170 Hz"></select>
           <button type="button" class="key sm tog" id="rttyRev" aria-pressed="false" title="Swap mark and space (some stations send them the other way round)">Rev</button>
@@ -732,10 +726,8 @@
         <div class="dm-screen rtty-text" id="rttyText" role="log" aria-live="off" aria-label="RTTY text received"></div>
       </div>
       <div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>
-        <canvas class="dm-strip" id="ft8Strip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with the last slot's FT8 messages marked"></canvas>
         <div class="dm-bar">
           <label class="dm-check" title="Show only stations calling CQ, and messages that name your callsign"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
-          <select class="dm-go" id="ft8Go" data-gate="operate" aria-label="Tune the radio to a band's FT8 frequency" title="Tune the radio to a band's FT8 frequency, in its data mode" hidden><option value="">Tune to…</option></select>
           <button type="button" class="key sm" id="ft8Copy" title="Copy the list to the clipboard">Copy</button>
           <button type="button" class="key sm" id="ft8Clear" title="Clear the list">Clear</button>
         </div>

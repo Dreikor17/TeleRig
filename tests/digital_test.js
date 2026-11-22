@@ -29,14 +29,9 @@
  *      slots in a row with nothing decoded say what to check; a decode clears that
  *  D7. receive audio off: the window says so under its keys, and its key presses the Audio panel's RX key
  *      (never turning RX off); the line follows RX within a second
- *  D8. "Tune to" in CW, FT8 and SSTV: that mode's frequencies from the Spots panel's list (SpotsPanel.calls),
- *      band and MHz (CW's named); choosing one tunes (SpotsPanel.tuneTo) and the menu goes back to its
- *      title; operators only; a radio with no such frequency has no menu; another radio, another menu
  *  D9. the operator's callsign (DigitalPanel.call()): typed into CW's field and kept by the browser (upper
  *      case, letters, digits and /, a digit and a letter in it); until then the account's name when it
  *      reads as a callsign; tr:call when it changes
- *  D10. CW's strip: a gate at the radio's CW pitch in a CW mode (AfMap.cw), none otherwise; the strip
- *      gives way when the chat is squeezed and comes back only with room to spare
  *  D11. Copy (CW, RTTY, FT8): the mode's text to the clipboard, by the Clipboard API where the page has it
  *      and through a hidden text box where it has not; said when done, when refused, when there is nothing
  *  T7. FT8 marks the messages that name the operator's callsign (a whole word, inside <>, around a /), in
@@ -51,7 +46,6 @@ let failures = 0, checks = 0;
 function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL " + msg); } }
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
-const TUNE_TO = "Tune to" + String.fromCharCode(0x2026);     // a "Tune to" menu's title, as index.html has it
 function page(opts) {
   opts = opts || {};
   const e = makeEnv({ localStorage: opts.localStorage || {} });
@@ -68,13 +62,6 @@ function page(opts) {
   }
   const modes = e.el("div", { class: "dm-modes" }, tile);
   // "receive audio is off" and its key; the Audio panel's RX key, which it presses
-  e.cwStrip = e.el("canvas", { id: "cwStrip" }, tile);
-  if (opts.draw) {                                           // a 2D context that notes what is drawn on CW's strip (D10)
-    e.drawn = [];
-    const g2 = { font: "", textBaseline: "", fillStyle: "", createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData() {},
-                 fillRect(x, y, w, h) { e.drawn.push(["rect", x, y, w, h]); }, fillText(t, x, y) { e.drawn.push(["text", t, x, y]); } };
-    e.cwStrip.getContext = () => g2;
-  }
   e.callEl = e.el("input", { id: "cwCall", type: "text" }, tile);
   e.copyKeys = { cw: e.el("button", { id: "cwCopy", type: "button" }, tile), rtty: e.el("button", { id: "rttyCopy", type: "button" }, tile),
                  ft8: e.el("button", { id: "ft8Copy", type: "button" }, tile) };
@@ -88,22 +75,9 @@ function page(opts) {
   for (const [m, id] of [["cw", "dmCw"], ["rtty", "dmRtty"], ["ft8", "dmFt8"], ["sstv", "dmSstv"]]) e.keys[m] = e.el("button", { id, type: "button" }, modes);
   e.panes = { cw: e.el("div", { id: "dmPaneCw" }, tile), rtty: e.el("div", { id: "dmPaneRtty" }, tile), ft8: e.el("div", { id: "dmPaneFt8" }, tile),
               sstv: e.el("div", { id: "dmPaneSstv" }, tile) };
-  // the "Tune to" menus: a select whose first option is its title
-  e.go = {};
-  for (const [m, id] of [["cw", "cwGo"], ["ft8", "ft8Go"], ["sstv", "sstvGo"]]) {
-    e.go[m] = e.el("select", { id, hidden: true }, e.panes[m]);
-    e.el("option", { value: "" }, e.go[m]).textContent = TUNE_TO;
-    e.go[m].value = "";
-  }
   e.perms = new Set(opts.viewer ? ["view", "listen"] : ["view", "listen", "operate"]);
   e.toasts = [];
   e.ctx.TR = { can: (x) => e.perms.has(x), toast: (m, k) => e.toasts.push([m, k]), user: opts.user };
-  e.tuned = [];
-  if (opts.calls) {                                          // spots.js's side of "Tune to"
-    e.callRows = opts.calls;
-    e.ctx.SpotsPanel = { calls: (pick) => e.callRows.filter((r) => !pick || pick(r)), tuneTo: (x) => { e.tuned.push(x); return true; } };
-  }
-  e.ft8Strip = e.el("canvas", { id: "ft8Strip" }, e.panes.ft8);
   e.cq = e.el("input", { id: "ft8CqOnly", type: "checkbox" }, e.panes.ft8);
   e.clear = e.el("button", { id: "ft8Clear", type: "button" }, e.panes.ft8);
   e.status = e.el("p", { id: "ft8Status" }, e.panes.ft8);
@@ -318,7 +292,6 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq(e.list.querySelectorAll("b").length, 0, "T2 a message is text, never markup");
   check(/3 messages at 00:16:45 UTC/.test(e.status.textContent), "T2 the status: " + e.status.textContent);
   eq(e.ctx.Ft8Panel.summary(), "FT8 3 at 00:16", "T2 the summary");
-  eq(e.ctx.Ft8Panel.markers().map((m) => m.hz), [1525, 725, 2235], "T2 the strip marks each message's middle");
   e.cq.checked = true;
   e.cq.dispatchEvent(new e.Event("change", { bubbles: true }));
   check(e.list.classList.contains("cq-only") && e.ctx.localStorage.getItem("telerig.ft8.cq") === "1", "T2 CQ only: the list filters, kept");
@@ -341,7 +314,7 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   check(n <= 400 && n >= 350, "T2 at most 400 rows kept: " + n);
   check(!e.rows().some((r) => /CQ K1ABC FN42/.test(r)), "T2 ... the oldest slot went first");
   e.click(e.clear);
-  eq([e.list.children.length, e.ctx.Ft8Panel.markers().length], [0, 0], "T2 Clear empties the list and the marks");
+  eq(e.list.children.length, 0, "T2 Clear empties the list");
 }
 
 // ---- T3: too little heard; a gap ----
@@ -446,45 +419,6 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq(f.rxBar.hidden, true, "D7 RX on from the start: no line");
 }
 
-// ---- D8: "Tune to" ----
-{
-  const HF = [
-    { band: "40 m", hz: 7030000, mode: "CW", name: "QRP calling" }, { band: "40 m", hz: 7074000, mode: "DIGI", name: "FT8" },
-    { band: "40 m", hz: 7171000, mode: "SSB", name: "SSTV" }, { band: "20 m", hz: 14060000, mode: "CW", name: "QRP calling" },
-    { band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }, { band: "20 m", hz: 14100000, mode: "CW", name: "NCDXF beacons" },
-    { band: "20 m", hz: 14230000, mode: "SSB", name: "SSTV" }, { band: "20 m", hz: 14285000, mode: "SSB", name: "QRP calling" },
-  ];
-  const VHF = [{ band: "2 m", hz: 144174000, mode: "DIGI", name: "FT8" }, { band: "23 cm", hz: 1296174000, mode: "DIGI", name: "FT8" },
-               { band: "2 m", hz: 146520000, mode: "FM", name: "FM calling" }];
-  const e = page({ stubs: true, calls: HF });
-  const T = TUNE_TO;
-  const texts = (m) => e.go[m].options.map((o) => o.textContent);
-  const choose = (m, v) => { e.go[m].value = v; e.go[m].dispatchEvent(new e.Event("change", { bubbles: true })); };
-  eq(texts("ft8"), [T, "40 m  7.074", "20 m  14.074"], "D8 FT8's menu: its title, then each band's FT8 frequency");
-  eq(texts("sstv"), [T, "40 m  7.171", "20 m  14.230"], "D8 SSTV's menu");
-  eq(texts("cw"), [T, "40 m  7.030  QRP calling", "20 m  14.060  QRP calling", "20 m  14.100  NCDXF beacons"], "D8 CW's menu: the CW rows, each named");
-  eq(["cw", "ft8", "sstv"].map((m) => [e.go[m].hidden, e.go[m].value]), [[false, ""], [false, ""], [false, ""]], "D8 the menus show, on their title");
-  choose("ft8", "1");
-  eq([e.tuned, e.go.ft8.value], [[{ band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }], ""], "D8 a choice tunes to that row, and the menu is back on its title");
-  choose("cw", "2");
-  eq(e.tuned.length === 2 && e.tuned[1].hz, 14100000, "D8 CW's third entry: the beacons");
-  choose("sstv", "");
-  eq(e.tuned.length, 2, "D8 the title itself tunes nothing");
-  e.perms.delete("operate"); e.clock.advance(1000);
-  eq(["cw", "ft8", "sstv"].map((m) => e.go[m].hidden), [true, true, true], "D8 a viewer has no menus (within a second of the role)");
-  choose("ft8", "1");
-  eq(e.tuned.length, 2, "D8 ... and nothing to choose");
-  e.perms.add("operate"); e.clock.advance(1000);
-  eq([e.go.ft8.hidden, texts("ft8").length], [false, 3], "D8 an operator again: back");
-  e.callRows = VHF; e.clock.advance(1000);
-  eq([texts("ft8"), e.go.ft8.hidden, e.go.sstv.hidden, e.go.cw.hidden], [[T, "2 m  144.174", "23 cm  1296.174"], false, true, true],
-     "D8 another radio: its own FT8 frequencies, and no menu where it has none");
-  choose("ft8", "1");
-  eq(e.tuned[2] && e.tuned[2].hz, 1296174000, "D8 ... and a choice is the new radio's row");
-  const none = page({ stubs: true });
-  eq(["cw", "ft8", "sstv"].map((m) => none.go[m].hidden), [true, true, true], "D8 no list to choose from (the Spots panel's script missing): no menus");
-}
-
 // ---- D9: the operator's callsign ----
 {
   const e = page({ stubs: true, user: "ADMIN" });
@@ -526,54 +460,6 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq([k.ctx.DigitalPanel.call(), k.callEl.value], ["K1ABC", "K1ABC"], "D9 a kept callsign comes back on the next visit");
   const bad = page({ stubs: true, user: "OP", localStorage: { "telerig.call": "<img>" } });
   eq([bad.ctx.DigitalPanel.call(), bad.callEl.value], ["", ""], "D9 a kept value that is no callsign is ignored");
-}
-
-// ---- D10: CW's strip ----
-{
-  const e = page({ stubs: true });
-  e.ctx.AfMap = { cw: (p, s, mode) => (/^CW/.test(mode) ? { side: 1, pitch: s.key_pitch ? 300 + 10 * s.key_pitch : 700, shown: true } : null) };
-  const marks = () => e.ctx.DigitalPanel.cwMarkers();
-  eq(marks(), [], "D10 the radio in USB: no pitch marker");
-  e.st = { connected: true, mode_name: "CW-USB" };
-  eq(marks(), [{ hz: 700, label: "pitch", gate: 100 }], "D10 in a CW mode: a gate 100 Hz wide at the radio's CW pitch");
-  e.st = { connected: true, mode_name: "CW-USB", key_pitch: 30 };
-  eq(marks(), [{ hz: 600, label: "pitch", gate: 100 }], "D10 ... which follows the radio's setting");
-  e.ctx.AfMap = { cw: () => ({ side: 1, shown: false }) };
-  eq(marks(), [], "D10 a radio whose pitch isn't known: no marker");
-  e.ctx.AfMap = { cw: () => { throw new Error("no pitch here"); } };
-  eq(marks(), [], "D10 a pitch that can't be read: no marker, no error");
-  delete e.ctx.AfMap;
-  eq(marks(), [], "D10 no pitch table at all: none");
-  // drawn: the strip is 300 x 48 here, so 700 Hz is x 70 and the 100 Hz gate reaches 5 px each way
-  const d = page({ stubs: true, draw: true });
-  d.ctx.AfMap = { cw: () => ({ side: 1, pitch: 700, shown: true }) };
-  d.clock.advance(1000);
-  const tall = () => d.drawn.filter((x) => x[0] === "rect" && x[4] === 48).map((x) => [x[1], x[3]]);
-  eq(tall(), [[64, 1], [75, 1]], "D10 drawn as a line each side of the pitch: the place of a tuned-in station stays in view");
-  eq(d.drawn.filter((x) => x[0] === "text" && x[1] === "pitch").map((x) => x.slice(2)), [[79, 2]], "D10 ... named beside it");
-  d.drawn.length = 0;
-  d.ctx.AfMap = { cw: () => null };
-  d.clock.advance(1000);
-  eq([tall(), d.drawn.some((x) => x[0] === "text" && x[1] === "pitch"), d.drawn.length > 0], [[], false, true], "D10 out of CW the strip is drawn without it");
-  // room: the strip gives way to the chat
-  const r = page({ stubs: true, ro: true });
-  const tick = (h) => { r.cwOut.clientHeight = h; r.clock.advance(1000); return r.cwStrip.hidden; };
-  eq(tick(200), false, "D10 a tall chat: the strip shows");
-  eq(tick(72), false, "D10 72 px of chat is still enough");
-  eq(tick(71), true, "D10 the chat squeezed under 72 px: the strip goes");
-  eq(tick(121), true, "D10 the chat taller for the strip's absence (71 + 50): it stays away");
-  eq(tick(147), true, "D10 ... until there is room to spare");
-  eq(tick(148), false, "D10 148 px of chat: the strip is back");
-  eq(tick(98), false, "D10 ... and stays (98 px is enough)");
-  r.cwStrip.hidden = false;
-  eq(tick(0), false, "D10 a chat with no height (the window folded): nothing changes");
-  r.click(r.keys.rtty);
-  eq(tick(10), false, "D10 another mode shown: CW's strip is left as it is");
-  const ob = r.ros.filter((o) => o.el === r.panes.cw);
-  eq(ob.length, 1, "D10 the CW pane is watched for a change of size");
-  r.click(r.keys.cw);
-  r.cwOut.clientHeight = 60; ob[0].cb();
-  eq(r.cwStrip.hidden, true, "D10 ... and a change of size is acted on at once");
 }
 
 // ---- T7: FT8 marks the operator's callsign ----

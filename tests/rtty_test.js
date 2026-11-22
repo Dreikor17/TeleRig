@@ -10,8 +10,9 @@
  *  R3. noise and silence print nothing (the squelch); a tone off by 100 Hz from the tuning prints nothing
  *  R4. the polarity the radio's mode implies: LSB, Icom RTTY, Yaesu RTTY-LSB normal; USB, data on USB,
  *      RTTY-R, RTTY-USB reversed
- *  R5. the tab: text as text, the Rev key and the speed / shift kept per browser, Clear, a click tunes to
- *      the nearest mark / space pair, decoding only while the window is on the grid
+ *  R5. the tab: text as text, the Rev key and the speed / shift kept per browser, Clear, the radios' own
+ *      RTTY tones (2125 / 2295 Hz: the radio is tuned onto a station, nothing in the tab), decoding only
+ *      while the window is on the grid
  */
 "use strict";
 const fs = require("fs");
@@ -132,7 +133,6 @@ function tab(opts) {
   const grid = e.el("div", { id: "grid" });
   const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, grid);
   const pane = e.el("div", { id: "dmPaneRtty" }, tile);
-  e.strip = e.el("canvas", { id: "rttyStrip" }, pane);
   e.mode = e.el("select", { id: "rttyMode" }, pane);
   e.rev = e.el("button", { id: "rttyRev", type: "button" }, pane);
   e.clear = e.el("button", { id: "rttyClear", type: "button" }, pane);
@@ -180,15 +180,15 @@ function tab(opts) {
   eq(e.ctx.localStorage.getItem("telerig.rtty.mode"), "75-170", "R5 the speed / shift is kept per browser");
 }
 {
-  const e = tab();
-  // a spectrum with a pair at 1400 / 1570 Hz: a click at 1450 tunes to its centre, 1485
-  const binHz = 15.625, db = new Float64Array(192).fill(-100);
-  db[Math.round(1400 / binHz)] = -20; db[Math.round(1570 / binHz)] = -20;
-  const c = e.ctx.RttyPanel.tune(1450, { db, binHz });
-  check(Math.abs(c - 1485) <= 8, "R5 a click tunes to the nearest mark / space pair's centre: " + c);
-  eq(e.ctx.localStorage.getItem("telerig.rtty.center"), String(c), "R5 ... kept per browser");
-  e.feedAll(signal(MSG, { snr: 10, seed: 13, center: c }));
-  eq(e.text.textContent.trim(), MSG, "R5 ... and copies there");
+  // the radios' own RTTY tones, always: a centre this browser kept when the strip could move it is not read
+  const e = tab({ localStorage: { "telerig.rtty.center": "1485" } });
+  check(/^Mark 2125 Hz, space 2295 Hz\. Tune the radio so a station sits on them\.$/.test(e.status.textContent),
+        "R5 the radios' RTTY tones, and what to do to copy: " + e.status.textContent);
+  eq(["tune", "nudge", "markers", "strip"].filter((k) => k in e.ctx.RttyPanel), [], "R5 nothing to tune with in the tab any more");
+  e.feedAll(signal(MSG, { snr: 10, seed: 13, center: 1485 }));
+  eq(e.text.textContent.trim(), "", "R5 ... so a station 725 Hz down is not copied until the radio is tuned to it");
+  e.feedAll(signal(MSG, { snr: 10, seed: 14 }));
+  eq(e.text.textContent.trim(), MSG, "R5 ... and copies on the tones");
 }
 {
   const e = tab();

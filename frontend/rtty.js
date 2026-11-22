@@ -13,10 +13,15 @@
  * lower audio tone; on USB (RTTY-R, RTTY-USB, data on USB) the higher one. `reverse` follows the radio's
  * mode by default; the Rev key swaps it.
  *
+ * The tab listens on the radios' own RTTY tones, mark and space around CENTER (2125 / 2295 Hz for 170 Hz),
+ * as a radio's RTTY decoder does: the operator tunes the radio onto the signal. (A strip to click a signal
+ * in is gone with the Modem window's audio strips, 2026-11-22; a centre kept by this browser before then
+ * is not read any more.)
+ *
  * window.RTTY = { Decoder, PRESETS, polarityFor(mode), LTRS, FIGS }
  *   new Decoder(rate, { baud, shift, center, reverse }, onChar)  .feed(pcm)  .set(opts)  .level()
- *   window.RttyPanel = { summary(), feed(pcm, rate), tune(hz), text() } (the tab; tests; text(): what was
- *   received, for the window's Copy key)
+ *   window.RttyPanel = { summary(), feed(pcm, rate), text() } (the tab; tests; text(): what was received,
+ *   for the window's Copy key)
  */
 (function () {
   "use strict";
@@ -142,10 +147,10 @@
   if (typeof document === "undefined") return;
   const $ = (id) => document.getElementById(id);
   const pane = $("dmPaneRtty"), textEl = $("rttyText"), status = $("rttyStatus"), modeSel = $("rttyMode");
-  const revBtn = $("rttyRev"), clearBtn = $("rttyClear"), stripEl = $("rttyStrip");
+  const revBtn = $("rttyRev"), clearBtn = $("rttyClear");
   const tile = pane ? pane.closest(".grid-stack-item") : null;
   if (!pane || !textEl || !status || !tile) return;
-  const KEY_MODE = "telerig.rtty.mode", KEY_CENTER = "telerig.rtty.center", KEY_REV = "telerig.rtty.rev", KEEP = 6000;
+  const KEY_MODE = "telerig.rtty.mode", KEY_REV = "telerig.rtty.rev", KEEP = 6000;
   const ls = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) {} return null; };
   const audio = () => window.RadioAudio || null;
   const rxOn = () => { const A = audio(); try { return !!(A && A.on()); } catch (_) { return false; } };
@@ -153,8 +158,7 @@
   const radio = () => { try { return (window.RadioControl && RadioControl.state()) || {}; } catch (_) { return {}; } };
 
   let preset = PRESETS.find((p) => p.id === ls(KEY_MODE)) || PRESETS[0];
-  let center = +ls(KEY_CENTER);
-  if (!(center >= 300 && center <= 3000)) center = CENTER;
+  const center = CENTER;                                   // the radios' RTTY tones (above)
   let manualRev = ls(KEY_REV) === "1";                     // the Rev key: swaps whatever the radio's mode says
   let dec = null, rate = 0, text = "", lastMode = null, chars = 0;
   if (modeSel) {
@@ -188,7 +192,7 @@
     if (!rxOn()) { say(""); return; }                      // RX is off: the window's own line says so (digital.js)
     const lv = dec ? dec.level() : null;
     say("Mark " + Math.round(tn.mark) + " Hz, space " + Math.round(tn.space) + " Hz" + (reversed() ? " (reversed)" : "") +
-        (lv && lv.open ? ". Copying." : ". Click a signal in the strip to tune to it."));
+        (lv && lv.open ? ". Copying." : ". Tune the radio so a station sits on them."));
   }
   function addText(ch) {
     const atEnd = textEl.scrollHeight - textEl.scrollTop - textEl.clientHeight < 24;
@@ -205,31 +209,6 @@
     if (mode !== lastMode) { lastMode = mode; apply(); }
     dec.feed(pcm);
   }
-  // tune to the pair nearest a click: the strongest mark / space pair (this shift) within 150 Hz of it,
-  // centred on its two peaks; with no spectrum, the click itself
-  function tune(hz, spectrum) {
-    let best = hz;
-    if (spectrum && spectrum.db && spectrum.binHz) {
-      const db = spectrum.db, bw = spectrum.binHz, half = preset.shift / 2;
-      const peak = (f) => {                               // the strongest bin within one bin of f
-        const k0 = Math.round(f / bw);
-        let k = -1, v = -Infinity;
-        for (let j = k0 - 1; j <= k0 + 1; j++) if (j >= 0 && j < db.length && db[j] > v) { v = db[j]; k = j; }
-        return { k, v };
-      };
-      let bestV = -Infinity;
-      for (let c = hz - 150; c <= hz + 150; c += 2) {
-        const v = Math.min(peak(c - half).v, peak(c + half).v);
-        if (v > bestV || (v === bestV && Math.abs(c - hz) < Math.abs(best - hz))) { bestV = v; best = c; }
-      }
-      const a = peak(best - half), b = peak(best + half);
-      if (a.k >= 0 && b.k >= 0) best = ((a.k + b.k) / 2) * bw;
-    }
-    center = Math.max(300, Math.min(3000, Math.round(best)));
-    ls(KEY_CENTER, String(center));
-    apply(); render();
-    return center;
-  }
   (function tap() {                                        // app.js loads first; wait for it if needed
     const A = audio();
     if (A && typeof A.tapPcm === "function") A.tapPcm(feed); else setTimeout(tap, 500);
@@ -241,9 +220,5 @@
     summary: () => { const t = text.replace(/\s+/g, " ").trim(); return t ? "RTTY " + t.slice(-18).trim() : ""; },
     feed: (pcm, r) => { if (pcm && pcm.length && r > 0) feed(pcm, r); },
     text: () => text.replace(/\s+$/, ""),
-    tune: (hz, spectrum) => tune(+hz, spectrum),
-    nudge: (d) => tune(center + (+d || 0)),               // the strip's arrow keys: 10 Hz a press
-    markers: () => { const t = tones(); return [{ hz: t.mark, label: "M" }, { hz: t.space, label: "S" }]; },
-    strip: stripEl,
   };
 })();

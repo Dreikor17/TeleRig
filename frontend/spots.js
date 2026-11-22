@@ -50,7 +50,8 @@
   const hasTabs = VIEWS.every((v) => tabs[v]);
   const credits = { live: $("spotsCredit"), call: $("callCredit") };
   const memForm = $("memForm"), memName = $("memName"), memSave = $("memSave"), memCancel = $("memCancel");
-  const body = list.closest(".tile-body");                  // the panel's scrolling body
+  // the list scrolls inside the panel, under its keys and filters (style.css .tile-spots): each view keeps
+  // its own place in it
 
   const POLL_MS = 30000;
   const KEY = "telerig.spots";
@@ -145,7 +146,7 @@
     try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
     say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz));
     render();
-    if (body) body.scrollTop = 0;                           // the panel back at its top, where the pin is
+    list.scrollTop = 0;                                     // the list back at its top, where the pin is
   }
 
   // ---- the spot you are on: the one clicked, pinned at the top until the radio is tuned away from it
@@ -686,16 +687,16 @@
     if (filt.view === "mem" && onPage()) loadMem(false);
   }
 
-  // ---- the view keys (a tablist: the arrow keys too); each view keeps its place in the panel ----
+  // ---- the view keys (a tablist: the arrow keys too); each view keeps its place in the list ----
   const scrollAt = { live: 0, call: 0, mem: 0 };
   function show(v) {
     if (!hasTabs || !VIEWS.includes(v)) return false;
     if (v === filt.view) return true;
-    if (body) scrollAt[filt.view] = body.scrollTop;
+    scrollAt[filt.view] = list.scrollTop;
     mem.draft = null;                                       // a name being typed belongs to the view left
     filt.view = v;
     keep(); render(); schedule();
-    if (body) body.scrollTop = scrollAt[v];
+    list.scrollTop = scrollAt[v];
     return true;
   }
   if (hasTabs) for (const v of VIEWS) {
@@ -738,17 +739,5 @@
   window.SpotsPanel = {
     summary: () => (filt.view === "live" && lastFetch ? shown().length + " spots" : ""),
     view: () => filt.view,
-    // The Modem window's "Tune to" menus (digital.js): the callfreqs.js rows on this radio's bands that
-    // `pick` accepts, lowest first, and the same tuning a click on such a row does (false: not allowed).
-    calls: (pick) => {
-      const p = profile(), out = [];
-      for (const g of CALLS) for (const r of g.rows) if (bandOf(p, r.hz) && (!pick || pick(r))) out.push({ band: g.band, hz: r.hz, mode: r.mode, name: r.name });
-      return out;
-    },
-    tuneTo: (x) => {
-      if (!x || !(x.hz > 0) || !sendTune(x)) return false;
-      say("Tuned to " + (x.name ? x.name + ", " : "") + fmtFreq(x.hz));
-      return true;
-    },
   };
 })();

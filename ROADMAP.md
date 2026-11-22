@@ -103,10 +103,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   (`/api/me/memories`, up to 100 a radio), so every device you sign in on has them. Operators only.
 - **The Modem window, easier to get going.** Every mode decodes the radio's audio, so with RX off the
   window now says so under its mode keys, with an **RX on** key right there (it presses the Audio
-  panel's RX key; no more "turn on RX in the Audio panel" in each mode). CW, FT8 and SSTV have a **Tune
-  to** menu: that mode's frequencies on the radio's bands (each band's FT8 dial frequency, the SSTV
-  frequencies, the QRP CW calling frequencies and the beacons), from the same list as the Spots panel's
-  CALLING view; a choice sets the frequency, the mode and the filter. CW: one line under the bar says
+  panel's RX key; no more "turn on RX in the Audio panel" in each mode). CW: one line under the bar says
   where the decoder stands (off, loading, listening, copying, or why it can't) in place of "ready" and a
   hint under the chat; turning Decode off and on keeps the chat (Clear empties it); the speed and the
   sidetone's pitch are remembered per browser, and the pitch is shown beside its slider. FT8: the list has
@@ -122,10 +119,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   that name that callsign (also inside <...> or around a /), shows it at the end of the list's headings,
   and keeps such a message in view under CQ only. CW, RTTY and FT8 have a **Copy** key: the text goes to
   the clipboard (CW's with each message's time and RX / TX; FT8's as the list shows, tab-separated), also
-  on a plain-http LAN address, where the browser has no clipboard API. CW has the small audio strip RTTY
-  and FT8 have, with two lines at the radio's CW pitch: a station that is tuned in runs between them. It
-  gives way when the window is too short for it and a readable chat (a Modem window added to a phone
-  layout is now tall enough for both). SSTV's received pictures are kept by the browser (the newest 12,
+  on a plain-http LAN address, where the browser has no clipboard API. SSTV's received pictures are kept
+  by the browser (the newest 12,
   as many as the strip holds), so a reload or a restart of the browser no longer loses them; the X
   deletes a picture there too.
 - **The scope's frequency reads whole.** The tuning line ran down through the middle of the frequency
@@ -140,6 +135,17 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   leaving them as they are. The row shows the shift and the tone on a second line (−600 kHz · TSQL
   100.0 Hz). The IC-9700 now has the FM tone controls in its Controls panel too (TONE / TSQL and the
   tone; TeleRig drives no DTCS on it).
+- **The Spots panel's keys stay put.** LIVE / CALLING / MEMORY, the sources and filters (and SAVE) and
+  the count stay at the top of the panel and the credit at its bottom; only the list scrolls, each view
+  keeping its own place in it. A Spots panel added to a phone layout starts taller (16 rows), so the
+  list has room under them.
+- **The Modem window, simpler.** No audio strip over CW, RTTY or FT8 and no "Tune to" menu in CW, FT8
+  or SSTV: each mode's bar sits right under the mode keys, and CW's chat has the room. RTTY listens on
+  the radios' own RTTY tones (mark 2125 Hz, space 2295 Hz, as a radio's RTTY decoder does): tune the
+  radio onto a station, as its status line says (a centre moved with the strip before is not read any
+  more). The scope shows the audio; the Spots panel's CALLING view tunes to the calling frequencies.
+- **Phone: the account button's icon is centred.** On a phone the account button is the icon alone,
+  the same square as the connection toggle beside it; the icon sat in its corner.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

@@ -23,7 +23,8 @@
  *  P11. the two filters work there too; the view is kept with them
  *  P12. each radio lists its own bands; a switched radio's list follows
  *  P13. a viewer sees the list and can't click it
- *  P14. the keys are a tablist (the arrow keys)      P15. each view keeps its place in the panel
+ *  P14. the keys are a tablist (the arrow keys)      P15. each view keeps its place in the list (which scrolls
+ *       on its own, under the keys and filters)
  *  P16. an answer that arrives after the view changed
  *  P17. the list itself: well-formed, inside the US bands, in order, short; every radio tunes every row
  *  The Memory view (/api/me/memories):
@@ -35,9 +36,7 @@
  *  P21. delete: the X arms at the first tap and deletes at the second
  *  P22. the two filters      P23. operators only      P24. when the memories are read; a failed read
  *  P25. the mark follows the radio in place; a row drawn for another radio tunes nothing
- *  P26. SpotsPanel.calls / tuneTo, for the Modem window's "Tune to" menus: the list's rows on this radio's
- *       bands that a test accepts, and the tuning a click on such a row does (not for a viewer, not off
- *       the radio's bands)
+ *  P26. SpotsPanel is the folded panel's summary and the view only
  *  P27. a memory keeps a repeater's shift and tone, in FM (the shift in DV too), as far as the radio has
  *       them (an Icom's DUP and the IC-9700's offset, TONE / TSQL; a Yaesu's shift, DCS too): SAVE takes
  *       them, a click sets them every time after the mode (the offset before the shift, the tone before
@@ -309,11 +308,11 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const ans = { spots: SPOTS.slice(), sources: { pota: { ok: true }, wwff: { ok: true }, dx: { ok: true } }, now: NOW / 1000 };
     const e = page({ answer: ans });
     await settle(e);
-    e.body.scrollTop = 140;                                 // scrolled down the list to it
+    e.list.scrollTop = 140;                                 // scrolled down the list to it
     e.click(e.rows()[3]);                                   // N2CALL, 3.850 SSB, the 4th newest
     let rows = e.rows();
     eq(e.text(rows[0])[3], "N2CALL", "P6 the spot clicked goes to the top");
-    eq(e.body.scrollTop, 0, "P6 ... and the panel scrolls back up to show it");
+    eq([e.list.scrollTop, e.body.scrollTop], [0, 0], "P6 ... and the list scrolls back up to show it (the panel's body is not the scroller)");
     check(rows[0].classList.contains("picked") && rows[0].getAttribute("aria-current") === "true", "P6 ... marked as the one tuned to");
     eq(e.text(rows[0])[5], "Tuned", "P6 ... and says so");
     eq(rows.slice(1).map((r) => e.text(r)[3]), ["N0CALL", "F0CALL/P", "JA0CALL", "W0CALL", "VK0CALL"], "P6 the rest stay newest first");
@@ -616,14 +615,14 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
   {
     const e = page();
     await settle(e);
-    e.body.scrollTop = 40;
+    e.list.scrollTop = 40;
     e.click(e.tab("call"));
-    eq(e.body.scrollTop, 0, "P15 the calling view starts at its top");
-    e.body.scrollTop = 120;
+    eq(e.list.scrollTop, 0, "P15 the calling view starts at its top");
+    e.list.scrollTop = 120;
     e.click(e.tab("live"));
-    eq(e.body.scrollTop, 40, "P15 LIVE is where it was left");
+    eq(e.list.scrollTop, 40, "P15 LIVE is where it was left");
     e.click(e.tab("call"));
-    eq(e.body.scrollTop, 120, "P15 ... and so is CALLING");
+    eq(e.list.scrollTop, 120, "P15 ... and so is CALLING");
   }
   // P16: an answer that arrives after the view changed
   {
@@ -1034,33 +1033,11 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     v.click(mine);
     eq(v.sent, [], "P25 a row drawn for an operator tunes nothing once they are a viewer");
   }
-  // P26: the Modem window's "Tune to" menus ask the panel for a mode's frequencies and have it tune
+  // P26: nothing else asks the panel for its rows or to tune (the Modem window's menus are gone)
   {
-    const e = page();                                        // on LIVE: the menus don't depend on the view
+    const e = page();
     await settle(e);
-    const SP = e.ctx.SpotsPanel;
-    const ft8 = SP.calls((r) => r.name === "FT8");
-    eq(ft8.map((r) => r.band + " " + r.hz), ["160 m 1840000", "80 m 3573000", "60 m 5357000", "40 m 7074000", "30 m 10136000", "20 m 14074000",
-       "17 m 18100000", "15 m 21074000", "12 m 24915000", "10 m 28074000", "6 m 50313000", "2 m 144174000", "70 cm 432174000"],
-       "P26 FT8 on an FT-991A: each of its bands' dial frequency, lowest first, none of 23 cm");
-    eq(ft8[5], { band: "20 m", hz: 14074000, mode: "DIGI", name: "FT8" }, "P26 a row: its band, Hz, a spot's mode and its name");
-    eq(SP.calls((r) => r.name === "SSTV").map((r) => r.hz), [3845000, 7171000, 14230000, 21340000, 28680000], "P26 SSTV's frequencies");
-    check(SP.calls((r) => r.mode === "CW").every((r) => r.mode === "CW") && SP.calls((r) => r.mode === "CW").length >= 10, "P26 the CW rows");
-    eq(SP.calls().length, callsOf(FT991A).reduce((n, g) => n + g.rows.length, 0), "P26 no test: every row on the radio's bands");
-    eq(SP.calls(() => false), [], "P26 a test nothing passes: none");
-    e.sent.length = 0;
-    eq([SP.tuneTo(ft8[3]), e.sent], [true, [F(7074000), M("DATA-USB"), NAR, W(17)]], "P26 tuneTo tunes as a click on the row does: the freq, DATA-USB, 3 kHz");
-    e.clock.advance(20);
-    eq(e.doc.getElementById("srLive").textContent, "Tuned to FT8, 7.074.0", "P26 ... and a screen reader hears it");
-    e.sent.length = 0;
-    eq([SP.tuneTo({ hz: 1296174000, mode: "DIGI", name: "FT8" }), SP.tuneTo(null), SP.tuneTo({ mode: "CW" }), e.sent], [false, false, false, []],
-       "P26 off the radio's bands, or no frequency: nothing sent");
-    e.perms.delete("operate");
-    eq([SP.tuneTo(ft8[3]), e.sent], [false, []], "P26 a viewer: nothing sent");
-    const i = page({ radio: R("ic9700") });
-    await settle(i);
-    eq([i.ctx.SpotsPanel.calls((r) => r.name === "FT8").map((r) => r.hz), i.ctx.SpotsPanel.calls((r) => r.name === "SSTV")],
-       [[144174000, 432174000, 1296174000], []], "P26 an IC-9700: its own FT8 frequencies, no SSTV ones");
+    eq(Object.keys(e.ctx.SpotsPanel).sort(), ["summary", "view"], "P26 SpotsPanel: the folded panel's summary and the view, nothing more");
   }
   // P27: a memory keeps a repeater's shift and tone
   const OFF = (hz) => ({ action: "offset", hz }), DUP = (mode) => ({ action: "duplex", mode }), RS = (value) => ({ action: "rpt_shift", value });
