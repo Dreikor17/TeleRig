@@ -130,6 +130,7 @@ class YaesuRadio:
         self._menu_vals = {}
         self._rpt_offsets = {}    # RPT SHIFT menu number -> offset in Hz, as the radio answered
         self.state["offset"] = 0  # not known until the radio's menu answers
+        self.state["mnotch_w_ok"] = False   # the notch width keys wait for the radio's IF NOTCH WIDTH answer
         transport.start(self._on_bytes)
         self.state["connected"] = True
         self.state["transport"] = transport.name
@@ -143,7 +144,10 @@ class YaesuRadio:
         # shifted transmission goes (_note_rpt_offset)
         rpt = tuple(menu_engine.yaesu_read_cmd(self._menu_index[n])
                     for n, _lo, _hi in getattr(self.profile, "rpt_offset_menus", ()) if n in self._menu_index)
-        self._panel_cmds = self._SETTINGS + ex + rpt
+        # ...and the IF NOTCH WIDTH item (the manual notch's width: _note_notch_width)
+        nw = getattr(self.profile, "notch_width_menu", 0)
+        notch = (menu_engine.yaesu_read_cmd(self._menu_index[nw]),) if nw in self._menu_index else ()
+        self._panel_cmds = self._SETTINGS + ex + rpt + notch
         # AF (the radio's own speaker, in the room with the radio) starts at 0 on every connect, before
         # the panel is read back (as in radio.py; the page asks before turning it up)
         self._send("AG0000;")
@@ -407,6 +411,29 @@ class YaesuRadio:
         self._rpt_offsets[num] = val * 1000
         return self._sync_offset()
 
+    def _note_notch_width(self, num: int, val) -> bool:
+        """The IF NOTCH WIDTH item answered (profile.notch_width_menu): NARROW / WIDE -> state mnotch_w 2 / 0
+        (the DSP tab's key numbers: 0 WIDE, 1 MID, 2 NAR), and mnotch_w_ok. Any other answer (a number of
+        the wrong width, say) means this radio numbers its menu otherwise: the keys then write nothing.
+        True when the state changed."""
+        if not num or num != getattr(self.profile, "notch_width_menu", 0):
+            return False
+        ok = val in ("NARROW", "WIDE")
+        before = (self.state.get("mnotch_w_ok"), self.state.get("mnotch_w"))
+        self.state["mnotch_w_ok"] = ok
+        if ok:
+            self.state["mnotch_w"] = 2 if val == "NARROW" else 0
+        return (self.state["mnotch_w_ok"], self.state.get("mnotch_w")) != before
+
+    def set_mnotch_w(self, width: int) -> None:
+        """The manual notch's width: a Yaesu has two, its IF NOTCH WIDTH menu item's WIDE (0) and NARROW
+        (2); MID (1) it doesn't have. Written only once the radio has answered that item as NARROW / WIDE
+        (mnotch_w_ok), then read back (set_menu): the state follows the radio's answer."""
+        num = getattr(self.profile, "notch_width_menu", 0)
+        if not num or not self.state.get("mnotch_w_ok") or width not in (0, 2):
+            return
+        self.set_menu(num, "WIDE" if width == 0 else "NARROW")
+
     def _sync_offset(self) -> bool:
         """state["offset"] = the repeater offset of the band the radio is on, as its menu answered
         (0: not known yet, or a band without one). True when it changed."""
@@ -438,7 +465,7 @@ class YaesuRadio:
     # settings read each panel refresh (also primed on connect) — keep the
     # fast-changing freq/mode/smeter/tx out of here; those poll every cycle.
     _SETTINGS = ("PC;", "AG0;", "RG0;", "SQ0;", "MG;", "GT0;",
-                 "NB0;", "NL0;", "NR0;", "RL0;", "BC0;", "BP00;",
+                 "NB0;", "NL0;", "NR0;", "RL0;", "BC0;", "BP00;", "BP01;",   # (BP01: the notch frequency)
                  "PA0;", "RA0;", "LK;", "NA0;", "FT;", "RT;", "AC;",
                  "CT0;", "CN00;", "CN01;", "OS0;",     # FM Tone/DCS mode + tone/DCS number + shift
                  "SH0;", "CO00;", "CO01;", "CO02;", "CO03;",   # width + contour/APF
@@ -949,7 +976,9 @@ class YaesuRadio:
             return
         self._menu_vals[it.num] = val
         self._emit_menu({it.num: val})
-        if self._note_rpt_offset(it.num, val):     # a repeater offset: it rides the state channel too
+        rpt = self._note_rpt_offset(it.num, val)   # a repeater offset or the notch width: they ride
+        notch = self._note_notch_width(it.num, val)  # the state channel too
+        if rpt or notch:
             self._emit_state()
 
     def _emit_menu(self, values: dict) -> None:
@@ -966,7 +995,7 @@ class YaesuRadio:
     def _noop(self, *a, **k) -> None:
         return
 
-    set_mnotch_w = set_tbw = set_duplex = _noop
+    set_tbw = set_duplex = _noop
     set_span = set_scope_mode = _noop
     set_apf_lvl = set_bkin_lvl = set_filter_shape = _noop   # Icom-only operating controls
 

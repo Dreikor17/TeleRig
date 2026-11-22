@@ -524,8 +524,6 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .key.ptt:hover{background:rgba(239,68,68,.16)}
 .key.ptt.on{background:var(--tx-solid);border-color:var(--tx-solid);color:#fff;box-shadow:0 0 14px rgba(239,68,68,.45)}
 
-.freq-entry{flex:1;min-width:0;font-family:var(--font-ui)}
-#freqSet{flex:0 0 auto}
 .step-row{align-items:center;margin-top:6px}
 .step-label{font-size:11px;color:var(--txt-dim);margin-right:4px}
 #step{flex:1}
@@ -803,8 +801,8 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
   -webkit-tap-highlight-color:transparent}
 .controls .tab:hover{color:var(--txt)}
 .controls .tab.on{color:var(--accent-hi);border-bottom-color:var(--accent)}
-.controls .sbody{display:flex;flex-direction:column;gap:8px}
-.controls .panel{display:flex;flex-direction:column;gap:8px}
+.controls .sbody{display:flex;flex-direction:column;gap:6px}
+.controls .panel{display:flex;flex-direction:column;gap:6px}
 .controls .panel.hide{display:none}
 .controls .panel .grp{margin:0}
 .setup-note{font-size:12px;color:var(--txt-dim);line-height:1.5}
@@ -813,22 +811,42 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .controls .span-val{min-width:0;font-size:12px}
 .controls .step-row{flex-wrap:wrap}
 .setup-note b{color:var(--txt)}
+/* two to a row where they fit (the FM tone menus): a short label, then the menu */
+.pair-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:4px 10px}
+.pair-grid .sl-sel{grid-template-columns:42px 1fr}
+/* a key and the slider it goes with on one row (CONTOUR, APF) */
+.ctl-inline{align-items:center}
+.ctl-inline>.key{flex:0 0 auto}
+.ctl-inline>.sl{flex:1 1 auto;min-width:0}
+/* Settings: the help, closed until asked for */
+.setup-help>summary{cursor:pointer;list-style:none;margin-bottom:0;-webkit-tap-highlight-color:transparent}
+.setup-help>summary::-webkit-details-marker{display:none}
+.setup-help>summary::before{content:"\25B8";margin-right:5px}
+.setup-help[open]>summary{margin-bottom:5px}
+.setup-help[open]>summary::before{content:"\25BE"}
+.setup-help .setup-note+.setup-note{margin-top:5px}
 
 /* ---- data-driven SET menu (Settings tab accordion) ---- */
-.menu-root>.grp-title{margin-top:10px}
+.menu-root{container-type:inline-size}
+.menu-root>.grp-title{margin-top:8px}
 .menu-hint{font-size:9px;color:var(--txt-dim);font-weight:400;letter-spacing:0;text-transform:none;margin-left:6px}
-.menu-grp{border:1px solid var(--border);border-radius:var(--r-ctl);margin-top:6px;overflow:hidden;background:var(--surface-2)}
+.menu-grp{border:1px solid var(--border);border-radius:var(--r-ctl);margin-top:4px;overflow:hidden;background:var(--surface-2)}
 .menu-ghead{width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;
   background:none;border:none;color:var(--txt);font:600 12px var(--font-ui);
-  padding:8px 10px;cursor:pointer;text-align:left;-webkit-tap-highlight-color:transparent}
+  padding:6px 9px;cursor:pointer;text-align:left;-webkit-tap-highlight-color:transparent}
 .menu-ghead:hover{color:var(--accent-hi)}
 .menu-grp.open .menu-ghead{color:var(--accent-hi)}
 .menu-ghead::before{content:"\25B8";color:var(--txt-dim);margin-right:4px;font-size:10px}
 .menu-grp.open .menu-ghead::before{content:"\25BE";color:var(--accent-hi)}
 .menu-ghead .menu-count{font-size:10px;color:var(--txt-dim);font-family:var(--font-ui)}
-.menu-gbody{padding:2px 10px 8px}
+.menu-gbody{padding:0 9px 5px}
 .menu-gbody.hide{display:none}
-.menu-item{display:flex;flex-direction:column;gap:3px;padding:6px 0;border-top:1px solid var(--border)}
+.menu-item{display:flex;flex-direction:column;gap:3px;padding:5px 0;border-top:1px solid var(--border)}
+@container (min-width:300px){                                /* the name on the left, its control on the right */
+  .menu-item{flex-direction:row;align-items:center;gap:8px}
+  .menu-item>.mi-name{flex:0 1 46%;min-width:0;flex-wrap:wrap}
+  .menu-item>.mi-ctl,.menu-item>.mi-ro{flex:1 1 54%;min-width:0}
+}
 .menu-item:first-child{border-top:none}
 .mi-name{display:flex;justify-content:space-between;gap:6px;font-size:11px;color:var(--txt)}
 .mi-name .mi-num{color:var(--txt-dim);font-size:9px;font-family:var(--font-ui)}
@@ -1186,7 +1204,6 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .key{min-height:44px;padding:11px 6px}
   .sc-btn{min-height:38px;padding:8px 11px}
   .scope-ctl .bandlegend{order:2;flex:1 1 100%}
-  .freq-entry,#step,#freqSet{min-height:42px}
   .sl{grid-template-columns:34px 1fr 44px}
   .sl input[type=range]{height:30px}
   .sl-val{font-size:12px}
@@ -1393,11 +1410,11 @@ body[data-device=desktop] .tile-audio{container-type:size}
 .tile .tool-panel .tp-head,.tile .tool-panel .tp-resize{display:none}
 /* compact Controls — these lived only inside the deleted >= 900 px console block; kept at every width,
    scoped to the tile, so 900-1100 px windows are no worse than v0.2.25 (AR-30) */
-.tile .controls{display:flex;flex-direction:column;gap:7px;columns:auto}
-.tile .controls .grp{margin:0;padding:6px 8px}
-.tile .controls .grp-title{margin-bottom:4px;font-size:9px}
+.tile .controls{display:flex;flex-direction:column;gap:6px;columns:auto}
+.tile .controls .grp{margin:0;padding:5px 8px 6px}
+.tile .controls .grp-title{margin-bottom:3px;font-size:9px}
 .tile .controls .row{gap:5px}
-.tile .controls .key{padding:6px 5px;font-size:12px;min-width:30px}
+.tile .controls .key{padding:5px 5px;font-size:12px;min-width:30px}
 .tile .controls .sl{gap:6px}
 .tile .controls .sl input[type=range]{margin:1px 0}
 .tile .controls .step-row{margin-top:4px}

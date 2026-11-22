@@ -168,6 +168,18 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   the line and for the meter's keys on two rows: since the step keys moved, a phone's VFO was too short
   for its contents (the function strip ran over the box's edge). On a phone the VFO is now two rows
   taller, and at a small desktop window (1280×720) it may take a row more.
+- **The Controls panel, shorter.** No frequency box and no STEP any more (type the frequency on the
+  VFO's digits; the step is beside its meter). Every other control stays; the Radio tab is about 40 %
+  shorter and the others 15 to 30 %: VFO and the scan / FAST keys in one group, the filter keys with P.AMP / ATT / LOCK, the FM
+  tone menus two to a row, the antenna tuner a row of the TX group, a Yaesu's WIDTH, CONTOUR and APF in
+  one group (CONTOUR and APF each one row: the key, then its slider), the Settings help folded, and each
+  SET-menu item on one line (its name, then its control). The Settings help no longer mentions a CW key
+  on the scope's bar.
+- **The FT-991A's and FT-891's manual notch width works.** Their notch has two widths, which live in a
+  menu item (IF NOTCH WIDTH: NARROW / WIDE), not the Icoms' three: the DSP tab now shows WIDE and NAR on
+  them and sets that item (it showed WIDE / MID / NAR, which did nothing). TeleRig reads the item first
+  and writes it only once the radio has answered it as NARROW or WIDE, so a radio whose menu is
+  numbered otherwise is never written to. The NOTCH slider now shows the radio's own notch frequency.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

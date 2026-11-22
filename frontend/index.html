@@ -314,18 +314,7 @@
       </div>
     </div>
 
-    <div class="grp">
-      <div class="grp-title">FREQUENCY</div>
-      <div class="row">
-        <input id="freqEntry" class="freq-entry" inputmode="decimal" placeholder="MHz, e.g. 14.074" />
-        <button class="key" id="freqSet">SET</button>
-      </div>
-      <div class="row step-row">
-        <span class="step-label">STEP</span>
-        <select id="step"></select>
-      </div>
-    </div>
-
+    <!-- (the frequency is typed on the VFO's digits, the tuning step picked beside its meter: no box for them here) -->
     <div class="grp">
       <div class="grp-title">VFO</div>
       <div class="row">
@@ -333,6 +322,14 @@
         <button class="key" data-act="vfo" data-code="1">B</button>
         <button class="key" data-act="vfo" data-code="160">A=B</button>
         <button class="key" data-act="vfo" data-code="176">SWAP</button>
+      </div>
+      <!-- a Yaesu's operating keys (ext_ops): scan and the fast dial step -->
+      <div class="row step-row" id="opsRow">
+        <span class="step-label">SCAN</span>
+        <button class="key scan" data-act="scan" data-dir="0">STOP</button>
+        <button class="key scan" data-act="scan" data-dir="1">▲ UP</button>
+        <button class="key scan" data-act="scan" data-dir="2">▼ DN</button>
+        <button class="key tog" data-act="toggle" data-fn="fast" id="fastBtn" title="Fast tuning step (dial)">FAST</button>
       </div>
     </div>
 
@@ -346,37 +343,32 @@
       </div>
     </div>
 
-    <div class="grp" id="opsGrp">
-      <div class="grp-title">OPERATING</div>
-      <div class="row step-row">
-        <span class="step-label">SCAN</span>
-        <button class="key scan" data-act="scan" data-dir="0">STOP</button>
-        <button class="key scan" data-act="scan" data-dir="1">▲ UP</button>
-        <button class="key scan" data-act="scan" data-dir="2">▼ DN</button>
-      </div>
-      <div class="row">
-        <button class="key tog" data-act="toggle" data-fn="fast" id="fastBtn" title="Fast tuning step (dial)">FAST</button>
-      </div>
-    </div>
     </div><!-- /radio -->
 
     <div class="panel hide" data-p="rx">
-    <div class="grp">
-      <div class="grp-title">FILTER</div>
+    <div class="grp" id="rxGrp">
+      <div class="grp-title">FILTER · RX</div>
       <div class="row">
         <button class="key filt" data-act="filter" data-filter="1">FIL1</button>
         <button class="key filt" data-act="filter" data-filter="2">FIL2</button>
         <button class="key filt" data-act="filter" data-filter="3">FIL3</button>
         <button class="key tog" data-act="toggle" data-fn="narrow" id="narBtn" title="Narrow IF filter (NAR) in / out">NAR</button>
       </div>
+      <div class="row step-row">
+        <button class="key tog" data-act="toggle" data-fn="preamp" id="preampBtn">P.AMP</button>
+        <button class="key tog" data-act="toggle" data-fn="att" id="attBtn">ATT</button>
+        <button class="key tog" data-act="toggle" data-fn="lock" id="lockBtn">LOCK</button>
+      </div>
     </div>
 
     <div class="grp" id="fmGrp">
       <div class="grp-title">FM · TONE / DCS</div>
-      <label class="sl sl-sel"><span>TONE</span><select id="toneMode" title="CTCSS/DCS encode &amp; decode mode"></select></label>
-      <label class="sl sl-sel"><span>CTCSS</span><select id="toneFreq" title="CTCSS tone frequency"></select></label>
-      <label class="sl sl-sel"><span>DCS</span><select id="dcsCode" title="DCS code"></select></label>
-      <label class="sl sl-sel"><span>SHIFT</span><select id="rptShift" title="Repeater shift direction"></select></label>
+      <div class="pair-grid">
+        <label class="sl sl-sel"><span>TONE</span><select id="toneMode" title="CTCSS/DCS encode &amp; decode mode"></select></label>
+        <label class="sl sl-sel"><span>CTCSS</span><select id="toneFreq" title="CTCSS tone frequency"></select></label>
+        <label class="sl sl-sel"><span>DCS</span><select id="dcsCode" title="DCS code"></select></label>
+        <label class="sl sl-sel"><span>SHIFT</span><select id="rptShift" title="Repeater shift direction"></select></label>
+      </div>
     </div>
 
     <div class="grp sliders">
@@ -384,15 +376,6 @@
       <label class="sl"><span>AF</span><input type="range" min="0" max="255" step="1" id="af" data-target="af"><b class="sl-val" id="afVal">0</b></label>
       <label class="sl"><span>RF</span><input type="range" min="0" max="255" step="1" id="rf" data-target="rf"><b class="sl-val" id="rfVal">0</b></label>
       <label class="sl"><span>SQL</span><input type="range" min="0" max="255" step="1" id="sql" data-target="sql"><b class="sl-val" id="sqlVal">0</b></label>
-    </div>
-
-    <div class="grp" id="rxGrp">
-      <div class="grp-title">RX</div>
-      <div class="row">
-        <button class="key tog" data-act="toggle" data-fn="preamp" id="preampBtn">P.AMP</button>
-        <button class="key tog" data-act="toggle" data-fn="att" id="attBtn">ATT</button>
-        <button class="key tog" data-act="toggle" data-fn="lock" id="lockBtn">LOCK</button>
-      </div>
     </div>
     </div><!-- /rx -->
 
@@ -411,19 +394,16 @@
         <button class="key tbw" data-act="tbw" data-w="1">MID</button>
         <button class="key tbw" data-act="tbw" data-w="2">NAR</button>
       </div>
+      <div class="row step-row" id="tunerRow">
+        <span class="step-label">ATU</span>
+        <button class="key tog" data-act="toggle" data-fn="tuner" id="tunerBtn" title="Antenna tuner in / out of line">TUNER</button>
+        <button class="key" data-act="tune_atu" id="tuneBtn" data-tx title="Start an antenna-tuner cycle — transmits a brief carrier to tune">TUNE</button>
+      </div>
       <label class="sl"><span>PWR</span><input type="range" min="0" max="255" step="1" id="rfpwr" data-target="rfpwr"><b class="sl-val" id="rfpwrVal">0%</b></label>
       <label class="sl"><span>MIC</span><input type="range" min="0" max="255" id="mic" data-target="mic"><b class="sl-val" id="micVal">128</b></label>
       <label class="sl"><span>COMP</span><input type="range" min="0" max="255" id="comp_level" data-target="comp_level"><b class="sl-val" id="comp_levelVal">128</b></label>
       <label class="sl" data-tx><span>VOX</span><input type="range" min="0" max="255" id="vox_gain" data-target="vox_gain"><b class="sl-val" id="vox_gainVal">128</b></label>
       <label class="sl"><span>MON</span><input type="range" min="0" max="255" id="mon_level" data-target="mon_level"><b class="sl-val" id="mon_levelVal">128</b></label>
-    </div>
-
-    <div class="grp" id="tunerGrp">
-      <div class="grp-title">ANTENNA TUNER</div>
-      <div class="row">
-        <button class="key tog" data-act="toggle" data-fn="tuner" id="tunerBtn" title="Antenna tuner in / out of line">TUNER</button>
-        <button class="key" data-act="tune_atu" id="tuneBtn" data-tx title="Start an antenna-tuner cycle — transmits a brief carrier to tune">TUNE</button>
-      </div>
     </div>
 
     <div class="grp" id="splitGrp">
@@ -464,7 +444,7 @@
         <button class="key agc" data-act="agc" data-mode="2">MID</button>
         <button class="key agc" data-act="agc" data-mode="3">SLOW</button>
       </div>
-      <div class="row step-row">
+      <div class="row step-row" id="mnwRow">
         <span class="step-label">M-NOTCH</span>
         <button class="key mnw" data-act="mnotch_w" data-width="0">WIDE</button>
         <button class="key mnw" data-act="mnotch_w" data-width="1">MID</button>
@@ -477,26 +457,23 @@
       <label class="sl"><span>NOTCH</span><input type="range" min="0" max="255" id="mnotch_pos" data-target="mnotch_pos"><b class="sl-val" id="mnotch_posVal">128</b></label>
     </div>
 
-    <div class="grp" id="widthGrp">
-      <div class="grp-title">WIDTH</div>
-      <div class="row step-row">
+    <!-- a Yaesu's DSP filter (ext_ops): each row only in the modes it works in (app.js syncExtPanel) -->
+    <div class="grp" id="shapeGrp">
+      <div class="grp-title">WIDTH · CONTOUR · APF</div>
+      <div class="row step-row" id="widthRow">
         <span class="step-label">WIDTH</span>
         <button class="key" data-act="width_d" data-d="-1" title="Narrower DSP passband">&minus;</button>
         <span class="span-val" id="widthVal">—</span>
         <button class="key" data-act="width_d" data-d="1" title="Wider DSP passband">+</button>
       </div>
-    </div>
-
-    <div class="grp" id="contourGrp">
-      <div class="grp-title">CONTOUR</div>
-      <div class="row"><button class="key tog" data-act="toggle" data-fn="contour" id="contourBtn" title="Contour filter in / out">CONTOUR</button></div>
-      <label class="sl"><span>FREQ</span><input type="range" min="10" max="3200" step="10" id="contour_freq" data-act="contour_freq"><b class="sl-val" id="contour_freqVal">—</b></label>
-    </div>
-
-    <div class="grp" id="apfGrp">
-      <div class="grp-title">APF (CW)</div>
-      <div class="row"><button class="key tog" data-act="toggle" data-fn="apf" id="apfBtn" title="Audio Peak Filter in / out">APF</button></div>
-      <label class="sl"><span>FREQ</span><input type="range" min="0" max="50" step="1" id="apf_freq" data-act="apf_freq"><b class="sl-val" id="apf_freqVal">0 Hz</b></label>
+      <div class="row step-row ctl-inline" id="contourRow">
+        <button class="key tog" data-act="toggle" data-fn="contour" id="contourBtn" title="Contour filter in / out">CONTOUR</button>
+        <label class="sl"><span>FREQ</span><input type="range" min="10" max="3200" step="10" id="contour_freq" data-act="contour_freq"><b class="sl-val" id="contour_freqVal">—</b></label>
+      </div>
+      <div class="row step-row ctl-inline" id="apfRow">
+        <button class="key tog" data-act="toggle" data-fn="apf" id="apfBtn" title="Audio Peak Filter (CW) in / out">APF</button>
+        <label class="sl"><span>FREQ</span><input type="range" min="0" max="50" step="1" id="apf_freq" data-act="apf_freq"><b class="sl-val" id="apf_freqVal">0 Hz</b></label>
+      </div>
     </div>
 
     <div class="grp" id="cwGrp">
@@ -524,14 +501,11 @@
     </div><!-- /dsp -->
 
     <div class="panel hide" data-p="setup">
-    <div class="grp">
-      <div class="grp-title">CONNECTION</div>
+    <details class="grp setup-help">
+      <summary class="grp-title">Connection and scope help</summary>
       <div class="setup-note">Pick your radio and connection at the top bar. <b>LAN / network</b> uses Icom RS&#8209;BA1 — on the radio set <b>MENU &gt; SET &gt; Network &gt; Network Control = ON</b>, then enter the radio's IP plus its network username and password. The <b>?</b> by the model shows the exact radio settings.</div>
-    </div>
-    <div class="grp">
-      <div class="grp-title">SCOPE TOOLS</div>
-      <div class="setup-note">On the scope toolbar: <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands, and <b>CW</b> shows CW in the Modem window (decoder / keyer).</div>
-    </div>
+      <div class="setup-note">On the scope's bar, <b>BAND PLAN</b> overlays the ARRL / FCC sub&#8209;bands.</div>
+    </details>
     <div id="menuRoot" class="menu-root" hidden></div>
     </div><!-- /setup -->
 

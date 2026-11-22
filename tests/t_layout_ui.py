@@ -37,7 +37,12 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
 TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
-B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint,cwToolBtn,meterVal"   # scopeHint: the bar's hint gave way to the step keys; cwToolBtn: the scope's CW key (the Modem window's shows CW); meterVal: the meter's reading (the step keys stand there)
+B3_ALLOW_MISSING = ("remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint,cwToolBtn,meterVal,"
+                    "freqEntry,freqSet,step,opsGrp,tunerGrp,widthGrp,contourGrp,apfGrp")
+# scopeHint: the bar's hint gave way to the step keys; cwToolBtn: the scope's CW key (the Modem window's shows CW);
+# meterVal: the meter's reading (the step keys stand there); freqEntry / freqSet / step: the Controls panel's frequency
+# box and STEP (the VFO's digits and its step picker); opsGrp / tunerGrp / widthGrp / contourGrp / apfGrp: groups
+# that became rows (opsRow, tunerRow, widthRow, contourRow, apfRow) of a fuller group
 # The page Phase 1 started from: v0.2.25. The audit used to read `dev`, which was that page until the
 # v0.3.0 release moved dev to v0.3.0 itself; pinned so the Phase 1 audit keeps its meaning.
 PHASE1_BASE_REF = "1d6ea32"
@@ -336,10 +341,10 @@ def console_css_replaced_by_tiles(ctx):
     body = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     for gone in (".scopepane", ".toprow", ".radio{", ".radio {"):
         check(gone not in body, f"console rule {gone} removed")
-    for rule in (".tile .controls{display:flex;flex-direction:column;gap:7px;columns:auto}",
-                 ".tile .controls .grp{margin:0;padding:6px 8px}",
-                 ".tile .controls .grp-title{margin-bottom:4px;font-size:9px}",
-                 ".tile .controls .key{padding:6px 5px;font-size:12px;min-width:30px}",
+    for rule in (".tile .controls{display:flex;flex-direction:column;gap:6px;columns:auto}",   # tighter, 11-22
+                 ".tile .controls .grp{margin:0;padding:5px 8px 6px}",
+                 ".tile .controls .grp-title{margin-bottom:3px;font-size:9px}",
+                 ".tile .controls .key{padding:5px 5px;font-size:12px;min-width:30px}",
                  ".tile .controls .step-row{margin-top:4px}",
                  ".controls .span-val{min-width:0;font-size:12px}",       # the two AR-30 rules (B2) are kept
                  ".controls .step-row{flex-wrap:wrap}",

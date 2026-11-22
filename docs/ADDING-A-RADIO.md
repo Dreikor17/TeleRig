@@ -170,6 +170,13 @@ renders/gates itself from it:
   the handler reads them on connect and with the panel round-robin and keeps the offset of the band
   the radio is on (`backend/rpt_offset_test.py`). Without them the VFO shows the shift without a value
   and no TX frequency: never a made-up offset.
+- **The manual notch's width** (the DSP tab's WIDE / MID / NAR keys, `mnotch_w` 0 / 1 / 2): an Icom
+  sets three over CI-V `16 57`. A Yaesu keeps two in a SET-menu item, IF NOTCH WIDTH (NARROW / WIDE):
+  name it in `notch_width_menu` (FT‑991A `116`, FT‑891 `12-04`) and list the widths the keys may offer in
+  `capabilities.mnotch_widths` (`[0, 2]`: no MID). The handler reads the item on connect and writes it
+  only once the radio has answered it as NARROW or WIDE (`state["mnotch_w_ok"]`): a radio whose menu is
+  numbered otherwise (a later firmware) answers another item there, and then the keys stay hidden and
+  nothing is written (`backend/notch_width_test.py`).
 - **`menu`** — a declarative `MenuItem` list driving the data‑driven **Setup tab**.
 
 When `transports`/`capabilities` are omitted they are **synthesized from the flat `has_*`

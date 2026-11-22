@@ -85,6 +85,9 @@ class Capabilities:
     # False = it is a menu setting only (Yaesu RPT SHIFT) or TeleRig does not set it.
     duplex_offset: bool = False
     rx_dsp: list = field(default_factory=list)    # ["nb","nr","anotch","mnotch"]
+    # the manual notch widths the radio can set, by the DSP tab's keys: 0 WIDE, 1 MID, 2 NAR (an Icom's
+    # 16 57); a Yaesu's IF NOTCH WIDTH menu item has two, WIDE and NAR (profile.notch_width_menu)
+    mnotch_widths: list = field(default_factory=lambda: [0, 1, 2])
     tx_funcs: list = field(default_factory=list)  # ["comp","vox","mon"]
     tbw: bool = True
     meters: list = field(default_factory=list)    # ["S","PO","SWR","ALC","COMP","Vd","Id"]
@@ -197,6 +200,10 @@ class RadioProfile:
     # band with none) and the VFO can show where a shifted transmission goes. An Icom reports its
     # own (CI-V 0C). () = none. See docs/ADDING-A-RADIO.md.
     rpt_offset_menus: tuple = ()
+    # Yaesu manual notch width: the SET-menu item that holds it (IF NOTCH WIDTH, NARROW / WIDE: FT-991A
+    # 116, FT-891 12-04). Read on connect and with the panel; the DSP tab's WIDE / NAR keys write it only
+    # once the radio has answered it as NARROW or WIDE (state mnotch_w_ok). 0 = none.
+    notch_width_menu: int = 0
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
     # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
@@ -241,6 +248,7 @@ class RadioProfile:
                 vfo_swap=True,
                 split=True, rit=True, duplex=True,
                 rx_dsp=["nb", "nr", "anotch", "mnotch"],
+                mnotch_widths=[0, 1, 2] if self.protocol != "yaesu" else ([0, 2] if self.notch_width_menu else []),
                 tx_funcs=["comp", "vox", "mon"], tbw=True,
                 meters=["S", "PO", "SWR", "ALC", "COMP", "Vd", "Id"],
                 cw_tx=bool(self.cw_send), menus=bool(self.menu),
@@ -476,6 +484,7 @@ FT991A = RadioProfile(
     # 080-083 RPT SHIFT 28 / 50 / 144 / 430 MHz (kHz): the offset a + or - shift (OS) uses there
     rpt_offset_menus=((80, 28_000_000, 29_700_000), (81, 50_000_000, 54_000_000),
                       (82, 144_000_000, 148_000_000), (83, 420_000_000, 450_000_000)),
+    notch_width_menu=116,           # 116 IF NOTCH WIDTH: 0 NARROW / 1 WIDE (CAT reference p8)
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -540,6 +549,7 @@ FT891 = RadioProfile(
     cw_disp_read="EX0711;",         # 07-11 CW FREQ DISPLAY: 0 FREQ / 1 PITCH (default)
     # 09-04 / 09-05 RPT SHIFT 28 / 50 MHz (kHz): the offset a + or - shift (OS) uses there
     rpt_offset_menus=((904, 28_000_000, 29_700_000), (905, 50_000_000, 54_000_000)),
+    notch_width_menu=1204,          # 12-04 IF NOTCH WIDTH: 0 NARROW / 1 WIDE (CAT reference p8)
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -552,6 +562,7 @@ FT891 = RadioProfile(
         vfo_select=False,          # Yaesu CAT has no active-VFO (A/B) selector
         vfo_swap=True, split=True, rit=True, duplex=True,
         rx_dsp=["nb", "nr", "anotch", "mnotch"],
+        mnotch_widths=[0, 2],      # WIDE / NAR: its IF NOTCH WIDTH menu item (12-04)
         tx_funcs=["comp", "vox", "mon"], tbw=True,
         meters=["S", "PO", "SWR", "ALC", "COMP", "Id"],   # FT-891 RM: 7=ID is the top; no VDD (8)
         cw_tx=False, menus=True,

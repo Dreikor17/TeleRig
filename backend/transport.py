@@ -608,7 +608,8 @@ class YaesuSimTransport(Transport):
         self._ops = {"NA0": "0", "CT0": "0", "CN00": "012", "CN01": "000", "OS0": "0",
                      "SH0": "00", "CO00": "0000", "CO01": "0300", "CO02": "0000", "CO03": "0025",
                      "ML0": "000", "ML1": "030", "PR0": "1", "PR1": "1", "TS": "0",
-                     "BI": "0", "KR": "0", "KS": "020", "KP": "40", "CS": "0", "SC": "0", "FS": "0"}
+                     "BI": "0", "KR": "0", "KS": "020", "KP": "40", "CS": "0", "SC": "0", "FS": "0",
+                     "BP00": "000", "BP01": "100"}         # the manual notch: off, at 1000 Hz
         # Simulated TX state, answered on the TX; poll like the real radio: "0" receive, "1" keyed
         # by CAT (TX1;), "2" keyed from the radio itself (front panel / mic PTT). Without this the
         # sim always answered TX0; and the TX arbiter's reconciliation dropped every PTT claim on
@@ -714,6 +715,8 @@ class YaesuSimTransport(Transport):
             val = it.min if it.kind == "int" else 0    # enum -> index 0, signed -> 0
             if it.name == "CW FREQ DISPLAY":
                 val = 1                                # the radio's factory default: PITCH (offset)
+            elif it.name == "IF NOTCH WIDTH":
+                val = "WIDE"                               # the radio's factory default
             elif it.name.startswith("RPT SHIFT "):     # the repeater offsets (kHz): the usual US ones
                 val = {"28MHz": 100, "50MHz": 1000, "144MHz": 600, "430MHz": 5000}.get(it.name[10:], val)
             w = getattr(it, "ex_width", 3)

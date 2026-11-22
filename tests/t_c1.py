@@ -561,6 +561,48 @@ def af_asks_before_the_radio_speaker_goes_up_in_node_vm(ctx):
 
 
 @test("unit")
+def controls_panel_shorter_with_every_control_in_node_vm(ctx):
+    """The Controls panel (the operator, 11-22: "get rid of the frequency section ... and the step setting ...
+    reduce the size of each tab ... Do not get rid of features"): no frequency box and no STEP (the VFO has
+    both); groups that became rows of a fuller group, each still shown and hidden per radio and per mode
+    (tests/controls_panel_test.js: the manual notch's widths, an Icom's three and a Yaesu's two once its IF
+    NOTCH WIDTH answers; a Yaesu's WIDTH / CONTOUR / APF by mode; scan and the tuner by radio). Static: every
+    control the panel had is still on the page (only the frequency box, its SET and STEP are gone); the
+    Settings help is folded; its scope note no longer names a CW key."""
+    r = subprocess.run(["node", str(REPO / "tests" / "controls_panel_test.js")], capture_output=True, text=True,
+                       timeout=180, cwd=str(REPO))
+    eq(r.returncode, 0, f"controls_panel_test.js: {r.stdout}{r.stderr}")
+    check("ALL PASS" in r.stdout, f"controls_panel_test.js output: {r.stdout}")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    panel = html.split('<section class="controls" data-gate="operate">', 1)[1].split("</section>", 1)[0]
+    for gone in ('id="freqEntry"', 'id="freqSet"', 'id="step"', ">FREQUENCY<", ">OPERATING<", ">ANTENNA TUNER<"):
+        check(gone not in panel, f"the Controls panel: {gone} is gone")
+    # every key, slider and menu the panel had, by what it does (data-act + its value) or its id
+    keys = set(re.findall(r'data-act="([a-z_]+)"(?: data-(?:fn|filter|code|dir|w|mode|width|d)="([^"]*)")?', panel))
+    for want in [("vfo", c) for c in ("0", "1", "160", "176")] + [("scan", d) for d in ("0", "1", "2")] + \
+                [("toggle", f) for f in ("fast", "narrow", "preamp", "att", "lock", "param_eq", "tuner", "txw", "contour", "apf",
+                                          "bkin", "keyer", "spot", "filter_shape")] + \
+                [("filter", f) for f in ("1", "2", "3")] + [("rxfunc", f) for f in ("comp", "vox", "mon", "nb", "nr", "anotch", "mnotch")] + \
+                [("tbw", w) for w in ("0", "1", "2")] + [("duplex", m) for m in ("0", "1", "2")] + [("agc", m) for m in ("1", "2", "3")] + \
+                [("mnotch_w", w) for w in ("0", "1", "2")] + [("width_d", d) for d in ("-1", "1")] + [("rit_d", d) for d in ("-100", "100")] + \
+                [("tune_atu", ""), ("splittog", ""), ("quick_split", ""), ("rittog", ""), ("rit_z", ""), ("zero_in", ""), ("apf_cyc", ""),
+                 ("bkin_cyc", ""), ("datamode", ""), ("mem_recall", ""), ("mem_to_vfo", "")]:
+        check(want in keys, f"the Controls panel still has {want}")
+    for sid in ("af", "rf", "sql", "rfpwr", "mic", "comp_level", "vox_gain", "mon_level", "nb_level", "nr_level", "pbt1", "pbt2",
+                "mnotch_pos", "contour_freq", "apf_freq", "key_speed", "key_pitch", "cw_pitch", "keyer_speed",
+                "toneMode", "toneFreq", "dcsCode", "rptShift", "memCh", "bandRow", "modeRow", "menuRoot"):
+        check(f'id="{sid}"' in panel, f"the Controls panel still has #{sid}")
+    for rid in ("opsRow", "tunerRow", "widthRow", "contourRow", "apfRow", "shapeGrp", "mnwRow"):
+        check(f'id="{rid}"' in panel, f"#{rid}")
+    help_ = re.search(r'<details class="grp setup-help">(.*?)</details>', panel, re.S)
+    check(help_ and " open" not in help_.group(0)[:40], "the Settings help is folded (a <details> without open)")
+    check(help_ and "<b>CW</b>" not in help_.group(1) and "BAND PLAN" in help_.group(1), "... its scope note: BAND PLAN, no CW key")
+    app = _strip_comments(_read("app.js"))
+    for gone in ('$("freqSet")', '$("freqEntry")', '$("step")', '"opsGrp"', '"tunerGrp"', '"widthGrp"', '"contourGrp"', '"apfGrp"'):
+        check(gone not in app, f"app.js no longer looks for {gone}")
+
+
+@test("unit")
 def rf_power_slider_is_in_the_tx_tab(ctx):
     """The PWR slider (RF power) lives in the Controls TX tab, in the TX group before MIC; the RX tab's
     LEVELS group keeps AF / RF / SQL only."""

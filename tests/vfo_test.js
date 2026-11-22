@@ -19,7 +19,7 @@
  *  T4. typing: a click on the digits (or Enter on them) opens the entry with a hint; Enter tunes (set_freq)
  *      and closes it; Esc cancels; a frequency the radio can't receive is refused, the entry stays; the
  *      other band's row still selects that band; a viewer can't type
- *  T5. the Controls panel's frequency box reads the same way (7074 is 7.074 MHz; 144.2 on HF is refused)
+ *  T5. (the Controls panel's frequency box, gone 2026-11-22: a frequency is typed on the VFO's digits)
  *  T6. the meter, its bar alone (no number beside it: the step keys are there): S on receive (0..240); on
  *      transmit the picked TX meter on the 0..255 bar, its scale under the bar from the CI-V reference (Po
  *      %, SWR 1.5 / 2 / 3, ALC's zone, COMP dB, Vd V, Id A), the bar's amber / red from its marks; a Yaesu's
@@ -119,8 +119,6 @@ async function page(opts) {
   e.el("button", { class: "m-btn step-key", id: "stepUp", type: "button" }, steps);
   const sel = e.el("div", { class: "meter-sel", id: "meterSel" }, meter);
   for (const k of ["PO", "SWR", "ALC", "COMP", "Vd", "Id"]) e.el("button", { class: "m-btn", "data-act": "meter", "data-meter": k }, sel);
-  e.el("input", { id: "freqEntry", class: "freq-entry" });
-  e.el("button", { id: "freqSet", class: "key" });
   e.load("tr.js");
   e.load("waterfall.js");                                  // Passband (the page loads it before app.js)
   e.load("bandplan.js");                                   // the band plan's segments (the line under the digits)
@@ -250,18 +248,6 @@ async function main() {
     for (let i = 0; i < 4; i++) await v.flush();
     v.click(v.$("mainFreq"));
     check(!v.$("rowMain").querySelector(".vfo-entry"), "T4 a viewer can't type a frequency");
-  }
-  // T5: the Controls panel's frequency box
-  {
-    const e = await page();
-    e.state({});
-    for (let i = 0; i < 4; i++) await e.flush();
-    e.$("freqEntry").value = "7074";
-    e.$("freqSet").onclick();
-    e.$("freqEntry").value = "144.2";
-    e.$("freqSet").onclick();
-    eq([e.sent("set_freq"), e.toasts.length && /outside/.test(e.toasts[0])], [[{ action: "set_freq", hz: 7074000 }], true],
-       "T5 the frequency box: 7074 is 7.074 MHz; 144.2 on an HF radio is refused, with the reason");
   }
   // T6: the meter
   {

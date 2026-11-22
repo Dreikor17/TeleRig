@@ -603,6 +603,7 @@
     }
     setActive(".agc", b => +b.dataset.mode === (s.agc || 2));
     setActive(".mnw", b => +b.dataset.width === (s.mnotch_w || 0));
+    { const mr = $("mnwRow"); if (mr) mr.hidden = s.mnotch_w_ok === false; }   // a Yaesu: until its IF NOTCH WIDTH answers
 
     // TX toggles + TBW + SPLIT/RIT (M3)
     for (const f of ["comp", "vox", "mon"]) {
@@ -965,11 +966,11 @@
     const cap = (currentRadio && currentRadio.capabilities) || {};
     const ext = !!cap.ext_ops, mode = s.mode_name || "";
     const disp = (id, on) => { const e = $(id); if (e) e.style.display = on ? "" : "none"; };
-    disp("widthGrp", ext && WIDTH_MODES.includes(mode));
-    disp("contourGrp", ext && CONTOUR_MODES.includes(mode));
-    disp("apfGrp", ext && CW_MODES.includes(mode));
+    // the WIDTH / CONTOUR / APF rows, and their group while any of them shows
+    const w = ext && WIDTH_MODES.includes(mode), c = ext && CONTOUR_MODES.includes(mode), a = ext && CW_MODES.includes(mode);
+    disp("widthRow", w); disp("contourRow", c); disp("apfRow", a); disp("shapeGrp", w || c || a);
     disp("cwGrp", ext && CW_MODES.includes(mode));
-    disp("opsGrp", ext);
+    disp("opsRow", ext);
     disp("paramEqBtn", ext); disp("txwBtn", ext); disp("qsplitBtn", ext);
     if (!ext) return;
     const tog = (id, v) => { const e = $(id); if (e) e.classList.toggle("on", (v || 0) > 0); };
@@ -1050,23 +1051,14 @@
     send({ action: "set_span", span: SPANS[i] });
   }
 
-  // frequency entry
-  $("freqSet").onclick = setFreqFromEntry;
-  $("freqEntry").addEventListener("keydown", e => { if (e.key === "Enter") setFreqFromEntry(); });
-  function setFreqFromEntry() {                 // MHz, kHz, .230 ...: the same rules as typing into the VFO (freqentry.js)
-    const box = $("freqEntry"), F = window.FreqEntry;
-    if (!F) { const v = parseFloat(box.value); if (!isNaN(v)) send({ action: "set_freq", hz: Math.round(v * 1e6) }); return; }
-    const r = F.parse(box.value, state.freq, F.rangesOf(currentRadio));
-    if (r.error) { TR.toast(r.error, "warn"); return; }
-    send({ action: "set_freq", hz: r.hz });
-  }
+  // (a frequency is typed on the VFO's digits: freqentry.js; the Controls panel has no box for it, 2026-11-22)
 
   // ---- the tuning step ----
-  // One setting with two pickers: STEP in the Controls panel and the one between the step keys beside the
-  // VFO's meter. The step picked is kept per radio on this device (telerig.step.<radio id>), so after a reload
-  // the keys tune by it, not by the profile's default (the IC-9700's is its 25 kHz FM channel step).
+  // Picked between the step keys beside the VFO's meter (the Controls panel's STEP went, 2026-11-22). The step
+  // is kept per radio on this device (telerig.step.<radio id>), so after a reload the keys tune by it, not by
+  // the profile's default (the IC-9700's is its 25 kHz FM channel step).
   const STEP_KEY = "telerig.step.";
-  const stepSels = () => [$("step"), $("vfoStep")].filter(Boolean);
+  const stepSels = () => [$("vfoStep")].filter(Boolean);
   function keptStep(p) {                              // the kept step, if it is still one of this radio's
     let v = 0;
     try { v = +localStorage.getItem(STEP_KEY + p.id); } catch (_) {}
@@ -2124,7 +2116,7 @@
     const tu = $("tunerBtn"); if (tu) tu.style.display = capHas("tuner", p.has_tuner) ? "" : "none";
     const tn = $("tuneBtn"); if (tn) tn.style.display = capHas("tuner", p.has_tuner) ? "" : "none";
     // hide the whole ANTENNA TUNER group (now in the TX panel) when the rig has no internal ATU
-    const tg = $("tunerGrp"); if (tg) tg.style.display = capHas("tuner", p.has_tuner) ? "" : "none";
+    const tg = $("tunerRow"); if (tg) tg.style.display = capHas("tuner", p.has_tuner) ? "" : "none";
     // VFO A/B select: hidden when the rig has no CAT active-VFO selector (FT-991A); A=B/SWAP stay
     const vfoSel = capHas("vfo_select", true);
     document.querySelectorAll('[data-act="vfo"][data-code="0"], [data-act="vfo"][data-code="1"]')
@@ -2135,6 +2127,12 @@
       const list = ["nb", "nr", "anotch", "mnotch"].includes(fn) ? cap.rx_dsp : cap.tx_funcs;
       if (Array.isArray(list)) b.style.display = list.includes(fn) ? "" : "none";
     });
+    // the manual notch's widths: an Icom's three, a Yaesu's two (WIDE / NAR, its IF NOTCH WIDTH menu item);
+    // the row goes with the notch. (While a Yaesu hasn't answered that item, updateState hides the row.)
+    { const mnw = Array.isArray(cap.mnotch_widths) ? cap.mnotch_widths : [0, 1, 2];
+      document.querySelectorAll(".mnw").forEach(b => { b.style.display = mnw.includes(+b.dataset.width) ? "" : "none"; });
+      const mr = $("mnwRow");
+      if (mr) mr.style.display = mnw.length && (!Array.isArray(cap.rx_dsp) || cap.rx_dsp.includes("mnotch")) ? "" : "none"; }
     // meter buttons: only the meters the rig supports; its own TX scale (meter_marks), the peak starts over
     if (Array.isArray(cap.meters)) document.querySelectorAll('[data-act="meter"][data-meter]')
       .forEach(b => { b.style.display = cap.meters.includes(b.dataset.meter) ? "" : "none"; });
