@@ -648,13 +648,25 @@
             <span class="tp-title">CW</span>
           </div>
           <div class="tp-body">
+            <canvas class="dm-strip" id="cwStrip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with a gate at the radio's CW pitch: a station tuned in runs between its lines"
+                    title="The radio's audio, 0 to 3 kHz. Tuned in, a CW station runs between the two lines at the radio's CW pitch."></canvas>
             <div class="dm-bar cw-bar">
               <button type="button" class="key sm tog" id="cwDecodeBtn" aria-pressed="false" title="The CW decoder on or off">Decode</button>
               <select class="dm-go" id="cwGo" data-gate="operate" aria-label="Tune the radio to a CW frequency" title="Tune the radio to a CW frequency on one of its bands" hidden><option value="">Tune to…</option></select>
+              <button type="button" class="key sm" id="cwCopy" title="Copy the text to the clipboard">Copy</button>
               <button type="button" class="key sm" id="cwClear" title="Clear the text">Clear</button>
             </div>
             <p class="dm-status" id="cwStatus" aria-live="polite">Loading the decoder…</p>
             <div class="cw-out" id="cwOut" aria-label="Decoded CW"></div>
+            <!-- quick messages: each key writes into the message field below (nothing is sent); the callsign is the
+                 operator's, kept by this browser (digital.js), and FT8 marks the messages that name it -->
+            <div class="cw-row cw-quick" role="group" aria-label="Quick messages">
+              <button type="button" class="key sm" id="cwQCq" title="Write a CQ call with your callsign into the message">CQ</button>
+              <button type="button" class="key sm" id="cwQDe" title="Add DE and your callsign to the message">DE</button>
+              <button type="button" class="key sm" id="cwQ73" title="Add a sign-off to the message">73</button>
+              <input type="text" id="cwCall" class="cw-call" maxlength="12" placeholder="Your call" autocomplete="off" autocapitalize="characters" spellcheck="false"
+                     aria-label="Your callsign, for the CQ, DE and 73 keys; FT8 marks the messages that name it" title="Your callsign: used by the keys beside it, and marked in FT8's list">
+            </div>
             <div class="cw-row">
               <input id="cwSend" class="cw-send" placeholder="Message: &#9654; hear, TX send" maxlength="160" aria-label="CW message: the play key sounds it here, TX sends it on the radio">
               <button type="button" class="key sm" id="cwPlay" aria-label="Play as a sidetone here" title="Hear the message here as a sidetone. This does not key the radio.">&#9654;</button>
@@ -713,6 +725,7 @@
         <div class="dm-bar">
           <select id="rttyMode" aria-label="RTTY speed in baud and shift in Hz" title="Speed (baud) / shift: amateur RTTY is 45.45 / 170 Hz"></select>
           <button type="button" class="key sm tog" id="rttyRev" aria-pressed="false" title="Swap mark and space (some stations send them the other way round)">Rev</button>
+          <button type="button" class="key sm" id="rttyCopy" title="Copy the text to the clipboard">Copy</button>
           <button type="button" class="key sm" id="rttyClear" title="Clear the text">Clear</button>
         </div>
         <p class="dm-status" id="rttyStatus" aria-live="polite"></p>
@@ -721,12 +734,13 @@
       <div id="dmPaneFt8" role="tabpanel" aria-labelledby="dmFt8" hidden>
         <canvas class="dm-strip" id="ft8Strip" height="44" aria-label="The radio's audio from 0 to 3 kHz, with the last slot's FT8 messages marked"></canvas>
         <div class="dm-bar">
-          <label class="dm-check" title="Show only stations calling CQ"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
+          <label class="dm-check" title="Show only stations calling CQ, and messages that name your callsign"><input type="checkbox" id="ft8CqOnly"> CQ only</label>
           <select class="dm-go" id="ft8Go" data-gate="operate" aria-label="Tune the radio to a band's FT8 frequency" title="Tune the radio to a band's FT8 frequency, in its data mode" hidden><option value="">Tune to…</option></select>
+          <button type="button" class="key sm" id="ft8Copy" title="Copy the list to the clipboard">Copy</button>
           <button type="button" class="key sm" id="ft8Clear" title="Clear the list">Clear</button>
         </div>
         <p class="dm-status" id="ft8Status" aria-live="polite"></p>
-        <div class="ft8-row ft8-head" aria-hidden="true"><span class="db" title="Signal to noise, dB">dB</span><span class="dt" title="Time offset, seconds">DT</span><span class="hz" title="Audio frequency, Hz">Hz</span><span class="msg">Message</span></div>
+        <div class="ft8-row ft8-head" aria-hidden="true"><span class="db" title="Signal to noise, dB">dB</span><span class="dt" title="Time offset, seconds">DT</span><span class="hz" title="Audio frequency, Hz">Hz</span><span class="msg"><span>Message</span><span class="ft8-me" id="ft8Me"></span></span></div>
         <div class="dm-screen ft8-list" id="ft8List" role="log" aria-live="off" aria-label="FT8 messages decoded: signal to noise in dB, time offset in seconds, audio frequency in Hz, message"></div>
         <p class="dm-note">Receive only: for contacts, use WSJT-X through the bridge. Slots follow this computer's clock: keep it right to about a second.</p>
       </div>

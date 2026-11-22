@@ -33,7 +33,12 @@
  * for someone else's (tx_stop, F18). A tap on it while it is or just was a STOP control never starts
  * a transmission (below). Viewers never see it (data-tx, role channel).
  *
- * window.CwPanel = { busy(), summary() } (digital.js: the send lock; the collapsed window's summary)
+ * Quick messages: CQ, DE and 73 write a message with the operator's callsign (DigitalPanel.call()) into
+ * the message field, where it can be changed; they send nothing. CQ is a whole message; DE and 73 are
+ * added to what is there. With no callsign yet, CQ and DE ask for it (the field beside them).
+ *
+ * window.CwPanel = { busy(), summary(), text() } (digital.js: the send lock; the collapsed window's
+ * summary; the chat as text, for Copy)
  *
  * SPDX-License-Identifier: AGPL-3.0-only
  * The decode path links the AGPL-3.0 DeepCW model (github.com/e04/deepcw-engine),
@@ -417,6 +422,35 @@
     showTone();
   }
 
+  // ---- quick messages: into the message field, to be read and changed before anything is done with it ----
+  const MSG_MAX = 160;                                   // the field's own limit
+  function myCall() {                                    // "" outside the Modem window, or before a callsign is known
+    try { return Dig().call() || ""; } catch (_) { return ""; }
+  }
+  function quick(text, fresh) {
+    const el = $("cwSend");
+    if (!el) return;
+    const was = fresh ? "" : String(el.value || "").replace(/\s+$/, "");
+    el.value = ((was ? was + " " : "") + text).slice(0, MSG_MAX);
+  }
+  function askCall() {                                   // no callsign yet: its field, and why
+    const el = $("cwCall"), tr = window.TR;
+    if (el && typeof el.focus === "function") el.focus();
+    try { if (tr && typeof tr.toast === "function") tr.toast("Type your callsign first, in the field beside these keys.", "info"); } catch (_) {}
+  }
+  const QUICK = {
+    cwQCq: (c) => (c ? ["CQ CQ CQ DE " + c + " " + c + " K", true] : null),
+    cwQDe: (c) => (c ? ["DE " + c, false] : null),
+    cwQ73: (c) => [c ? "TU 73 DE " + c + " SK" : "TU 73 SK", false],
+  };
+  for (const id of Object.keys(QUICK)) {
+    const b = $(id);
+    if (b) b.addEventListener("click", () => {
+      const m = QUICK[id](myCall());
+      if (m) quick(m[0], m[1]); else askCall();
+    });
+  }
+
   // ---- coder (text -> Morse sidetone; never transmits) ----
   $("cwPlay").addEventListener("click", () => playMorse($("cwSend").value));
   $("cwSend").addEventListener("keydown", (e) => { if (e.key === "Enter") playMorse($("cwSend").value); });
@@ -597,6 +631,8 @@
       }
       return "CW decoder on";
     },
+    // the chat as text, one message a line: its time, RX or TX, the text (what is still being decoded is left out)
+    text: () => messages.filter((m) => m.text).map((m) => m.t + " " + (m.dir === "tx" ? "TX" : "RX") + "  " + m.text).join("\n"),
   };
 
   // diagnostic: window.__cwdiag() -> live decode internals (peak / dominant Hz / raw text)

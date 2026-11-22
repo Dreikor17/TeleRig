@@ -470,8 +470,9 @@ def sstv_receive_in_node_vm(ctx):
     """sstv.js (receive only): the decoder against a reference encoder (tests/sstv_encode.js) in every
     mode, in noise, mistuned, from a station with a fast clock, joined mid-picture, never started by
     noise, an unknown VIS reported, a lost signal ended (tests/sstv_test.js); the panel on the real
-    script: RX hint, painting, status, the PNG strip, off-grid, the mode menu, Clear
-    (tests/sstv_panel_test.js). Static: it never sends a radio action and never parses text as HTML."""
+    script: RX hint, painting, status, the PNG strip (kept by the browser: a reload brings it back),
+    off-grid, the mode menu, Clear (tests/sstv_panel_test.js). Static: it never sends a radio action and
+    never parses text as HTML; the strip's store is this browser's own."""
     for name in ("sstv_test.js", "sstv_panel_test.js"):
         r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=300, cwd=str(REPO))
         eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
@@ -479,6 +480,7 @@ def sstv_receive_in_node_vm(ctx):
     js = _strip_comments(_read("sstv.js"))
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function", ".send(", "WebSocket", "fetch("):
         check(bad not in js, f"sstv.js never uses {bad}")
+    check('NAME = "telerig-sstv"' in js and "window.indexedDB" in js, "sstv.js keeps the strip's pictures in this browser's IndexedDB")
 
 
 @test("unit")
@@ -488,9 +490,11 @@ def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
     CW decodes by default (CW coming into view turns Decode on, with the real Modem window too); the
     chat follows new text only at its end, and stays when Decode is turned off and on again. One line
     under the bar says where the decoder stands; WPM and the sidetone's pitch are kept by the browser.
+    The quick keys (CQ, DE, 73) write a message with the operator's callsign into the message field and
+    do nothing else; CwPanel.text() is the chat as text, for the Copy key.
     The real tr.js + cwtool.js (+ digital.js) in a Node vm with a stand-in decoder worker
     (tests/cw_chat_test.js). Static: the decoder never makes the page's audio context (one made before a
-    click stays paused, and the mic would send silence): only Play does."""
+    click stays paused, and the mic would send silence): only Play does; a quick key only writes."""
     r = subprocess.run(["node", str(REPO / "tests" / "cw_chat_test.js")], capture_output=True, text=True,
                        timeout=180, cwd=str(REPO))
     eq(r.returncode, 0, f"cw_chat_test.js: {r.stdout}{r.stderr}")
@@ -499,6 +503,15 @@ def cw_chat_splits_rx_after_a_pause_in_node_vm(ctx):
     eq(js.count(".ensure()"), 1, "cwtool.js makes the page's audio in one place")
     play = js.split("function playMorse(text) {", 1)
     check(len(play) == 2 and ".ensure()" in play[1].split("\n  }\n", 1)[0], "... Play's click (playMorse), never the decoder")
+    quick = js.split("function quick(text, fresh) {", 1)
+    check(len(quick) == 2 and '$("cwPlay")' in quick[1], "cwtool.js: the quick keys' code, before the coder's")
+    body = quick[1].split('$("cwPlay")', 1)[0] if len(quick) == 2 else ".send("
+    for bad in (".send(", "playMorse", "addTx", ".click()"):
+        check(bad not in body, f"cwtool.js: a quick key only writes into the message field (no {bad})")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    for kid in ("cwQCq", "cwQDe", "cwQ73", "cwCall"):
+        tag = re.search(r'<(?:button|input)[^>]*id="%s"[^>]*>' % kid, html)
+        check(tag and "data-tx" not in tag.group(0) and "data-gate" not in tag.group(0), f"index.html: #{kid} is for everyone (it sends nothing)")
 
 
 @test("unit")
@@ -563,9 +576,11 @@ def digital_modes_window_in_node_vm(ctx):
     tests/ft8_test.js; ft8.js, the slots, the worker and the list: tests/digital_test.js). With RX off the
     window says so under its keys and has the key that turns it on; CW, FT8 and SSTV have a Tune-to menu
     (the Spots panel's list tunes); FT8's list has column headings and its status says what to check when
-    nothing decodes. Static: RTTY and FT8 decode only (no radio action, no socket, no fetch) and never
-    parse text as HTML; the decoder carries ft8_lib's MIT notice, and the test recording its own; the
-    page's RX line, menus, headings and touch sizes."""
+    nothing decodes. The operator's callsign (typed in CW, kept by the browser) is marked in FT8's list;
+    Copy puts a mode's text on the clipboard; CW has an audio strip with a gate at the radio's pitch, which
+    gives way to the chat. Static: RTTY and FT8 decode only (no radio action, no socket, no fetch) and
+    never parse text as HTML; the decoder carries ft8_lib's MIT notice, and the test recording its own;
+    the page's RX line, menus, headings, CW's strip and quick keys, the Copy keys and touch sizes."""
     for name in ("ft8_test.js", "rtty_test.js", "digital_test.js"):
         r = subprocess.run(["node", str(REPO / "tests" / name)], capture_output=True, text=True, timeout=600, cwd=str(REPO))
         eq(r.returncode, 0, f"{name}: {r.stdout}{r.stderr}")
@@ -609,9 +624,34 @@ def digital_modes_window_in_node_vm(ctx):
     # CW: one status line; FT8: column headings right over its list
     check('<p class="dm-status" id="cwStatus" aria-live="polite">' in html and 'id="cwHint"' not in html, "index.html: CW has one status line")
     check(re.search(r'<div class="ft8-row ft8-head" aria-hidden="true"><span class="db"[^>]*>dB</span><span class="dt"[^>]*>DT</span>'
-                    r'<span class="hz"[^>]*>Hz</span><span class="msg">Message</span></div>\s*<div class="dm-screen ft8-list" id="ft8List"', html),
+                    r'<span class="hz"[^>]*>Hz</span><span class="msg"><span>Message</span><span class="ft8-me" id="ft8Me"></span></span></div>\s*'
+                    r'<div class="dm-screen ft8-list" id="ft8List"', html),
           "index.html: FT8's column headings sit right over its list")
     check('<b class="sl-val" id="cwToneVal">600 Hz</b>' in html, "index.html: the sidetone's pitch is shown beside its slider")
+    # CW's pane, top to bottom: the audio strip, the bar (Decode, Tune to, Copy, Clear), the status, the chat,
+    # the quick keys with the callsign, the message. Copy before Clear in RTTY's and FT8's bars too
+    cw = html.split('<div class="tool-panel" id="cwTool">', 1)[1].split('<div id="dmPaneRtty"', 1)[0]
+    order = [cw.find('id="%s"' % i) for i in ("cwStrip", "cwDecodeBtn", "cwGo", "cwCopy", "cwClear", "cwStatus", "cwOut", "cwQCq", "cwQDe", "cwQ73",
+                                             "cwCall", "cwSend", "cwPlay", "cwTx")]
+    check(min(order) >= 0 and order == sorted(order), f"index.html: CW's strip, bar, status, chat, quick keys, callsign, message, in that order: {order}")
+    strip = re.search(r'<canvas class="dm-strip" id="cwStrip" height="44" aria-label="[^"]+"\s+title="[^"]+"></canvas>', html)
+    check(strip and "tabindex" not in strip.group(0), "index.html: CW's audio strip only shows (nothing to focus)")
+    check(re.search(r'<div class="cw-row cw-quick" role="group" aria-label="Quick messages">\s*'
+                    r'<button type="button" class="key sm" id="cwQCq" title="[^"]+">CQ</button>\s*'
+                    r'<button type="button" class="key sm" id="cwQDe" title="[^"]+">DE</button>\s*'
+                    r'<button type="button" class="key sm" id="cwQ73" title="[^"]+">73</button>\s*'
+                    r'<input type="text" id="cwCall" class="cw-call" maxlength="12" placeholder="Your call" autocomplete="off" '
+                    r'autocapitalize="characters" spellcheck="false"\s+aria-label="[^"]+" title="[^"]+">\s*</div>', html),
+          "index.html: the quick keys and the callsign field, a labelled group")
+    for cid, what, clear in (("cwCopy", "text", "cwClear"), ("rttyCopy", "text", "rttyClear"), ("ft8Copy", "list", "ft8Clear")):
+        check(re.search(r'<button type="button" class="key sm" id="%s" title="Copy the %s to the clipboard">Copy</button>\s*'
+                        r'<button type="button" class="key sm" id="%s"' % (cid, what, clear), html), f"index.html: #{cid}, right before #{clear}")
+    check('title="Show only stations calling CQ, and messages that name your callsign"><input type="checkbox" id="ft8CqOnly">' in html,
+          "index.html: CQ only says what else it keeps in view")
+    check(0 < dig.find("window.DigitalPanel = {") < dig.rfind("\n  render();\n  renderCall();"),
+          "digital.js: DigitalPanel is set before the first render (what that announces is answered by asking it)")
+    check('{ id: "sstv", y: 7, h: 17, hidden: true }' in _read("layout.js"),
+          "layout.js: a Modem window added to a phone layout is tall enough for CW's pane with its strip")
     # the window is as tall as its panel, never its text: the text screens take the room left and scroll
     # inside (a window that grew with its text made the whole panel scroll, the keys and controls with it)
     css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
@@ -622,8 +662,15 @@ def digital_modes_window_in_node_vm(ctx):
     check(not re.search(r"\.tile-digital>\.tile-fit\{[^}]*min-height:100%", css), "the Modem window doesn't grow with its content")
     for rule in (".dm-rx{display:flex;align-items:center;gap:8px;flex:none;",
                  ".ft8-head{flex:none;padding:0 8px;font:12px/1.45 var(--font-ui)}",
-                 ".dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{min-height:44px}",
-                 ".tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{font-size:16px}"):
+                 ".ft8-row.me .msg{color:var(--tft-amber);font-weight:700}",
+                 ".ft8-list.cq-only .ft8-row:not(.cq):not(.me){display:none}",
+                 ".ft8-head .msg{display:flex;justify-content:space-between;gap:8px;min-width:0}",
+                 ".ft8-head .ft8-me.on{color:var(--warn-hi);font-weight:700}",
+                 ".cw-quick .cw-call{flex:1 1 70px;min-width:0;font-size:12px;padding:4px 8px;text-transform:uppercase}",
+                 ".dm-copybuf{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0}",
+                 "#cwStrip,#ft8Strip{cursor:default}",
+                 ".dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{min-height:44px}",
+                 ".tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{font-size:16px}"):
         check(rule in css, f"style.css: {rule}")
     check(re.search(r"@media \(max-width:680px\),\(hover:none\) and \(pointer:coarse\)\{\s*\.dm-mode,\.sstv-tab,", css),
           "style.css: thumb-high mode keys, tabs, menus and fields on a phone and on any touch screen")

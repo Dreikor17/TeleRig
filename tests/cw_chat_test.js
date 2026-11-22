@@ -33,6 +33,10 @@
  *  W11. Decode off and on again keeps the chat; what comes next goes into a new bubble; Clear empties it
  *  W12. WPM and the sidetone's pitch are kept by this browser (only values in range); the pitch is shown
  *      beside its slider
+ *  W13. the quick keys write into the message field and send nothing: CQ a whole message, DE and 73 added
+ *      to what is there, with the operator's callsign; with none yet, CQ and DE ask for it (its field
+ *      focused, a note) and 73 signs off without one; never longer than the field allows
+ *  W14. CwPanel.text(): the chat as text, a line a message with its time and RX / TX, for the Copy key
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -42,8 +46,9 @@ function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
 const SR = 3200, HOP = 48;                                   // == cwtool.js SR / the worker's hop
-const CW_IDS = { button: ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwTx"], div: ["cwHead", "cwOut", "cwStatus", "cwTxHint", "cwTxRow", "cwToneVal"],
-                 input: ["cwSend", "cwWpmSet", "cwToneSet"] };
+const CW_IDS = { button: ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwTx", "cwQCq", "cwQDe", "cwQ73"],
+                 div: ["cwHead", "cwOut", "cwStatus", "cwTxHint", "cwTxRow", "cwToneVal"],
+                 input: ["cwSend", "cwWpmSet", "cwToneSet", "cwCall"] };
 
 // the CW panel's elements, the page's stand-ins (nothing is ever sent), and the page's audio: with
 // opts.audio false there is none until something makes it (RadioAudio.ensure, as a click does, or e.makeAudio)
@@ -52,7 +57,8 @@ function cwParts(e, parent, opts) {
   for (const [tag, ids] of Object.entries(CW_IDS)) for (const id of ids) e.el(tag, tag === "input" ? { id } : { id, type: "button" }, parent);
   e.doc.getElementById("cwWpmSet").value = "18"; e.doc.getElementById("cwToneSet").value = "600";
   e.st = { connected: true, mode_name: "CW" };
-  e.ctx.RadioControl = { send: () => { throw new Error("nothing is sent here"); }, state: () => e.st };
+  e.sent = [];                                               // opts.sends: what the page sent, noted (W14); else nothing may be
+  e.ctx.RadioControl = { send: (m) => { if (!opts.sends) throw new Error("nothing is sent here"); e.sent.push(m); }, state: () => e.st };
   e.ctx.RadioTx = { owner: () => null, nextSeq: () => 1 };
   e.workers = 0;
   e.ctx.Worker = function () { e.worker = this; e.workers++; this.posted = []; this.postMessage = (m) => this.posted.push(m); };
@@ -95,6 +101,12 @@ async function page(opts) {
   const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" });   // the Modem window; the panel is its CW pane
   cwParts(e, tile, opts);
   e.load("tr.js");
+  if (opts.call !== undefined) {                             // the Modem window's side of the callsign (digital.js)
+    e.call = opts.call;
+    e.ctx.DigitalPanel = { call: () => e.call, mode: () => "cw", show: () => true };
+    e.toasts = [];
+    e.ctx.TR.toast = (m, k) => e.toasts.push([m, k]);
+  }
   e.load("cwtool.js");
   chat(e);
   if (opts.decode === false) return e;                       // Decode as the page left it (W7)
@@ -429,6 +441,68 @@ function modemPage(opts) {
        ["18", "600", "600 Hz"], "W12 nothing kept: the page's own 18 WPM and 600 Hz");
     const b = await page({ decode: false, localStorage: { "telerig.cw.wpm": "abc", "telerig.cw.tone": "5000" } });
     eq([b.doc.getElementById("cwWpmSet").value, b.doc.getElementById("cwToneSet").value], ["18", "600"], "W12 kept values that are no speed or pitch are ignored");
+  }
+  // W13: the quick keys (RadioControl.send throws here: nothing may be sent)
+  {
+    const e = await page({ decode: false, call: "N0CALL" });
+    const $ = (id) => e.doc.getElementById(id), msg = $("cwSend");
+    e.click($("cwQCq"));
+    eq(msg.value, "CQ CQ CQ DE N0CALL N0CALL K", "W13 CQ: a CQ call with the callsign in the message field");
+    msg.value = "W1AW";
+    e.click($("cwQDe"));
+    eq(msg.value, "W1AW DE N0CALL", "W13 DE: added to what was typed");
+    msg.value = "W1AW DE N0CALL UR 599   ";
+    e.click($("cwQ73"));
+    eq(msg.value, "W1AW DE N0CALL UR 599 TU 73 DE N0CALL SK", "W13 73: a sign-off added, one space between");
+    e.click($("cwQCq"));
+    eq(msg.value, "CQ CQ CQ DE N0CALL N0CALL K", "W13 CQ is a whole message: it takes the place of what was there");
+    msg.value = "X".repeat(155);
+    e.click($("cwQDe"));
+    eq([msg.value.length, msg.value.slice(150)], [160, "XXXXX DE N"], "W13 never longer than the field's 160 characters");
+    eq([e.started.length, e.ensured, e.toasts], [0, 0, []], "W13 a quick key plays nothing and says nothing");
+    // no callsign yet
+    const n = await page({ decode: false, call: "" });
+    const m2 = n.doc.getElementById("cwSend");
+    m2.value = "W1AW";
+    n.click(n.doc.getElementById("cwQCq"));
+    eq([m2.value, n.doc.activeElement === n.doc.getElementById("cwCall"), n.toasts],
+       ["W1AW", true, [["Type your callsign first, in the field beside these keys.", "info"]]], "W13 no callsign yet: CQ writes nothing, its field takes the focus, a note says why");
+    n.toasts.length = 0;
+    n.click(n.doc.getElementById("cwQDe"));
+    eq([m2.value, n.toasts.length], ["W1AW", 1], "W13 ... DE the same");
+    n.click(n.doc.getElementById("cwQ73"));
+    eq(m2.value, "W1AW TU 73 SK", "W13 ... 73 signs off without a callsign");
+    n.call = "K1ABC";
+    n.click(n.doc.getElementById("cwQDe"));
+    eq(m2.value, "W1AW TU 73 SK DE K1ABC", "W13 the callsign is read at each press");
+    // no Modem window around it (the script alone): the keys ask, nothing breaks
+    const a = await page({ decode: false });
+    a.click(a.doc.getElementById("cwQCq"));
+    eq(a.doc.getElementById("cwSend").value, "", "W13 with no window to ask for the callsign, CQ writes nothing");
+  }
+  // W14: the chat as text
+  {
+    const e = await page();
+    const text = () => e.ctx.CwPanel.text();
+    eq(text(), "", "W14 an empty chat: no text");
+    e.sec(); e.sec("CQ");
+    eq(text(), "", "W14 text still being decoded is not in it yet");
+    e.say("CQ CQ");
+    for (let i = 0; i < 6; i++) e.sec("");
+    e.sec("DE");                                             // a new bubble, nothing settled in it yet
+    eq(text().split("\n").length, 1, "W14 a bubble with nothing settled yet is no line");
+    e.say("DE N0CALL");
+    e.sec("K");
+    const lines = text().split("\n");
+    eq(lines.length, 2, "W14 a line a message");
+    check(/^\d\d:\d\d RX  CQ CQ$/.test(lines[0]) && /^\d\d:\d\d RX  DE N0CALL$/.test(lines[1]), "W14 ... its time, RX, the text: " + JSON.stringify(lines));
+    // a message sent from this page is a TX line (the radio's socket is a stand-in that only notes it)
+    const t = await page({ decode: false, sends: true });
+    t.st = { connected: true, mode_name: "CW", cw_tx_ready: true };
+    t.clock.advance(400);
+    t.doc.getElementById("cwSend").value = "cq test";
+    t.click(t.doc.getElementById("cwTx"));
+    check(t.sent.length === 1 && /^\d\d:\d\d TX  CQ TEST$/.test(t.ctx.CwPanel.text()), "W14 a message sent from here is a TX line: " + JSON.stringify([t.sent, t.ctx.CwPanel.text()]));
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

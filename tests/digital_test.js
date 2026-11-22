@@ -32,6 +32,16 @@
  *  D8. "Tune to" in CW, FT8 and SSTV: that mode's frequencies from the Spots panel's list (SpotsPanel.calls),
  *      band and MHz (CW's named); choosing one tunes (SpotsPanel.tuneTo) and the menu goes back to its
  *      title; operators only; a radio with no such frequency has no menu; another radio, another menu
+ *  D9. the operator's callsign (DigitalPanel.call()): typed into CW's field and kept by the browser (upper
+ *      case, letters, digits and /, a digit and a letter in it); until then the account's name when it
+ *      reads as a callsign; tr:call when it changes
+ *  D10. CW's strip: a gate at the radio's CW pitch in a CW mode (AfMap.cw), none otherwise; the strip
+ *      gives way when the chat is squeezed and comes back only with room to spare
+ *  D11. Copy (CW, RTTY, FT8): the mode's text to the clipboard, by the Clipboard API where the page has it
+ *      and through a hidden text box where it has not; said when done, when refused, when there is nothing
+ *  T7. FT8 marks the messages that name the operator's callsign (a whole word, inside <>, around a /), in
+ *      the list and in its headings; they show under "CQ only"; a changed callsign marks the list again;
+ *      Ft8Panel.text(): the list as it shows
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -58,6 +68,18 @@ function page(opts) {
   }
   const modes = e.el("div", { class: "dm-modes" }, tile);
   // "receive audio is off" and its key; the Audio panel's RX key, which it presses
+  e.cwStrip = e.el("canvas", { id: "cwStrip" }, tile);
+  if (opts.draw) {                                           // a 2D context that notes what is drawn on CW's strip (D10)
+    e.drawn = [];
+    const g2 = { font: "", textBaseline: "", fillStyle: "", createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }), putImageData() {},
+                 fillRect(x, y, w, h) { e.drawn.push(["rect", x, y, w, h]); }, fillText(t, x, y) { e.drawn.push(["text", t, x, y]); } };
+    e.cwStrip.getContext = () => g2;
+  }
+  e.callEl = e.el("input", { id: "cwCall", type: "text" }, tile);
+  e.copyKeys = { cw: e.el("button", { id: "cwCopy", type: "button" }, tile), rtty: e.el("button", { id: "rttyCopy", type: "button" }, tile),
+                 ft8: e.el("button", { id: "ft8Copy", type: "button" }, tile) };
+  e.calls = [];                                              // tr:call, from the start
+  e.doc.addEventListener("tr:call", (ev) => e.calls.push(ev.detail && ev.detail.call));
   e.rxBar = e.el("div", { id: "dmRx", hidden: true }, tile);
   e.rxKey = e.el("button", { id: "dmRxOn", type: "button" }, e.rxBar);
   e.audioClicks = 0;
@@ -74,7 +96,8 @@ function page(opts) {
     e.go[m].value = "";
   }
   e.perms = new Set(opts.viewer ? ["view", "listen"] : ["view", "listen", "operate"]);
-  e.ctx.TR = { can: (x) => e.perms.has(x) };
+  e.toasts = [];
+  e.ctx.TR = { can: (x) => e.perms.has(x), toast: (m, k) => e.toasts.push([m, k]), user: opts.user };
   e.tuned = [];
   if (opts.calls) {                                          // spots.js's side of "Tune to"
     e.callRows = opts.calls;
@@ -84,6 +107,7 @@ function page(opts) {
   e.cq = e.el("input", { id: "ft8CqOnly", type: "checkbox" }, e.panes.ft8);
   e.clear = e.el("button", { id: "ft8Clear", type: "button" }, e.panes.ft8);
   e.status = e.el("p", { id: "ft8Status" }, e.panes.ft8);
+  e.me = e.el("span", { id: "ft8Me" }, e.panes.ft8);
   e.list = e.el("div", { id: "ft8List" }, e.panes.ft8);
   if (opts.ro) { e.cwOut = e.el("div", { id: "cwOut" }, e.panes.cw); e.rttyText = e.el("div", { id: "rttyText" }, e.panes.rtty); }
   e.script = e.el("script", { src: "/static/ft8-decode.js?v=42" });
@@ -101,13 +125,14 @@ function page(opts) {
   if (opts.realDecoder) e.load("ft8-decode.js");
   if (opts.stubs) {
     e.fed = [];
+    e.texts = { CwPanel: "12:00 RX  CQ CQ", RttyPanel: "RYRY DE N0CALL", Ft8Panel: "18:30:15 UTC\n-3\t0.1\t700\tCQ K1ABC FN42" };
     for (const name of ["SstvPanel", "RttyPanel", "Ft8Panel"]) {
-      e.ctx[name] = { summary: () => name + " summary", feed: (p, r) => e.fed.push([name, p.length, r]) };
+      e.ctx[name] = { summary: () => name + " summary", feed: (p, r) => e.fed.push([name, p.length, r]), text: () => e.texts[name] };
     }
     e.ctx.SstvTx = { summary: () => (e.txSummary || ""), busy: () => !!e.sending };
-    e.ctx.CwPanel = { summary: () => "CwPanel summary", busy: () => !!e.cwSending };   // cwtool.js (no PCM feed)
+    e.ctx.CwPanel = { summary: () => "CwPanel summary", busy: () => !!e.cwSending, text: () => e.texts.CwPanel };   // cwtool.js (no PCM feed)
   } else e.load("ft8.js");
-  e.load("digital.js");
+  if (!opts.noDigital) e.load("digital.js");
   e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
   e.key = (el, key) => { const ev = new e.Event("keydown", { bubbles: true }); ev.key = key; el.dispatchEvent(ev); };
   e.rows = () => e.list.querySelectorAll(".ft8-row").map((r) => r.children.map((c) => c.textContent).join(" "));
@@ -460,5 +485,215 @@ const ramp = (n) => { const a = new Int16Array(n); for (let i = 0; i < n; i++) a
   eq(["cw", "ft8", "sstv"].map((m) => none.go[m].hidden), [true, true, true], "D8 no list to choose from (the Spots panel's script missing): no menus");
 }
 
-console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);
-process.exit(failures ? 1 : 0);
+// ---- D9: the operator's callsign ----
+{
+  const e = page({ stubs: true, user: "ADMIN" });
+  const call = () => e.ctx.DigitalPanel.call();
+  const type = (v) => { e.callEl.value = v; e.callEl.dispatchEvent(new e.Event("input", { bubbles: true })); };
+  const done = () => e.callEl.dispatchEvent(new e.Event("change", { bubbles: true }));
+  const kept = () => e.ctx.localStorage.getItem("telerig.call");
+  eq([call(), e.callEl.value, e.callEl.placeholder, e.calls], ["", "", "Your call", [""]], "D9 signed in as ADMIN, nothing typed: no callsign (ADMIN is none)");
+  type("w9xyz/p !");
+  eq(e.callEl.value, "W9XYZ/P", "D9 typing: upper case, only letters, digits and /");
+  eq([call(), kept()], ["", null], "D9 ... not taken until the field is left");
+  done();
+  eq([call(), kept(), e.calls], ["W9XYZ/P", "W9XYZ/P", ["", "W9XYZ/P"]], "D9 the field left: the callsign is kept by the browser and announced (tr:call)");
+  type("abcdefghijklmnop1");
+  eq(e.callEl.value.length, 12, "D9 at most 12 characters");
+  type("ABC"); done();
+  eq([e.callEl.value, call(), kept()], ["", "", ""], "D9 no digit in it: no callsign, the field empties and nothing is kept");
+  type("123"); done();
+  eq([e.callEl.value, call()], ["", ""], "D9 no letter in it: the same");
+  type("K1"); done();
+  eq([e.callEl.value, call()], ["", ""], "D9 two characters: too short for a callsign");
+  type("K1A"); done();
+  eq(call(), "K1A", "D9 three are enough (a special event's callsign)");
+  type("K1ABC"); done();
+  eq([call(), e.calls[e.calls.length - 1]], ["K1ABC", "K1ABC"], "D9 another callsign");
+  type(""); done();
+  eq([call(), kept(), e.calls[e.calls.length - 1]], ["", "", ""], "D9 emptied: none again");
+  // the account's name stands in until one is typed
+  const u = page({ stubs: true });                            // the page's hello has not come yet
+  eq([u.ctx.DigitalPanel.call(), u.callEl.placeholder], ["", "Your call"], "D9 before the account is known: none");
+  u.ctx.TR.user = "W9XYZ"; u.clock.advance(1000);
+  eq([u.ctx.DigitalPanel.call(), u.callEl.value, u.callEl.placeholder, u.calls], ["W9XYZ", "", "W9XYZ", ["", "W9XYZ"]],
+     "D9 an account named as a callsign: that is the callsign (shown in the empty field), within a second");
+  u.clock.advance(5000);
+  eq(u.calls, ["", "W9XYZ"], "D9 ... announced once, not at every tick");
+  u.callEl.value = "K1ABC"; u.callEl.dispatchEvent(new u.Event("change", { bubbles: true }));
+  eq([u.ctx.DigitalPanel.call(), u.callEl.placeholder], ["K1ABC", "Your call"], "D9 ... one typed takes its place");
+  const k = page({ stubs: true, user: "W9XYZ", localStorage: { "telerig.call": "k1abc" } });
+  eq([k.ctx.DigitalPanel.call(), k.callEl.value], ["K1ABC", "K1ABC"], "D9 a kept callsign comes back on the next visit");
+  const bad = page({ stubs: true, user: "OP", localStorage: { "telerig.call": "<img>" } });
+  eq([bad.ctx.DigitalPanel.call(), bad.callEl.value], ["", ""], "D9 a kept value that is no callsign is ignored");
+}
+
+// ---- D10: CW's strip ----
+{
+  const e = page({ stubs: true });
+  e.ctx.AfMap = { cw: (p, s, mode) => (/^CW/.test(mode) ? { side: 1, pitch: s.key_pitch ? 300 + 10 * s.key_pitch : 700, shown: true } : null) };
+  const marks = () => e.ctx.DigitalPanel.cwMarkers();
+  eq(marks(), [], "D10 the radio in USB: no pitch marker");
+  e.st = { connected: true, mode_name: "CW-USB" };
+  eq(marks(), [{ hz: 700, label: "pitch", gate: 100 }], "D10 in a CW mode: a gate 100 Hz wide at the radio's CW pitch");
+  e.st = { connected: true, mode_name: "CW-USB", key_pitch: 30 };
+  eq(marks(), [{ hz: 600, label: "pitch", gate: 100 }], "D10 ... which follows the radio's setting");
+  e.ctx.AfMap = { cw: () => ({ side: 1, shown: false }) };
+  eq(marks(), [], "D10 a radio whose pitch isn't known: no marker");
+  e.ctx.AfMap = { cw: () => { throw new Error("no pitch here"); } };
+  eq(marks(), [], "D10 a pitch that can't be read: no marker, no error");
+  delete e.ctx.AfMap;
+  eq(marks(), [], "D10 no pitch table at all: none");
+  // drawn: the strip is 300 x 48 here, so 700 Hz is x 70 and the 100 Hz gate reaches 5 px each way
+  const d = page({ stubs: true, draw: true });
+  d.ctx.AfMap = { cw: () => ({ side: 1, pitch: 700, shown: true }) };
+  d.clock.advance(1000);
+  const tall = () => d.drawn.filter((x) => x[0] === "rect" && x[4] === 48).map((x) => [x[1], x[3]]);
+  eq(tall(), [[64, 1], [75, 1]], "D10 drawn as a line each side of the pitch: the place of a tuned-in station stays in view");
+  eq(d.drawn.filter((x) => x[0] === "text" && x[1] === "pitch").map((x) => x.slice(2)), [[79, 2]], "D10 ... named beside it");
+  d.drawn.length = 0;
+  d.ctx.AfMap = { cw: () => null };
+  d.clock.advance(1000);
+  eq([tall(), d.drawn.some((x) => x[0] === "text" && x[1] === "pitch"), d.drawn.length > 0], [[], false, true], "D10 out of CW the strip is drawn without it");
+  // room: the strip gives way to the chat
+  const r = page({ stubs: true, ro: true });
+  const tick = (h) => { r.cwOut.clientHeight = h; r.clock.advance(1000); return r.cwStrip.hidden; };
+  eq(tick(200), false, "D10 a tall chat: the strip shows");
+  eq(tick(72), false, "D10 72 px of chat is still enough");
+  eq(tick(71), true, "D10 the chat squeezed under 72 px: the strip goes");
+  eq(tick(121), true, "D10 the chat taller for the strip's absence (71 + 50): it stays away");
+  eq(tick(147), true, "D10 ... until there is room to spare");
+  eq(tick(148), false, "D10 148 px of chat: the strip is back");
+  eq(tick(98), false, "D10 ... and stays (98 px is enough)");
+  r.cwStrip.hidden = false;
+  eq(tick(0), false, "D10 a chat with no height (the window folded): nothing changes");
+  r.click(r.keys.rtty);
+  eq(tick(10), false, "D10 another mode shown: CW's strip is left as it is");
+  const ob = r.ros.filter((o) => o.el === r.panes.cw);
+  eq(ob.length, 1, "D10 the CW pane is watched for a change of size");
+  r.click(r.keys.cw);
+  r.cwOut.clientHeight = 60; ob[0].cb();
+  eq(r.cwStrip.hidden, true, "D10 ... and a change of size is acted on at once");
+}
+
+// ---- T7: FT8 marks the operator's callsign ----
+{
+  const e = page({ localStorage: { "telerig.call": "K1ABC" } });
+  const answer = (decodes) => { const w = e.workers[0], j = w.posted[w.posted.length - 1]; w.onmessage({ data: { id: j.m.id, decodes } }); };
+  const mine = () => e.list.querySelectorAll(".ft8-row").filter((r) => r.classList.contains("me")).map((r) => r.querySelector(".msg").textContent);
+  eq([e.me.textContent, e.me.classList.contains("on"), e.me.title], ["K1ABC", true, "Messages that name K1ABC are marked"],
+     "T7 the callsign that is marked stands in the list's headings");
+  e.play(ramp(RATE * 20.5), RATE);
+  answer([
+    { snr: -12, dt: 0.3, freq: 500, text: "W9XYZ K1ABC -12" }, { snr: -3, dt: 0.1, freq: 700, text: "CQ K1ABC FN42" },
+    { snr: 4, dt: -0.2, freq: 900, text: "<K1ABC> W9XYZ RR73" }, { snr: 1, dt: 0, freq: 1100, text: "K1ABCD W9XYZ 73" },
+    { snr: 1, dt: 0, freq: 1300, text: "W9XYZ VE3/K1ABC R-05" }, { snr: 1, dt: 0, freq: 1500, text: "CQ W9XYZ EN53" },
+    { snr: 1, dt: 0, freq: 1700, text: "K1AB W9XYZ -01" }, { snr: 1, dt: 0, freq: 1900, text: "W1AW/ K9XYZ 73" },
+  ]);
+  e.play(ramp(RATE * 15), RATE);
+  answer([{ snr: -15, dt: 0.4, freq: 1533, text: "VE3XYZ W1AW RR73" }]);    // the next slot: no CQ, nobody's callsign
+  eq(mine(), ["W9XYZ K1ABC -12", "CQ K1ABC FN42", "<K1ABC> W9XYZ RR73", "W9XYZ VE3/K1ABC R-05"],
+     "T7 marked: the callsign as a whole word, inside <>, around a /; not a longer or a shorter call");
+  // CQ only: the CQs and the messages that name the callsign show (the page's own rule hides the rest)
+  e.cq.checked = true; e.cq.dispatchEvent(new e.Event("change", { bubbles: true }));
+  const text = e.ctx.Ft8Panel.text().split("\n");
+  check(/^\d\d:\d\d:\d\d UTC$/.test(text[0]), "T7 text(): a line for the slot's time: " + text[0]);
+  eq(text.slice(1), ["-12\t0.3\t500\tW9XYZ K1ABC -12", "-3\t0.1\t700\tCQ K1ABC FN42", "+4\t-0.2\t900\t<K1ABC> W9XYZ RR73", "+1\t0.0\t1300\tW9XYZ VE3/K1ABC R-05",
+                      "+1\t0.0\t1500\tCQ W9XYZ EN53"], "T7 ... then the rows that show under CQ only: the CQs and the ones that name the callsign (a slot with none: not even its time)");
+  e.cq.checked = false; e.cq.dispatchEvent(new e.Event("change", { bubbles: true }));
+  const all = e.ctx.Ft8Panel.text().split("\n");
+  eq([all.length, all.filter((l) => / UTC$/.test(l)).length, all[all.length - 1]], [11, 2, "-15\t0.4\t1533\tVE3XYZ W1AW RR73"], "T7 text() with CQ only off: every row, under its slot's time");
+  // the callsign changes: the list is marked again
+  e.ctx.localStorage.setItem("telerig.call", "W9XYZ");
+  e.clock.advance(1000);
+  eq([mine().length, mine()[0], e.me.textContent], [6, "W9XYZ K1ABC -12", "W9XYZ"], "T7 another callsign: the list and the heading follow within a second");
+  e.ctx.localStorage.setItem("telerig.call", "");
+  e.clock.advance(1000);
+  eq([mine(), e.me.textContent, e.me.classList.contains("on"), e.me.title],
+     [[], "your call: set it in CW", false, "Type your callsign in CW's Your call field to have it marked here"],
+     "T7 no callsign: nothing marked, and the heading says where to set it");
+  e.clear.dispatchEvent(new e.Event("click", { bubbles: true }));
+  eq(e.ctx.Ft8Panel.text(), "", "T7 an empty list: no text");
+  // FT8's script without the Modem window's (it failed to load): the list still fills, nothing is marked
+  const f = page({ noDigital: true, worker: false, localStorage: { "telerig.call": "K1ABC" } });
+  f.ctx.FT8 = { decodeSlot: () => [{ snr: 1, dt: 0.4, freq: 1234, text: "K1ABC W9XYZ RR73" }] };
+  f.play(ramp(RATE * 20.5), RATE);
+  f.clock.advance(1);
+  eq([f.rows(), f.list.querySelectorAll(".ft8-row").filter((r) => r.classList.contains("me")).length], [["+1 0.4 1234 K1ABC W9XYZ RR73"], 0],
+     "T7 without the Modem window's script: the list fills all the same, unmarked");
+}
+
+// ---- D11: Copy ----
+(async function copyTests() {
+  const flush = async (e) => { for (let i = 0; i < 4; i++) await e.flush(); };
+  {
+    // the page has the Clipboard API (https, or this computer)
+    const e = page({ stubs: true });
+    e.copied = [];
+    e.ctx.navigator.clipboard = { writeText: (t) => { e.copied.push(t); return Promise.resolve(); } };
+    e.ctx.isSecureContext = true;
+    e.click(e.copyKeys.cw);
+    await flush(e);
+    eq([e.copied, e.toasts], [["12:00 RX  CQ CQ"], [["The CW text copied.", "ok"]]], "D11 CW's Copy: the chat's text to the clipboard, and it says so");
+    e.toasts.length = 0;
+    e.click(e.copyKeys.rtty); e.click(e.copyKeys.ft8);
+    await flush(e);
+    eq([e.copied.slice(1), e.toasts], [["RYRY DE N0CALL", "18:30:15 UTC\n-3\t0.1\t700\tCQ K1ABC FN42"], [["The RTTY text copied.", "ok"], ["The FT8 list copied.", "ok"]]],
+       "D11 RTTY's and FT8's Copy: their own text");
+    e.toasts.length = 0; e.texts.CwPanel = "";
+    e.click(e.copyKeys.cw);
+    await flush(e);
+    eq([e.copied.length, e.toasts], [3, [["Nothing to copy yet.", "info"]]], "D11 nothing to copy: said, nothing written");
+    // the API refuses (a permission, a lost focus): the text box instead
+    e.toasts.length = 0; e.texts.CwPanel = "12:01 RX  K";
+    e.ctx.navigator.clipboard = { writeText: () => Promise.reject(new Error("denied")) };
+    e.boxes = []; e.selected = 0; e.range = null;
+    const make = e.doc.createElement.bind(e.doc);
+    e.doc.createElement = (tag) => {                          // a text box that, as a browser's, takes the focus when its text is selected
+      const el = make(tag);
+      if (tag === "textarea") { el.select = () => { e.selected++; el.focus(); }; el.setSelectionRange = (a, b) => { e.range = [a, b]; }; }
+      return el;
+    };
+    e.doc.execCommand = (cmd) => {
+      const ta = e.doc.querySelector("textarea.dm-copybuf");
+      e.boxes.push([cmd, ta && ta.value, ta && ta.getAttribute("aria-hidden"), ta && ta.hasAttribute("readonly"), e.selected, e.range]);
+      return true;
+    };
+    e.copyKeys.cw.focus();
+    e.click(e.copyKeys.cw);
+    await flush(e);
+    eq([e.boxes, e.toasts, !!e.doc.querySelector("textarea.dm-copybuf")], [[["copy", "12:01 RX  K", "true", true, 1, [0, 11]]], [["The CW text copied.", "ok"]], false],
+       "D11 the Clipboard API refuses: copied through a text box nobody sees (read-only, all of its text selected), which is taken away again");
+    eq(e.doc.activeElement === e.copyKeys.cw, true, "D11 ... and the focus is back on the Copy key");
+    e.toasts.length = 0; e.boxes.length = 0;
+    e.ctx.navigator.clipboard = { writeText: () => { throw new Error("the page has no focus"); } };
+    e.click(e.copyKeys.cw);
+    eq([e.boxes.length, e.toasts], [1, [["The CW text copied.", "ok"]]], "D11 ... or throws: the text box as well");
+  }
+  {
+    // plain http on a LAN address: no Clipboard API
+    const e = page({ stubs: true });
+    e.boxes = [];
+    e.doc.execCommand = (cmd) => { const ta = e.doc.querySelector("textarea.dm-copybuf"); e.boxes.push([cmd, ta && ta.value]); return true; };
+    e.click(e.copyKeys.rtty);
+    eq([e.boxes, e.toasts], [[["copy", "RYRY DE N0CALL"]], [["The RTTY text copied.", "ok"]]], "D11 no Clipboard API on this page: the text box at once");
+    e.toasts.length = 0;
+    e.doc.activeElement = null;                               // nothing has the focus (it can be so in a frame)
+    e.click(e.copyKeys.rtty);
+    eq(e.toasts, [["The RTTY text copied.", "ok"]], "D11 ... also with nothing focused");
+    e.toasts.length = 0;
+    e.doc.execCommand = () => false;
+    e.click(e.copyKeys.rtty);
+    eq(e.toasts, [["This browser would not copy it: select the text and copy it yourself.", "warn"]], "D11 the browser copies nothing: said, with what to do");
+    e.toasts.length = 0;
+    e.doc.execCommand = () => { throw new Error("not allowed"); };
+    e.click(e.copyKeys.ft8);
+    eq([e.toasts.length, e.toasts[0] && e.toasts[0][1], !!e.doc.querySelector("textarea.dm-copybuf")], [1, "warn", false], "D11 ... or throws: the same, and the text box is gone");
+    e.toasts.length = 0;
+    delete e.ctx.Ft8Panel.text;
+    e.click(e.copyKeys.ft8);
+    eq(e.toasts, [["Nothing to copy yet.", "info"]], "D11 a mode with no text to give: nothing to copy");
+  }
+  console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);
+  process.exit(failures ? 1 : 0);
+})().catch((err) => { console.log("FAIL (crash) " + (err && err.stack || err)); process.exit(1); });

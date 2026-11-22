@@ -15,7 +15,8 @@
  *
  * window.RTTY = { Decoder, PRESETS, polarityFor(mode), LTRS, FIGS }
  *   new Decoder(rate, { baud, shift, center, reverse }, onChar)  .feed(pcm)  .set(opts)  .level()
- *   window.RttyPanel = { summary(), feed(pcm, rate), tune(hz) } (the tab; tests)
+ *   window.RttyPanel = { summary(), feed(pcm, rate), tune(hz), text() } (the tab; tests; text(): what was
+ *   received, for the window's Copy key)
  */
 (function () {
   "use strict";
@@ -239,6 +240,7 @@
   window.RttyPanel = {
     summary: () => { const t = text.replace(/\s+/g, " ").trim(); return t ? "RTTY " + t.slice(-18).trim() : ""; },
     feed: (pcm, r) => { if (pcm && pcm.length && r > 0) feed(pcm, r); },
+    text: () => text.replace(/\s+$/, ""),
     tune: (hz, spectrum) => tune(+hz, spectrum),
     nudge: (d) => tune(center + (+d || 0)),               // the strip's arrow keys: 10 Hz a press
     markers: () => { const t = tones(); return [{ hz: t.mark, label: "M" }, { hz: t.space, label: "S" }]; },

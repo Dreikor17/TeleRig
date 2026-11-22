@@ -19,6 +19,13 @@
  * window.SSTV = { MODES, Decoder } (tests, and the TX side later);
  * window.SstvPanel = { summary(), feed(pcm, rate) }. The pictures received go into a strip: click one to
  * view it large (Export PNG saves it); its red X (on hover) deletes it.
+ *
+ * The strip is kept by this browser (IndexedDB "telerig-sstv": each picture's PNG with its name, time and
+ * size, under its file name), so a reload, a closed tab or a restart doesn't lose it: the pictures come
+ * back, newest first, until they are deleted or the newest KEEP push them out. Two tabs of one browser
+ * that received the same picture keep one copy, and a delete in either takes it out for both at their
+ * next load. A browser with no such store (or one that refuses it, as some private windows do) keeps
+ * them for the page's life only, as before. The pictures stay in the browser: nothing is sent anywhere.
  */
 (function () {
   "use strict";
@@ -356,6 +363,32 @@
   let dec = null, rate = 0, cur = null, rowsDone = 0, unknown = null, lastNote = "";
   const pics = [];                                        // the strip, newest first: {url, file, name, at, w, h, rows, part, el, open}
 
+  // ---- the strip, kept by this browser: one record a picture, {file (its key), at (ms), name, w, h, rows, part, blob} ----
+  // Everything waits for the store to open, in the order it was asked, and is dropped for good if it
+  // can't be opened: the strip then lives as long as the page. Errors never reach the panel.
+  const store = (function () {
+    const NAME = "telerig-sstv", PICS = "pics";
+    let db = null, dead = false, waiting = [];
+    const fail = () => { dead = true; waiting = []; };
+    function run(mode, fn) {                              // fn(the object store), in a transaction of its own
+      if (dead) return;
+      const go = () => { try { fn(db.transaction(PICS, mode).objectStore(PICS)); } catch (_) {} };
+      if (db) go(); else waiting.push(go);
+    }
+    try {                                                 // a browser with no IndexedDB, or one that refuses it: caught here
+      const req = window.indexedDB.open(NAME, 1);
+      req.onupgradeneeded = () => { req.result.createObjectStore(PICS, { keyPath: "file" }); };
+      req.onsuccess = () => { db = req.result; for (const f of waiting.splice(0)) f(); };
+      req.onerror = fail;
+      req.onblocked = fail;
+    } catch (_) { fail(); }
+    return {
+      all(cb) { run("readonly", (os) => { const r = os.getAll(); r.onsuccess = () => cb(r.result); }); },
+      put(rec) { run("readwrite", (os) => { os.put(rec); }); },
+      del(file) { run("readwrite", (os) => { os.delete(file); }); },
+    };
+  })();
+
   const audio = () => window.RadioAudio || null;
   const rxOn = () => { const A = audio(); try { return !!(A && A.on()); } catch (_) { return false; } };
   const onGrid = () => !!(tile.parentElement && tile.parentElement.id === "grid");
@@ -422,14 +455,29 @@
     const file = ["TeleRig_SSTV", safe(c.mode.name), c.freqText ? safe(c.freqText.split(" ")[0]) + "MHz" : "", stamp(c.at)]
       .filter(Boolean).join("_") + ".png";
     const p = { file, name, at: c.at, w: c.mode.width, h: c.mode.height, rows, part: rows < c.mode.height };
-    if (canvas.toBlob) canvas.toBlob((b) => { if (b) { p.url = URL.createObjectURL(b); add(p); } }, "image/png");
+    if (canvas.toBlob) canvas.toBlob((b) => {
+      if (!b) return;
+      p.url = URL.createObjectURL(b);
+      add(p);
+      store.put({ file: p.file, at: p.at.getTime(), name: p.name, w: p.w, h: p.h, rows: p.rows, part: p.part, blob: b });   // kept by this browser too
+    }, "image/png");
   }
+  // the pictures this browser kept: under the ones received since the page opened, newest first
+  store.all((recs) => {
+    recs = recs.filter((r) => r.blob && typeof r.name === "string" && r.at > 0 && r.w > 0 && r.h > 0);
+    recs.sort((a, b) => b.at - a.at);
+    for (const r of recs) {
+      const p = { file: r.file, name: r.name, at: new Date(r.at), w: r.w, h: r.h, rows: r.rows, part: !!r.part };
+      try { p.url = URL.createObjectURL(r.blob); } catch (_) { continue; }   // its PNG is no PNG any more
+      add(p, true);
+    }
+  });
 
   // ---- the strip: each picture opens the viewer; its red X (shown on hover or focus) deletes it ----
   const T = () => window.TR || null;
   const icon = (n) => { const t = T(); return t && typeof t.icon === "function" ? t.icon(n) : null; };
   let delGuard = 0;                                       // the next X slides under the pointer: a double click deletes one
-  function add(p) {
+  function add(p, older) {                                // older: one this browser kept, after the ones already shown
     const item = document.createElement("div"), open = document.createElement("button"), x = document.createElement("button");
     const img = document.createElement("img");
     item.className = "sstv-item"; item.setAttribute("role", "listitem");
@@ -443,17 +491,18 @@
     open.addEventListener("click", () => view(p));
     x.addEventListener("click", (e) => { if (!(e && e.detail > 0 && Date.now() < delGuard)) remove(p); });
     p.el = item; p.open = open;
-    if (gallery) gallery.insertBefore(item, gallery.firstChild);
-    pics.unshift(p);
+    if (gallery) gallery.insertBefore(item, older ? null : gallery.firstChild);
+    if (older) pics.push(p); else pics.unshift(p);
     while (pics.length > KEEP) forget(pics[pics.length - 1]);
   }
-  function forget(p) {                                    // out of the strip, its PNG freed (and out of the viewer)
+  function forget(p) {                                    // out of the strip and of the browser's store, its PNG freed (and out of the viewer)
     const i = pics.indexOf(p);
     if (i < 0) return;
     pics.splice(i, 1);
     if (p.el.parentNode) p.el.parentNode.removeChild(p.el);
     if (viewing === p && viewer) viewer.m.close();
     try { URL.revokeObjectURL(p.url); } catch (_) {}
+    store.del(p.file);
   }
   function remove(p) {                                    // the X, or Delete in the viewer
     const i = pics.indexOf(p);

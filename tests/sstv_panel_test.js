@@ -21,6 +21,12 @@
  *  Q10. clicking a picture opens the viewer: the picture, when it came, Export PNG (the PNG's own name),
  *      Delete; Esc closes it and the focus goes back; no viewer while this tab transmits; without the
  *      dialog kit a click saves the PNG
+ *  Q11. the strip is kept by this browser (IndexedDB, a stand-in here): a picture received is stored with
+ *      its PNG, under its file name (the same picture kept by another tab is one record); a reload brings
+ *      the kept pictures back, newest first, under the ones received since; the X, and the 12-picture
+ *      limit, take a picture out of the store too, also one received and deleted while the store was
+ *      still opening; a browser with no store, or one that refuses to open it, keeps them for the page's
+ *      life; records that are not pictures are left out
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -34,10 +40,54 @@ const START = Date.UTC(2026, 10, 19, 18, 30, 0);
 const LISTENING = "Listening for an SSTV picture (its VIS header picks the mode).";
 const R36_NAME = "Robot 36 · 14.230 MHz USB · 18:30Z";
 
+// A stand-in for the browser's IndexedDB, as much of it as sstv.js uses: one database with one object
+// store (its records under a key path), requests that answer a moment later (the fake clock). `db` is the
+// browser's side, shared by the pages of one test: { recs: Map(key -> record), opens, fail, store, keyPath }.
+function fakeIdb(e, db) {
+  const later = (fn) => e.ctx.setTimeout(fn, 0);
+  const answer = (result) => { const r = {}; later(() => { r.result = result; if (r.onsuccess) r.onsuccess({}); }); return r; };
+  const os = (mode) => {
+    const write = () => { if (mode !== "readwrite") throw new Error("a write in a read-only transaction"); };
+    return {
+      getAll: () => answer([...db.recs.values()].map((x) => Object.assign({}, x))),
+      put: (rec) => {
+        write();
+        const k = rec[db.keyPath];
+        if (typeof k !== "string" || !k) throw new Error("a record with no key");
+        db.recs.set(k, Object.assign({}, rec));
+        return answer(k);
+      },
+      delete: (k) => { write(); db.recs.delete(k); return answer(undefined); },
+    };
+  };
+  return {
+    open(name, version) {
+      db.opens++; db.name = name; db.version = version;
+      if (db.fail === "throw") throw new Error("no IndexedDB in this window");
+      const req = {};
+      later(() => {
+        if (db.fail === "error") { if (req.onerror) req.onerror({}); return; }
+        if (db.fail === "blocked") { if (req.onblocked) req.onblocked({}); return; }
+        req.result = { createObjectStore: (n, o) => { db.store = n; db.keyPath = o.keyPath; db.auto = !!o.autoIncrement; },
+                       transaction: (n, mode) => {
+                         if (db.fail === "tx") throw new Error("the database is closing");
+                         db.modes.push(mode);
+                         return { objectStore: () => os(mode) };
+                       } };
+        if (!db.store && req.onupgradeneeded) req.onupgradeneeded({});
+        if (req.onsuccess) req.onsuccess({});
+      });
+      return req;
+    },
+  };
+}
+const newDb = (o) => Object.assign({ recs: new Map(), opens: 0, fail: null, store: null, keyPath: "file", auto: false, modes: [] }, o || {});
+
 function page(opts) {
   opts = opts || {};
   const e = makeEnv({ localStorage: opts.localStorage || {} });
-  e.clock.now = START;
+  e.clock.now = opts.now || START;
+  if (opts.idb) e.ctx.indexedDB = fakeIdb(e, opts.idb);     // this browser's store (Q11); without it, none
   e.el("div", { id: "modalRoot" });
   const grid = e.el("div", { id: "grid" }), park = e.el("div", { id: "tileParking" });
   const tile = e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, opts.parked ? park : grid);
@@ -55,7 +105,7 @@ function page(opts) {
   e.ctx.ImageData = function (data, w, h) { this.data = data; this.width = w; this.height = h; };
   e.urls = { made: 0, revoked: [] };
   class FakeURL extends URL {}
-  FakeURL.createObjectURL = () => "blob:sstv/" + (++e.urls.made);
+  FakeURL.createObjectURL = (b) => { if (b && b.bad) throw new TypeError("not a Blob"); return "blob:sstv/" + (++e.urls.made); };
   FakeURL.revokeObjectURL = (u) => e.urls.revoked.push(u);
   e.ctx.URL = FakeURL;
   e.rx = opts.rx !== false;
@@ -243,6 +293,120 @@ function noise(sec, rms) {
     e.feed(pictureAudio(e, "r36", 70, { tail: 2.5 }));
     e.thumb(0).click();
     eq([!!e.dialog(), e.saved], [false, ["TeleRig_SSTV_Robot-36_14.230MHz_20261119-183000Z.png"]], "Q10 without the dialog kit a click saves the PNG");
+  }
+  // Q11: the strip is kept by this browser
+  {
+    const part = (e) => pictureAudio(e, "r36", 70, { tail: 2.5 });       // a picture that ended early, kept as a part
+    const FILE = "TeleRig_SSTV_Robot-36_14.230MHz_20261119-183000Z.png", FILE_PART = FILE.replace("183000Z", "183100Z");
+    const FILE_LATER = FILE.replace("183000Z", "193000Z");               // the one received an hour on
+    const db = newDb();
+    const e = page({ idb: db });
+    e.clock.advance(1);
+    eq([db.opens, db.name, db.version, db.store, db.keyPath, db.auto, e.items().length], [1, "telerig-sstv", 1, "pics", "file", false, 0],
+       "Q11 the page opens this browser's store (made at the first visit: a picture under its file name); nothing kept yet");
+    eq(db.modes, ["readonly"], "Q11 ... loading the strip only reads it (a write would hold up another tab's)");
+    e.feed(pictureAudio(e, "r36"));
+    eq([e.items().length, [...db.recs.keys()]], [1, [FILE]], "Q11 a picture received goes into the strip and into the store, under its file name");
+    const rec = db.recs.get(FILE);
+    eq([rec.name, rec.file, rec.at, rec.w, rec.h, rec.rows, rec.part, rec.blob && rec.blob.type, Object.keys(rec).length],
+       [R36_NAME, FILE, START + 1, 320, 240, 240, false, "image/png", 8],
+       "Q11 ... its record: the name, the PNG's file name, when it started, its size and lines, the PNG itself, nothing else");
+    e.clock.advance(60000);
+    e.feed(part(e));
+    e.clock.advance(1);
+    eq([e.alts(), [...db.recs.keys()]], [["Robot 36 · 14.230 MHz USB · 18:31Z (part)", R36_NAME], [FILE, FILE_PART]], "Q11 a second one, newest first; both kept");
+    e.thumb(0).click();
+    const partCap = e.dialog().querySelector(".sstv-view-cap").textContent;   // "... · N of 240 lines"
+    e.key("Escape");
+
+    // the page is loaded again (the same browser): the kept pictures come back
+    const f = page({ idb: db, now: START + 3600000 });
+    eq(f.items().length, 0, "Q11 a reload: before the store has answered, an empty strip");
+    f.clock.advance(1);
+    eq(f.alts(), ["Robot 36 · 14.230 MHz USB · 18:31Z (part)", R36_NAME], "Q11 ... then the kept pictures are back, newest first");
+    eq([f.ctx.SstvPanel.summary(), f.urls.made, db.opens], ["2 pictures", 2, 2], "Q11 ... each from its stored PNG; the folded panel counts them");
+    f.thumb(1).click();
+    const d = f.dialog();
+    check(!!d && d.querySelector(".sstv-view-cap").textContent === "Received 2026-11-19 18:30:00 UTC · 320 × 240"
+          && f.doc.getElementById("sstvViewExport").getAttribute("download") === "TeleRig_SSTV_Robot-36_14.230MHz_20261119-183000Z.png",
+          "Q11 ... with the time it was received and its PNG's own name, as before the reload");
+    f.key("Escape");
+    f.thumb(0).click();
+    check(/· [1-9]\d* of 240 lines$/.test(partCap), "Q11 (the part's caption before the reload: " + partCap + ")");
+    eq(f.dialog().querySelector(".sstv-view-cap").textContent, partCap, "Q11 ... a part still says when it came and how much of it");
+    f.key("Escape");
+    f.feed(pictureAudio(f, "r36"));
+    eq(f.alts()[0], "Robot 36 · 14.230 MHz USB · 19:30Z", "Q11 a picture received after the reload goes on top");
+    f.clock.advance(1);
+    eq([...db.recs.keys()], [FILE, FILE_PART, FILE_LATER], "Q11 ... and into the store");
+    // the X takes a picture out of the store too
+    f.x(1).click();
+    f.clock.advance(1);
+    eq([f.alts(), [...db.recs.keys()]], [["Robot 36 · 14.230 MHz USB · 19:30Z", R36_NAME], [FILE, FILE_LATER]], "Q11 the X deletes it from the strip and from the store");
+    const g = page({ idb: db, now: START + 7200000 });
+    g.clock.advance(1);
+    eq(g.alts(), ["Robot 36 · 14.230 MHz USB · 19:30Z", R36_NAME], "Q11 ... so it stays deleted after the next reload");
+    // the 12-picture limit: the oldest leave the store as they leave the strip
+    for (let k = 0; k < 11; k++) { g.clock.advance(60000); g.feed(part(g)); }
+    g.clock.advance(1);
+    eq([g.items().length, db.recs.size, db.recs.has(FILE), db.recs.has(FILE_LATER)], [12, 12, false, true], "Q11 the strip keeps 12: the oldest left the store too");
+    const h = page({ idb: db, now: START + 3 * 3600000 });
+    h.clock.advance(1);
+    eq([h.items().length, h.alts()[11]], [12, "Robot 36 · 14.230 MHz USB · 19:30Z"], "Q11 ... and a reload shows the same 12, the oldest last");
+  }
+  {
+    const FILE = "TeleRig_SSTV_Robot-36_14.230MHz_20261119-183000Z.png";
+    const png = { type: "image/png" };
+    const old = { file: "old.png", at: START - 3600000, name: "Robot 36 · 7.171 MHz LSB · 17:30Z", w: 320, h: 240, rows: 240, part: false, blob: png };
+    // a picture received and deleted while the store is still opening: put, then taken out, in that order
+    const db = newDb();
+    const e = page({ idb: db });
+    e.feed(pictureAudio(e, "r36"));                          // before the first tick: the store is not open
+    eq([e.items().length, db.recs.size], [1, 0], "Q11 received while the store was opening: in the strip, the store still to come");
+    e.x(0).click();
+    e.clock.advance(1);
+    eq([e.items().length, db.recs.size], [0, 0], "Q11 ... and deleted before it opened: not kept");
+    // a picture received while the store is still opening: on top of the kept ones
+    const db2 = newDb();
+    db2.recs.set(old.file, old);
+    const f = page({ idb: db2 });
+    f.feed(pictureAudio(f, "r36"));
+    f.clock.advance(1);
+    eq([f.alts(), [...db2.recs.keys()]], [[R36_NAME, old.name], ["old.png", FILE]], "Q11 received while the store was opening: kept, on top of the older ones");
+    // two tabs of this browser receive the same picture: one record (its file name), gone for both when one deletes it
+    const db4 = newDb();
+    const a = page({ idb: db4 }), b = page({ idb: db4 });
+    a.clock.advance(1); b.clock.advance(1);
+    a.feed(pictureAudio(a, "r36")); b.feed(pictureAudio(b, "r36"));
+    a.clock.advance(1); b.clock.advance(1);
+    eq([[...db4.recs.keys()], a.items().length, b.items().length], [[FILE], 1, 1], "Q11 two tabs of this browser receive the same picture: one record");
+    a.x(0).click();
+    a.clock.advance(1);
+    const c = page({ idb: db4 });
+    c.clock.advance(1);
+    eq([db4.recs.size, c.items().length], [0, 0], "Q11 ... deleted in one tab: out of the store, so neither has it after its next load");
+    // records that are not pictures are left out, and the page still works
+    const db3 = newDb();
+    for (const r of [{ file: "a.png", at: START, name: "no PNG", w: 320, h: 240 }, { file: "b.png", at: 0, name: "no time", w: 320, h: 240, blob: png },
+                     { file: "c.png", at: START, name: 7, w: 320, h: 240, blob: png }, { file: "e.png", at: START, name: "no width", w: 0, h: 240, blob: png },
+                     { file: "g.png", at: START, name: "no height", w: 320, h: 0, blob: png },
+                     { file: "h.png", at: START, name: "its PNG is none", w: 320, h: 240, rows: 240, part: false, blob: { bad: true } },
+                     { file: "d.png", at: START, name: "A good one", w: 320, h: 256, rows: 256, part: false, blob: png },
+                     { file: "i.png", at: START + 5, name: "A later one", w: 320, h: 256, rows: 256, part: false, blob: png }]) db3.recs.set(r.file, r);
+    const g = page({ idb: db3 });
+    g.clock.advance(1);
+    eq(g.alts(), ["A later one", "A good one"], "Q11 records that are not pictures are left out; the rest, newest first");
+  }
+  for (const fail of ["throw", "error", "blocked", "tx"]) {
+    // no store to be had: the strip lives as long as the page, and nothing breaks
+    const db = newDb({ fail });
+    const e = page({ idb: db });
+    e.clock.advance(1);
+    e.feed(pictureAudio(e, "r36"));
+    e.clock.advance(1);
+    eq([e.items().length, db.recs.size, e.status()], [1, 0, "Received Robot 36 (240 lines) at 18:30Z."], "Q11 the store can't be opened (" + fail + "): the picture is in the strip all the same");
+    e.x(0).click();
+    eq(e.items().length, 0, "Q11 ... and can be deleted");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

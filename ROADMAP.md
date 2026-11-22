@@ -116,6 +116,19 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   works FT8 through the bridge. On a phone or any touch screen the mode keys, SSTV's Receive / Send tabs,
   the menus and the text fields are as tall as the keys (44 px; the Spots panel's too), and a Modem window
   added to a phone layout starts taller.
+- **The Modem window: your callsign, quick CW messages, Copy, pictures that stay.** CW has a **Your
+  call** field (kept by the browser; an account named as a callsign stands in until you type one) and
+  three keys beside it: **CQ** writes a CQ call into the message field, **DE** and **73** add to what is
+  there. They only write: ▶ still plays the message here and TX still sends it. FT8 marks the messages
+  that name that callsign (also inside <...> or around a /), shows it at the end of the list's headings,
+  and keeps such a message in view under CQ only. CW, RTTY and FT8 have a **Copy** key: the text goes to
+  the clipboard (CW's with each message's time and RX / TX; FT8's as the list shows, tab-separated), also
+  on a plain-http LAN address, where the browser has no clipboard API. CW has the small audio strip RTTY
+  and FT8 have, with two lines at the radio's CW pitch: a station that is tuned in runs between them. It
+  gives way when the window is too short for it and a readable chat (a Modem window added to a phone
+  layout is now tall enough for both). SSTV's received pictures are kept by the browser (the newest 12,
+  as many as the strip holds), so a reload or a restart of the browser no longer loses them; the X
+  deletes a picture there too.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
@@ -422,8 +435,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig
   doesn't send them (decided 2026-11-19: keep every transmission inside the 3 minutes).
 - **Modem window, next steps** — FT8's other message types (DXpedition, Field Day, RTTY Roundup, EU
-  VHF: ft8_lib skips them too), a menu that tunes the radio to a band's FT8 frequency, RTTY's AFC,
-  decoding a saved recording, FT4.
+  VHF: ft8_lib skips them too), RTTY's AFC, decoding a saved recording, FT4.
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. a tuning/zero-beat aid,
   memory keyer.
 - **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).

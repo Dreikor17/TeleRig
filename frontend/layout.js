@@ -102,7 +102,7 @@
     phone: { column: 1, items: [
       { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 },
       { id: "audio", y: 3 }, { id: "controls", y: 4 }, { id: "recorder", y: 5 },
-      { id: "spots", y: 6, h: 10, hidden: true }, { id: "sstv", y: 7, h: 15, hidden: true }] },
+      { id: "spots", y: 6, h: 10, hidden: true }, { id: "sstv", y: 7, h: 17, hidden: true }] },   // 17: CW's pane whole, its strip too
   };
   // the Recorder came after layouts were first saved: a saved layout without it gets it right under
   // Controls (placeRecorder), the place the default gives it

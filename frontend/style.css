@@ -703,6 +703,7 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .dm-rx span{flex:1 1 auto;min-width:0}
 .dm-strip{display:block;flex:none;width:100%;height:44px;background:var(--scope-bg);border:1px solid var(--tft-border);
   border-radius:var(--r-sm);cursor:crosshair}
+#cwStrip,#ft8Strip{cursor:default}                              /* these two only show: a click tunes nothing */
 .dm-strip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .dm-bar{display:flex;align-items:center;gap:6px;flex:none;margin-top:6px}
 .dm-bar select{flex:1 1 auto;min-width:0;font-size:11px;padding:3px 5px}
@@ -718,18 +719,27 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 .ft8-row .db,.ft8-row .dt,.ft8-row .hz{text-align:right;color:var(--tft-digit-dim)}
 .ft8-row .msg{overflow:hidden;text-overflow:ellipsis}
 .ft8-row.cq .msg{color:var(--tft-pill-fg)}                        /* a CQ: someone calling */
-.ft8-list.cq-only .ft8-row:not(.cq){display:none}
+.ft8-row.me .msg{color:var(--tft-amber);font-weight:700}          /* it names the operator's callsign (the list is dark in every theme) */
+.ft8-list.cq-only .ft8-row:not(.cq):not(.me){display:none}       /* CQ only: a call to the operator still shows */
 /* the list's column headings: the rows' own grid (their font, so the ch columns line up), in small type */
 .ft8-head{flex:none;padding:0 8px;font:12px/1.45 var(--font-ui)}
 .ft8-head span,.ft8-head .db,.ft8-head .dt,.ft8-head .hz{font-size:10px;color:var(--txt-faint)}
+.ft8-head .msg{display:flex;justify-content:space-between;gap:8px;min-width:0}   /* "Message", then the callsign that is marked */
+.ft8-head .ft8-me{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ft8-head .ft8-me.on{color:var(--warn-hi);font-weight:700}
+/* CW's quick messages: three keys and the operator's callsign, over the message field */
+.cw-quick .cw-call{flex:1 1 70px;min-width:0;font-size:12px;padding:4px 8px;text-transform:uppercase}
+.cw-quick .cw-call::placeholder{text-transform:none}
+/* Copy's fallback where the browser has no Clipboard API (plain http): a text box nobody sees */
+.dm-copybuf{position:fixed;left:-9999px;top:0;width:1px;height:1px;opacity:0}
 /* a phone, or any touch screen: the mode keys, SSTV's two tabs, the menus and the text fields are
    thumb-high, as the keys already are; on a touch screen a text field is in 16 px (iOS zooms the page
    into a smaller one) */
 @media (max-width:680px),(hover:none) and (pointer:coarse){
-  .dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{min-height:44px}
+  .dm-mode,.sstv-tab,.tile-digital select,.tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{min-height:44px}
 }
 @media (hover:none) and (pointer:coarse){
-  .tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .sstv-text{font-size:16px}
+  .tile-digital .cw-send,.tile-digital .cw-wpm,.tile-digital .cw-call,.tile-digital .sstv-text{font-size:16px}
 }
 
 /* ATAS manual-tune controls (shown next to PTT only when TUNER SELECT = ATAS) */

@@ -4,9 +4,17 @@
  * window is on the grid (CW's while its Decode key is on), so switching never loses a picture, a line of
  * text or a slot; a mode that has news while hidden gets a dot on its key.
  *
- * The audio strip above RTTY and FT8: a small waterfall of the radio's audio from 0 to 3 kHz (the 16 kHz
- * PCM tap, a 1024-point FFT), with the mode's own markers (RTTY: mark and space; FT8: the last slot's
- * messages). A click, or the arrow keys on the focused strip, tells the mode where: RTTY tunes there.
+ * The audio strip above CW, RTTY and FT8: a small waterfall of the radio's audio from 0 to 3 kHz (the
+ * 16 kHz PCM tap, a 1024-point FFT), with the mode's own markers (CW: a gate at the radio's CW pitch,
+ * where a tuned-in station sounds; RTTY: mark and space; FT8: the last slot's messages). A click, or the
+ * arrow keys on the focused strip, tells the mode where: RTTY tunes there (CW's and FT8's only show).
+ * CW's strip gives way when the pane is short, so the chat keeps a readable height.
+ *
+ * Copy (CW, RTTY, FT8) puts the mode's text on the clipboard: CwPanel / RttyPanel / Ft8Panel .text().
+ *
+ * The operator's callsign (DigitalPanel.call()): typed once into CW's "Your call" field and kept by this
+ * browser; until then the account's own name when it reads as a callsign. CW's quick keys write it into
+ * messages, and FT8 marks the messages that name it. tr:call {call} when it changes.
  *
  * While this page sends (an SSTV picture, a CW message) the window stays on that mode and the others
  * can't be shown: its STOP stays in view. RTTY and FT8 receive only; SSTV's Send tab is sstv-tx.js's own
@@ -26,7 +34,7 @@
  * follows what comes in (cwtool.js, rtty.js and ft8.js scroll it only then); scrolled back it stays where
  * it was left, and it comes back to that place, or to the end it was following, when it is shown again.
  *
- * window.DigitalPanel = { mode(), show(id), feed(pcm, rate), summary() }
+ * window.DigitalPanel = { mode(), show(id), call(), cwMarkers(), feed(pcm, rate), summary() }
  */
 (function () {
   "use strict";
@@ -259,6 +267,14 @@
     const marks = (this.o.markers && this.o.markers()) || [];
     for (const m of marks) {                               // the mode's markers
       const x = Math.round((m.hz / F_TOP) * W);
+      if (m.gate) {                                        // a gate m.gate Hz wide: a line each side, the signal in view between
+        const half = Math.round((m.gate / 2 / F_TOP) * W), lw = Math.max(1, Math.round(dpr));
+        this.g.fillStyle = "rgba(255,154,46,.85)";
+        this.g.fillRect(x - half - lw, 0, lw, H);
+        this.g.fillRect(x + half, 0, lw, H);
+        if (m.label) { this.g.fillStyle = "#ffb15a"; this.g.fillText(m.label, x + half + lw + Math.round(3 * dpr), Math.round(2 * dpr)); }
+        continue;
+      }
       this.g.fillStyle = m.dim ? "rgba(255,154,46,.55)" : "#ff9a2e";
       this.g.fillRect(x - Math.round(dpr / 2), 0, Math.max(1, Math.round(dpr * (m.dim ? 1 : 2))), m.dim ? Math.round(6 * dpr) : H);
       if (m.label) { this.g.fillStyle = "#ffb15a"; this.g.fillText(m.label, x + Math.round(3 * dpr), Math.round(2 * dpr)); }
@@ -267,6 +283,25 @@
 
   const strips = [];
   const R = () => window.RttyPanel || null, F = () => window.Ft8Panel || null;
+  // CW: the radio's CW pitch, where a station that is tuned in sounds (AfMap.cw, waterfall.js), as a gate
+  // CW_GATE Hz wide: tuned in, the station's trace runs between its two lines. None outside a CW mode, or
+  // on a radio whose pitch isn't known
+  const CW_GATE = 100;
+  const radioNow = () => { try { return (window.RadioControl && RadioControl.state()) || {}; } catch (_) { return {}; } };
+  function profileNow() {
+    const st = radioNow();
+    let rs = [];
+    try { rs = (window.RadioControl && RadioControl.radios && RadioControl.radios()) || []; } catch (_) { rs = []; }
+    const sel = $("radioSel"), id = (st.connected && st.radio) || (sel && sel.value) || "";
+    return rs.find((p) => p.id === id) || null;
+  }
+  function cwMarkers() {
+    const st = radioNow();
+    let cw = null;
+    try { cw = window.AfMap.cw(profileNow(), st, st.mode_name); } catch (_) {}   // no pitch table on this page: no marker
+    return cw && cw.pitch > 0 ? [{ hz: cw.pitch, label: "pitch", gate: CW_GATE }] : [];
+  }
+  strips.push(new Strip($("cwStrip"), "cw", { markers: cwMarkers }));
   strips.push(new Strip($("rttyStrip"), "rtty", {
     markers: () => (R() && R().markers ? R().markers() : []),
     onTune: (hz, sp) => { if (R() && R().tune) R().tune(hz, sp); },
@@ -302,11 +337,90 @@
     if (A && typeof A.tapPcm === "function") A.tapPcm(feed); else setTimeout(tap, 500);
   })();
 
-  render();
-  setInterval(() => { render(); for (const s of strips) s.paint(); }, 1000);   // the send lock; markers moved
+  // CW's strip gives way when the pane is short: under CHAT_MIN px of chat it goes, and it comes back
+  // only once the chat would still have that with the strip's own height (and some to spare) taken off
+  const cwStrip = $("cwStrip"), cwChat = $("cwOut"), CHAT_MIN = 72, STRIP_ROOM = 76;
+  function cwRoom() {
+    if (!cwStrip || !cwChat || cur !== "cw") return;
+    const h = cwChat.clientHeight;
+    if (!(h > 0)) return;                                  // not laid out (the window folded, off the grid)
+    if (!cwStrip.hidden && h < CHAT_MIN) cwStrip.hidden = true;
+    else if (cwStrip.hidden && h >= CHAT_MIN + STRIP_ROOM) cwStrip.hidden = false;
+  }
+  if (cwChat && typeof ResizeObserver === "function") new ResizeObserver(cwRoom).observe(panes.cw);   // the pane follows the window's size
+
+  // ---- Copy: a mode's text to the clipboard ----
+  const toast = (msg, kind) => { try { TR.toast(msg, kind); } catch (_) {} };
+  function copyOut(text, what) {
+    if (!text) { toast("Nothing to copy yet.", "info"); return; }
+    const done = (ok) => toast(ok ? what + " copied." : "This browser would not copy it: select the text and copy it yourself.", ok ? "ok" : "warn");
+    const byHand = () => {                                 // plain http on a LAN address: no Clipboard API there
+      const ta = document.createElement("textarea"), was = document.activeElement;
+      let ok = false;
+      ta.className = "dm-copybuf";
+      ta.setAttribute("readonly", ""); ta.setAttribute("aria-hidden", "true");
+      ta.value = text;
+      document.body.appendChild(ta);
+      try {
+        ta.select();
+        if (ta.setSelectionRange) ta.setSelectionRange(0, text.length);   // an iPhone selects a read-only box only this way
+        ok = !!document.execCommand("copy");
+      } catch (_) {}
+      ta.remove();
+      if (was) was.focus();                                // selecting took the focus: back where it was (the Copy key)
+      done(ok);
+    };
+    // the Clipboard API where the page has it (https, or this computer); refused or missing, by hand
+    try { navigator.clipboard.writeText(text).then(() => done(true), byHand); return; } catch (_) {}
+    byHand();
+  }
+  for (const [id, panel, what] of [["cwCopy", () => window.CwPanel, "The CW text"], ["rttyCopy", R, "The RTTY text"], ["ft8Copy", F, "The FT8 list"]]) {
+    const b = $(id);
+    if (b) b.addEventListener("click", () => {
+      let t = "";
+      try { t = panel().text(); } catch (_) {}              // that mode isn't on this page, or has no text to give
+      copyOut(t, what);
+    });
+  }
+
+  // ---- the operator's callsign ----
+  const KEY_CALL = "telerig.call", callEl = $("cwCall");
+  const asCall = (v) => String(v || "").toUpperCase().replace(/[^A-Z0-9/]/g, "").slice(0, 12);
+  const isCall = (v) => /^(?=.*[0-9])(?=.*[A-Z])[A-Z0-9/]{3,12}$/.test(v);      // letters and a digit: ADMIN is no callsign
+  const keptCall = () => { const v = asCall(ls(KEY_CALL)); return isCall(v) ? v : ""; };
+  function call() {
+    const user = asCall(window.TR && TR.user);             // the account's name, when it reads as a callsign
+    return keptCall() || (isCall(user) ? user : "");
+  }
+  let lastCall = null;
+  function renderCall() {
+    const c = call();
+    if (callEl) {
+      const ph = keptCall() || !c ? "Your call" : c;       // the account's name stands in until one is typed
+      if (callEl.placeholder !== ph) callEl.placeholder = ph;
+    }
+    if (c !== lastCall) {
+      lastCall = c;
+      try { document.dispatchEvent(new CustomEvent("tr:call", { detail: { call: c } })); } catch (_) {}
+    }
+  }
+  if (callEl) {
+    callEl.value = keptCall();
+    callEl.addEventListener("input", () => { const v = asCall(callEl.value); if (callEl.value !== v) callEl.value = v; });
+    callEl.addEventListener("change", () => {
+      const v = asCall(callEl.value);
+      callEl.value = isCall(v) ? v : "";                   // what is no callsign is not kept: the field empties
+      ls(KEY_CALL, callEl.value);
+      renderCall();
+    });
+  }
+
+  // set before the first render: what it announces (tr:modem, tr:call) is answered by asking this
   window.DigitalPanel = {
     mode: () => cur,
     show,
+    call,
+    cwMarkers,
     // audio handed over directly (int16 mono, its rate) as if the radio sent it, to RTTY, FT8, SSTV and the
     // strip (CW listens on the audio graph, not this tap): a check of the window, as SstvPanel.feed. It only
     // decodes.
@@ -323,4 +437,7 @@
       return s(window.SstvTx) || s(window.SstvPanel);
     },
   };
+  render();
+  renderCall();
+  setInterval(() => { render(); renderCall(); cwRoom(); for (const s of strips) s.paint(); }, 1000);   // the send lock; markers moved
 })();

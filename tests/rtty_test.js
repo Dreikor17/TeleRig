@@ -155,11 +155,17 @@ function tab(opts) {
   check(/Mark 2125 Hz, space 2295 Hz/.test(e.status.textContent), "R5 the tones shown: " + e.status.textContent);
   e.feedAll(signal(MSG, { snr: 10, seed: 3 }));
   eq(e.text.textContent.trim(), MSG, "R5 the text, decoded in the tab");
+  eq(e.ctx.RttyPanel.text(), e.text.textContent.replace(/\s+$/, ""), "R5 RttyPanel.text(): the same text, for the window's Copy key");
   check(e.text.children.length === 0, "R5 ... as text, never markup");
   check(/^RTTY /.test(e.ctx.RttyPanel.summary()), "R5 the window's summary: " + e.ctx.RttyPanel.summary());
   e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
   e.click(e.clear);
   eq(e.text.textContent, "", "R5 Clear empties the text");
+  eq(e.ctx.RttyPanel.text(), "", "R5 ... and there is nothing to copy");
+  e.feedAll(signal(MSG + "\n", { snr: 10, seed: 5 }));
+  const t = e.ctx.RttyPanel.text();
+  eq([/\n$/.test(e.text.textContent), t.trim(), /\s$/.test(t)], [true, MSG, false], "R5 a line that ended (CR LF): Copy takes it without the line end");
+  e.click(e.clear);
   e.click(e.rev);
   eq([e.rev.getAttribute("aria-pressed"), e.ctx.localStorage.getItem("telerig.rtty.rev")], ["true", "1"], "R5 Rev: pressed, kept");
   check(/Mark 2295 Hz, space 2125 Hz \(reversed\)/.test(e.status.textContent), "R5 ... the tones swap: " + e.status.textContent);

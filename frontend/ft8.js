@@ -12,7 +12,12 @@
  * digital.js); with the radio in a mode FT8 is not heard in, it names the mode (FT8 is sent in USB, so
  * USB or DATA-USB); after EMPTY_SLOTS slots in a row with nothing decoded it says what to check.
  *
- * window.Ft8Panel = { summary(), feed(pcm, rate), markers() } (the window; tests)
+ * A message that names the operator's callsign (DigitalPanel.call(), also inside <...> or with a / part)
+ * is marked in the list, shows even under "CQ only", and the callsign stands at the end of the list's
+ * headings; tr:call (the callsign changed) marks the list again.
+ *
+ * window.Ft8Panel = { summary(), feed(pcm, rate), markers(), text() } (the window; tests; text(): the list,
+ * for the window's Copy key)
  */
 (function () {
   "use strict";
@@ -106,6 +111,23 @@
   // ---- the list ----
   let rows = 0;
   const isCq = (t) => /^CQ( |$)/.test(t);
+  // the operator's callsign, and whether a message names it: one of its words, the <> of a hashed call
+  // taken off, or a part of a word around a / (W9XYZ/P, VE3/W9XYZ)
+  const meEl = $("ft8Me");
+  function myCall() {                                      // "" without the Modem window's script, or before a callsign is known
+    try { return window.DigitalPanel.call() || ""; } catch (_) { return ""; }
+  }
+  const names = (t, c) => !!c && String(t).replace(/[<>]/g, "").split(/\s+/).some((w) => w === c || w.split("/").includes(c));
+  function remark() {                                      // the callsign changed: the rows and the heading again
+    const c = myCall();
+    for (const r of list.querySelectorAll(".ft8-row")) r.classList.toggle("me", names(r.querySelector(".msg").textContent, c));
+    if (meEl) {
+      meEl.textContent = c || "your call: set it in CW";
+      meEl.classList.toggle("on", !!c);
+      meEl.title = c ? "Messages that name " + c + " are marked" : "Type your callsign in CW's Your call field to have it marked here";
+    }
+  }
+  document.addEventListener("tr:call", remark);            // digital.js: as it starts, and at every change
   function cell(cls, text) { const s = document.createElement("span"); s.className = cls; s.textContent = text; return s; }
   function show(start, decodes) {
     lastSlot = start; lastCount = decodes.length; lastFreqs = decodes.map((d) => d.freq);
@@ -119,9 +141,10 @@
       sep.className = "ft8-slot";
       sep.textContent = hms(start) + " UTC";
       list.appendChild(sep);
+      const me = myCall();
       for (const d of decodes.slice().sort((a, b) => a.freq - b.freq)) {
         const r = document.createElement("div");
-        r.className = "ft8-row" + (isCq(d.text) ? " cq" : "");
+        r.className = "ft8-row" + (isCq(d.text) ? " cq" : "") + (names(d.text, me) ? " me" : "");
         r.appendChild(cell("db", (d.snr > 0 ? "+" : "") + d.snr));
         r.appendChild(cell("dt", d.dt.toFixed(1)));
         r.appendChild(cell("hz", String(d.freq)));
@@ -172,5 +195,18 @@
     summary: () => (lastSlot === null ? "" : "FT8 " + lastCount + " at " + hms(lastSlot).slice(0, 5)),
     feed: (pcm, r) => { if (pcm && pcm.length && r > 0) feed(pcm, r); },
     markers: () => lastFreqs.map((hz) => ({ hz: hz + 25, dim: true })),   // the middle of each message's 50 Hz
+    // the list as it shows, as text: a line for each slot's time, then its messages (dB, DT, Hz and the
+    // message, tab-separated); under "CQ only", only the rows that show
+    text: () => {
+      const out = [], only = list.classList.contains("cq-only");
+      let slot = null;
+      for (const el of Array.from(list.children)) {
+        if (el.classList.contains("ft8-slot")) { slot = el.textContent; continue; }
+        if (!el.classList.contains("ft8-row") || (only && !el.classList.contains("cq") && !el.classList.contains("me"))) continue;
+        if (slot !== null) { out.push(slot); slot = null; }
+        out.push(Array.from(el.children).map((c) => c.textContent).join("\t"));
+      }
+      return out.join("\n");
+    },
   };
 })();
