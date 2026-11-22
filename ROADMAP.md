@@ -213,6 +213,20 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   shows RTTY in the Modem window; the ARRL doesn't say whether its frequency is the mark or the signal's
   center, so the rows take the center until a bulletin decodes on the air. The AM calling frequencies
   3.885, 7.290 and 14.286, and the emergency centers of activity 18.160 and 21.360 beside 14.300.
+- **A spot tunes exactly, in the right mode and width.** A click now sets the frequency again right
+  after a mode change. The FT-991A and FT-891 show CW with the pitch added (menu CW FREQ DISPLAY,
+  default PITCH OFFSET), so their frequency moves by the pitch when the mode changes between SSB and CW,
+  and an Icom does the same with SSB/CW Synchronous Tuning on: a click from CW to an SSB spot landed
+  about 700 Hz off and the voice sounded wrong until retuned. It lands on the spot now (calling
+  frequencies and memories too). A spot the source calls USB or LSB keeps that sideband. Data spots say
+  their own mode (FT8, FT4, RTTY, PSK31); an FT8 spot tunes the band's FT8 dial, so the whole FT8 window
+  is heard and decoded wherever in it the spot was, with FT8 in the Modem window; an RTTY spot puts its
+  signal on the RTTY tab's tones and shows RTTY there. SSTV is 3 kHz wide: on the FT-991A and FT-891 in
+  DATA-LSB / DATA-USB, the modes in which they take transmit audio from the rear USB jack by default (voice
+  SSB takes the front mic), so a picture sent from TeleRig goes out; on an Icom in LSB / USB on FIL1
+  (3.0 kHz), because an Icom's data mode takes its audio from its own DATA MOD setting, which TeleRig
+  leaves alone. A spot is only as exact as its spotter: one spotted by ear can be a few hundred hertz
+  off, and the VFO's step keys fix that.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

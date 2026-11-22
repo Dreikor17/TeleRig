@@ -88,14 +88,18 @@
   const canTune = () => { try { return !!TR.can("operate"); } catch (_) { return false; } };
   const toast = (msg, kind) => { try { TR.toast(msg, kind); } catch (_) {} };
   const say = (msg) => { try { TR.srLive(msg); } catch (_) {} };
-  // the spot's mode in this radio's names; "" = leave the mode alone
+  // the spot's mode in this radio's names; "" = leave the mode alone. SSB takes the sideband the source
+  // named (spot.sub "USB" / "LSB"), else the band's: LSB below 10 MHz, USB above and on 60 m.
   function radioMode(p, spot) {
     const have = (p && Array.isArray(p.modes)) ? p.modes : [];
     const pick = (...names) => names.find((n) => have.includes(n)) || "";
     const usb = spot.hz >= 10e6 || (spot.hz >= 5.25e6 && spot.hz <= 5.45e6);   // 60 m is USB too
+    const sb = spot.sub === "USB" || spot.sub === "LSB" ? spot.sub : "";
     switch (spot.mode) {
       case "CW": return pick("CW", "CW-USB");               // a Yaesu's normal CW is CW-USB on every band
-      case "SSB": case "SSTV": return pick(usb ? "USB" : "LSB");   // SSTV: the voice sideband
+      case "SSB": return pick(sb || (usb ? "USB" : "LSB"));
+      // SSTV in the sideband it is sent in; a Yaesu in its data mode (FILTER below says why)
+      case "SSTV": return p && p.protocol === "yaesu" ? pick(usb ? "DATA-USB" : "DATA-LSB", usb ? "USB" : "LSB") : pick(usb ? "USB" : "LSB");
       case "DIGI": return pick("DATA-USB", "USB");
       case "FM": return pick("FM");
       case "AM": return pick("AM");
@@ -103,11 +107,17 @@
     }
   }
   // The filter for the spot's mode: [Icom FIL slot, Yaesu WIDTH in Hz with NAR off (0: the mode's
-  // fixed filter, NAR off only)]. The slot widths are the radio's own (IC-9700 / IC-7300 defaults:
-  // SSB FIL2 2.4 kHz, CW FIL2 500 Hz, SSB-D FIL1 3.0 kHz); AM and FM get their normal FIL1 (on FIL2 /
-  // FIL3 an Icom FM transmits narrow). A Yaesu's DATA-USB width defaults to 500 Hz: 3 kHz hears the
-  // whole FT8 / FT4 subband.
-  const FILTER = { SSB: [2, 2400], SSTV: [2, 2400], CW: [2, 500], DIGI: [1, 3000], AM: [1, 0], FM: [1, 0] };
+  // fixed filter, NAR off only)]. The slot widths are the radio's own (IC-9700 / IC-7300MK2 manuals: SSB
+  // FIL1 3.0 kHz, FIL2 2.4 kHz, CW FIL2 500 Hz, SSB-D FIL1 3.0 kHz, AM FIL1 9 kHz, FM FIL1 15 kHz); AM and
+  // FM get their normal FIL1 (on FIL2 / FIL3 an Icom FM transmits narrow), as a Yaesu's NAR off does (AM
+  // 9 kHz, FM 16 kHz). A Yaesu's DATA width defaults to 500 Hz: 3 kHz hears the whole FT8 / FT4 subband
+  // (and the RTTY tab's tones, 2125 / 2295 Hz). SSTV is sent 3 kHz wide (its tones run 1100-2300 Hz). On
+  // a Yaesu in its data mode: the FT-991A / FT-891 take a data mode's transmit audio from the rear USB /
+  // DATA jack (DATA IN SELECT, default REAR), but voice SSB's from the front mic (SSB MIC SELECT, default
+  // MIC), so a picture sent from TeleRig goes out in the data mode. On an Icom in the voice mode, FIL1: a
+  // data mode takes its transmit audio from the radio's own DATA MOD setting, which TeleRig leaves alone
+  // (on the LAN it routes the voice modes' DATA OFF MOD), so a picture sent from there could go out silent.
+  const FILTER = { SSB: [2, 2400], SSTV: [1, 3000], CW: [2, 500], DIGI: [1, 3000], AM: [1, 0], FM: [1, 0] };
   // What tunes the spot after set_freq: the mode, the Icom DATA switch and the filter, each only when
   // the radio is not already there. A mode change re-sends a Yaesu's NAR and WIDTH: the radio keeps its
   // own per mode, and a code means another width in another mode. Unknown mode: nothing.
@@ -141,16 +151,42 @@
   function sendTune(x) {
     const c = ctl(), p = profile(), hz = typeof x.dial === "number" ? x.dial : x.hz;
     if (!c || !canTune() || !(x.listen ? covers(p, hz) : bandOf(p, hz))) return false;
-    const st = radioState();
-    c.send({ action: "set_freq", hz });
-    for (const m of settings(p, x, st)) c.send(m);
+    sendSeq(c, p, hz, settings(p, x, radioState()));
     return true;
   }
+  // The frequency, then what the mode needs, with the frequency again right after a mode change: the
+  // FT-991A and FT-891 show CW with the pitch added (CW FREQ DISPLAY, default PITCH OFFSET: the display,
+  // which CAT reads and sets, moves by the pitch when the mode changes between SSB and CW), and an Icom
+  // does the same with SSB/CW Synchronous Tuning on. Without it a click from CW to an SSB spot landed the
+  // pitch (about 700 Hz) off, and the voice sounded wrong until retuned.
+  function sendSeq(c, p, hz, list) {
+    c.send({ action: "set_freq", hz });
+    for (const m of list) {
+      c.send(m);
+      if (m.action === "set_mode") c.send({ action: "set_freq", hz });
+    }
+  }
+  // Where a live spot is tuned, and the Modem window's mode for it. An FT8 spot inside a band's FT8 window
+  // (callfreqs.js: its dial and the 3 kHz above it) tunes that dial, so the whole window is heard and
+  // decoded, wherever in it the spot was; an RTTY spot puts its signal on the RTTY tab's tones (taken as
+  // the signal's center, as the W1AW rows are); CW and SSTV show their mode; anything else, the spot as is.
+  const FT8_WINDOW_HZ = 3000;
+  function livePlan(s) {
+    if (s.mode === "DIGI" && s.sub === "FT8") {
+      for (const g of CALLS) for (const r of g.rows) {
+        if (r.modem === "ft8" && s.hz >= r.hz && s.hz <= r.hz + FT8_WINDOW_HZ) return { dial: r.hz, modem: "ft8" };
+      }
+      return { dial: s.hz, modem: "ft8" };
+    }
+    if (s.mode === "DIGI" && s.sub === "RTTY") return { dial: s.hz - RTTY_CENTER_HZ, modem: "rtty" };
+    return { dial: s.hz, modem: MODEM_OF[s.mode] || "" };
+  }
   function tune(spot) {
-    if (!sendTune(spot)) return;
-    picked = { key: keyOf(spot), spot, hz: spot.hz, at: Date.now() };
-    try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: spot.hz })); } catch (_) {}
-    say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz) + modemSay(modemTo(MODEM_OF[spot.mode])));
+    const plan = livePlan(spot);
+    if (!sendTune(Object.assign({}, spot, { dial: plan.dial }))) return;
+    picked = { key: keyOf(spot), spot, hz: plan.dial, at: Date.now() };     // pinned while the radio stays near the dial
+    try { sessionStorage.setItem(PICK_KEY, JSON.stringify({ key: picked.key, spot, hz: plan.dial })); } catch (_) {}
+    say("Tuned to " + spot.call + ", " + fmtFreq(spot.hz) + modemSay(modemTo(plan.modem)));
     render();
     list.scrollTop = 0;                                     // the list back at its top, where the pin is
   }
@@ -210,6 +246,7 @@
     return s < 60 ? "now" : s < 3600 ? Math.round(s / 60) + "m" : Math.round(s / 3600) + "h";
   }
   const modeLabel = (m) => (m === "DIGI" ? "DATA" : m || "?");
+  const spotLabel = (s) => (s.mode === "DIGI" && s.sub ? s.sub : modeLabel(s.mode));   // a data spot by its own mode: FT8, RTTY
   function cell(cls, text) { const e = document.createElement("span"); e.className = cls; e.textContent = text; return e; }
 
   // ---- the two filters every view has ----
@@ -236,10 +273,10 @@
       row.className = "spot spot-" + s.src + (ok ? "" : " off") + (on ? " picked" : "");
       if (on) row.setAttribute("aria-current", "true");
       if (ok) { row.type = "button"; row.addEventListener("click", () => tune(s)); }
-      row.title = (on ? "Tuned to " : ok ? "Tune to " : (op ? "Not on this radio: " : "")) + s.call + " " + fmtFreq(s.hz) + " " + modeLabel(s.mode) +
+      row.title = (on ? "Tuned to " : ok ? "Tune to " : (op ? "Not on this radio: " : "")) + s.call + " " + fmtFreq(s.hz) + " " + spotLabel(s) +
         (s.ref ? " · " + s.ref : "") + (s.name ? " · " + s.name : "") + (s.note ? " · " + s.note : "") +
         (s.spotter ? " · spotted by " + s.spotter : "") + (on ? " · " + (SRC_LABEL[s.src] || "") : "");
-      row.append(cell("sp-age", age(s.time)), cell("sp-freq", fmtFreq(s.hz)), cell("sp-mode", modeLabel(s.mode)),
+      row.append(cell("sp-age", age(s.time)), cell("sp-freq", fmtFreq(s.hz)), cell("sp-mode", spotLabel(s)),
                  cell("sp-call", s.call), cell("sp-ref", [s.ref, s.name].filter(Boolean).join(" ")),
                  cell("sp-src", on ? "Tuned" : SRC_LABEL[s.src] || ""));
       list.appendChild(row);
@@ -285,7 +322,9 @@
     band: String(g.band), listen: g.listen === true,
     rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note, modem]) => {
       const hz = Math.round(khz * 1000);
-      return { hz, dial: modem === "rtty" && mode === "DIGI" ? hz - RTTY_CENTER_HZ : hz, mode, cat: modem === "sstv" ? "SSTV" : mode,
+      // an HF SSTV row tunes as SSTV (its 3 kHz filter); the space station's pictures stay FM
+      return { hz, dial: modem === "rtty" && mode === "DIGI" ? hz - RTTY_CENTER_HZ : hz,
+               mode: modem === "sstv" && mode === "SSB" ? "SSTV" : mode, cat: modem === "sstv" ? "SSTV" : mode,
                name: String(name), note: String(note || ""), modem: MODEM_LABEL[modem] ? modem : "", listen: g.listen === true };
     }),
   }));
@@ -514,9 +553,7 @@
   function tuneMem(radio, m) {
     const c = ctl(), p = profile();
     if (!c || !canTune() || !p || p.id !== radio) return;   // a row drawn for another radio tunes nothing
-    const st = radioState();
-    c.send({ action: "set_freq", hz: m.hz });
-    for (const x of recall(p, m, st)) c.send(x);
+    sendSeq(c, p, m.hz, recall(p, m, radioState()));
     say("Tuned to " + m.name + ", " + fmtFreq(m.hz));
   }
 

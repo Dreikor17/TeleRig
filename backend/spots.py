@@ -22,6 +22,7 @@ Standard library only; no network at import time; tests swap `fetch` (a function
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 import urllib.request
@@ -63,6 +64,19 @@ def norm_mode(m: Any) -> str:
     return ""
 
 
+def sub_mode(m: Any) -> str:
+    """What the source said beyond the mode, where the page tunes by it: the sideband of an SSB spot
+    ("USB" | "LSB": that sideband, not the band's usual one) and the digital mode of a data spot
+    ("FT8", "RTTY", "PSK31", ...: FT8 tunes the band's FT8 dial, RTTY puts the signal on the RTTY tones).
+    "" when there is nothing more to say."""
+    s = _txt(m, 16).upper()
+    if s in ("USB", "LSB"):
+        return s
+    if norm_mode(s) == "DIGI" and s not in ("DATA", "DIGI", "DIGITAL") and re.fullmatch(r"[A-Z0-9-]{2,10}", s):
+        return "PSK31" if s == "PSK" else s
+    return ""
+
+
 def _khz_to_hz(v: Any) -> Optional[int]:
     try:
         f = float(str(v).strip())
@@ -93,7 +107,7 @@ def _spot(src, call, hz, mode, ref, name, spotter, time_iso, note) -> Optional[d
     call = _txt(call, _TEXT["call"]).upper()
     if not call or hz is None or time_iso is None:
         return None
-    return {"src": src, "call": call, "hz": hz, "mode": norm_mode(mode), "ref": _txt(ref, _TEXT["ref"]),
+    return {"src": src, "call": call, "hz": hz, "mode": norm_mode(mode), "sub": sub_mode(mode), "ref": _txt(ref, _TEXT["ref"]),
             "name": _txt(name, _TEXT["name"]), "spotter": _txt(spotter, _TEXT["spotter"]).upper(),
             "time": time_iso, "note": _txt(note, _TEXT["note"])}
 

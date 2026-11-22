@@ -186,6 +186,23 @@ this list whenever a radio turns up something new.
   browser drops); on the Yaesus TeleRig never arms it, and the VOX key and level are not offered
   (`capabilities.tx_funcs`; the operator's choice, 2026‑11‑22). Decide VOX, MOX, keyer playback and TUNE
   explicitly for each new radio, under the transmit-safety contract above.
+- **A mode change can move the frequency.** The FT‑991A and FT‑891 show CW with the pitch added (CW
+  FREQ DISPLAY, menu 059 / 07‑11, default PITCH OFFSET): their frequency moves by the pitch when the mode
+  changes between SSB and CW, and CAT sets what the display shows, so a click from CW to an SSB spot
+  landed about 700 Hz off. An Icom does the same with SSB/CW Synchronous Tuning on (default off). TeleRig
+  now sets the frequency again right after any mode change (`spots.js` `sendSeq`, 2026‑11‑22). On a new
+  radio, look in its manual for any display offset tied to a mode (the Yaesus' data modes have OTHER DISP
+  and OTHER SHIFT too, default 0 Hz).
+- **Transmit audio can come from a different input in each mode.** The FT‑991A takes SSB voice from the
+  front mic (SSB MIC SELECT, default MIC) but its data modes from the rear USB / DATA jack (DATA IN
+  SELECT, default REAR). An Icom on the LAN takes the voice modes' audio from DATA OFF MOD, which TeleRig
+  sets to LAN and restores, but a data mode's from DATA MOD, which it leaves alone. That is why an SSTV
+  pick tunes DATA‑LSB / DATA‑USB on the Yaesus and LSB / USB on the Icoms. Before TeleRig chooses a mode
+  for anything it sends, find out which input that mode transmits from on the new radio.
+- **Default filter widths differ by maker and mode.** The FT‑991A's data width defaults to 500 Hz and
+  its CW width to 2.4 kHz; an Icom's SSB FIL1 is 3.0 kHz and FIL2 2.4 kHz. A pick sets the width it needs
+  each time (`spots.js` `FILTER`: SSB 2.4 kHz, CW 500 Hz, data 3 kHz, SSTV 3 kHz), so check the new radio's
+  filter table against it.
 
 ## The profile is the declarative source of truth
 

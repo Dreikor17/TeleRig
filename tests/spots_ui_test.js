@@ -52,6 +52,13 @@
  *       VFO); the 60 m channels in USB; W1AW; the QRP frequencies of QRP ARCI; W1AW's RTTY bulletins
  *       (the signal on the RTTY tab's tones, rtty.js CENTER; marked and named where the dial is) and voice
  *       bulletins; the AM calling frequencies; the emergency centers
+ *  P30. tuning exactly: the radio is told the frequency again right after a mode change (a Yaesu's CW
+ *       display carries the CW pitch; an Icom's SSB/CW Synchronous Tuning moves it), once without one; a
+ *       live spot's own sideband; an FT8 spot tunes its band's FT8 dial (and stays pinned there), an RTTY
+ *       spot puts its signal on the RTTY tab's tones; a data spot says its own mode; SSTV at 3 kHz (a
+ *       Yaesu in its data mode, an Icom in the voice mode on FIL1); memories the same
+ *  (e.sent leaves out that repeated frequency, so the other checks read as the radio's settings; e.raw
+ *  has every message.)
  */
 "use strict";
 const fs = require("fs");
@@ -200,11 +207,18 @@ function page(opts) {
                         showTile: (id) => { e.tilesShown.push(id); return true; } };
   if (opts.modem) e.ctx.DigitalPanel = { show: (m) => { e.modemShown.push(m); return e.modemOk; } };
   if (opts.modemTile) e.el("div", { class: "grid-stack-item", "data-tile": "sstv" }, e.el("div", { id: opts.modemTile === "grid" ? "grid" : "tileParking" }));
-  e.sent = [];
+  e.sent = []; e.raw = [];
   const radio = opts.radio || FT991A;
   e.el("select", { id: "radioSel" }).value = radio.id;      // the radio picker: the profile while no radio is connected
   e.st = { connected: true, radio: radio.id, freq: 14074000, mode_name: "USB", filter: 1, data: 0, narrow: 0, width: 0 };
-  e.ctx.RadioControl = { send: (o) => e.sent.push(o), state: () => e.st, radios: () => RADIOS.slice() };
+  // e.raw: every message; e.sent: the same without a frequency set again right after a mode change (P30)
+  // (within one click: e.click notes where the click's messages start)
+  e.clickAt = 0;
+  e.ctx.RadioControl = { send: (o) => {
+    const i = e.raw.length, prev = e.raw[i - 1];
+    e.raw.push(o);
+    if (!(o.action === "set_freq" && prev && prev.action === "set_mode" && i - 1 >= e.clickAt)) e.sent.push(o);
+  }, state: () => e.st, radios: () => RADIOS.slice() };
   e.load("freqentry.js");                                   // FreqEntry.rangesOf: where a radio receives (a memory may be anywhere there)
   e.load("callfreqs.js");                                   // the Calling view's list, as on the page
   if (opts.tones !== false) e.ctx.FmTones = TONE_TABLES;    // app.js's tables (opts.tones false: app.js missing)
@@ -215,7 +229,7 @@ function page(opts) {
   e.text = (row) => row.querySelectorAll("span").map((x) => x.textContent);
   e.status = () => e.doc.getElementById("spotsStatus").textContent;
   e.src = (k) => e.doc.querySelector('.spots-src[data-src="' + k + '"]');
-  e.click = (el) => el.dispatchEvent(new e.Event("click", { bubbles: true }));
+  e.click = (el) => { e.clickAt = e.raw.length; return el.dispatchEvent(new e.Event("click", { bubbles: true })); };
   e.change = (el) => el.dispatchEvent(new e.Event("change", { bubbles: true }));
   e.tab = (v) => e.doc.getElementById({ live: "spotsTabLive", call: "spotsTabCall", mem: "spotsTabMem" }[v]);
   e.key = (el, key) => { const ev = new e.Event("keydown", { bubbles: true, key }); el.dispatchEvent(ev); return ev; };
@@ -502,8 +516,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     eq(sends("146.520.0"), [F(146520000), M("FM"), NAR], "P9 FM simplex on a Yaesu: the freq, FM, NAR off");
     eq(sends("14.060.0"), [F(14060000), M("CW-USB"), NAR, W(10)], "P9 QRP CW: CW-USB, WIDTH 500 Hz");
     eq(sends("14.074.0"), [F(14074000), M("DATA-USB"), NAR, W(17)], "P9 FT8: DATA-USB, WIDTH 3 kHz");
-    eq(sends("14.230.0"), [F(14230000)], "P9 20 m SSTV: USB at 2.4 kHz already, the freq only");
-    eq(sends("7.171.0"), [F(7171000), M("LSB"), NAR, W(14)], "P9 40 m SSTV: LSB below 10 MHz");
+    eq(sends("14.230.0"), [F(14230000), M("DATA-USB"), NAR, W(17)], "P9 20 m SSTV on a Yaesu: DATA-USB at 3 kHz (its rear-jack audio, the width SSTV is sent in)");
+    eq(sends("7.171.0"), [F(7171000), M("DATA-LSB"), NAR, W(17)], "P9 40 m SSTV: DATA-LSB below 10 MHz, 3 kHz");
     eq(sends("14.100.0"), [F(14100000), M("CW-USB"), NAR, W(10)], "P9 the beacons: CW");
     eq(order(), before, "P9 the rows stay where they are");
     eq(e.ctx.sessionStorage.getItem("telerig.spots.picked"), null, "P9 ... and nothing is pinned for the live list");
@@ -719,8 +733,9 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
         const sm = e.sent.find((m) => m.action === "set_mode");
         check(!sm || p.modes.includes(sm.mode), what + "a mode the radio has");
         if (mode === "CW" || mode === "FM" || mode === "AM") check(!!sm && sm.mode.startsWith(mode), what + "from USB: the mode is set");
-        if (mode === "SSTV") check(hz < 30e6 ? (hz < 10e6 ? !!sm && sm.mode === "LSB" : !sm) : !!sm && sm.mode === "FM",
-                                   what + "SSTV: from USB, LSB below 10 MHz, USB above it, FM for the space station");
+        const sstvMode = hz >= 30e6 ? "FM" : (p.protocol === "yaesu" ? "DATA-" : "") + (hz < 10e6 ? "LSB" : "USB");
+        if (mode === "SSTV") check((sm ? sm.mode : "USB") === sstvMode,
+                                   what + "SSTV: " + sstvMode + " (the voice sideband, a Yaesu's data mode; FM for the space station)");
       }
     }
   }
@@ -1258,10 +1273,10 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
       e.click(typeof row === "string" ? e.row(row) : row);
       return [e.sent.slice(), e.modemShown.slice()];
     };
-    eq(pick("7.171.0"), [[F(7171000), M("LSB"), NAR, W(14)], ["sstv"]], "P29 40 m SSTV: LSB, and the Modem window shows SSTV");
+    eq(pick("7.171.0"), [[F(7171000), M("DATA-LSB"), NAR, W(17)], ["sstv"]], "P29 40 m SSTV: DATA-LSB at 3 kHz, and the Modem window shows SSTV");
     e.clock.advance(20);
     eq(e.doc.getElementById("srLive").textContent, "Tuned to SSTV, 7.171.0; the Modem window shows SSTV", "P29 ... a screen reader hears both");
-    eq(pick("14.230.0", { mode_name: "LSB" }), [[F(14230000), M("USB"), NAR, W(14)], ["sstv"]], "P29 20 m SSTV: USB");
+    eq(pick("14.230.0", { mode_name: "LSB" }), [[F(14230000), M("DATA-USB"), NAR, W(17)], ["sstv"]], "P29 20 m SSTV: DATA-USB at 3 kHz");
     eq(pick(byName("ISS SSTV"), { mode_name: "USB" }), [[F(145800000), M("FM"), NAR], ["sstv"]], "P29 the space station's pictures: FM, SSTV");
     eq(pick(byName("ISS downlink")), [[F(145800000), M("FM"), NAR], []], "P29 ... its voice, on the same frequency: FM, the Modem window left alone");
     eq([pick("14.060.0", { mode_name: "USB" })[1], pick("14.100.0")[1], pick("14.074.0")[1], pick("14.047.5")[1]], [["cw"], ["cw"], ["ft8"], ["cw"]],
@@ -1273,7 +1288,7 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     pick("14.230.0");
     eq(e.tilesShown, ["sstv"], "P29 a folded Modem window opens");
     e.modemFolded = false; e.tilesShown.length = 0; e.modemOk = false;
-    eq(pick("21.340.0"), [[F(21340000)], ["sstv"]], "P29 a mode sending (DigitalPanel.show says no): tuned all the same");
+    eq(pick("21.340.0"), [[F(21340000), M("DATA-USB"), NAR, W(17)], ["sstv"]], "P29 a mode sending (DigitalPanel.show says no): tuned all the same");
     e.clock.advance(20);
     eq([e.tilesShown, e.doc.getElementById("srLive").textContent], [[], "Tuned to SSTV, 21.340.0"], "P29 ... the window kept, and nothing said of it");
     e.modemOk = true;
@@ -1330,13 +1345,72 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const byCall = (c) => e.rows().find((r) => e.text(r)[3] === c);
     eq(e.text(byCall("S0CALL")).slice(1, 4), ["7.171.0", "SSTV", "S0CALL"], "P29 an SSTV spot says SSTV");
     const pick = (c) => { e.sent.length = 0; e.modemShown.length = 0; e.click(byCall(c)); return [e.sent.slice(), e.modemShown.slice()]; };
-    eq(pick("S0CALL"), [[F(7171000), M("LSB"), NAR, W(14)], ["sstv"]], "P29 ... on 40 m it tunes LSB (no longer DATA-USB), and the Modem window shows SSTV");
+    eq(pick("S0CALL"), [[F(7171000), M("DATA-LSB"), NAR, W(17)], ["sstv"]], "P29 ... on 40 m it tunes the lower sideband at 3 kHz (no longer DATA-USB), and the Modem window shows SSTV");
     eq(pick("F1CALL/P")[1], ["cw"], "P29 a CW spot: CW");
     eq([pick("N6CALL")[1], pick("JA1CALL")[1]], [[], []], "P29 an SSB spot, and a data spot (FT8 or not, it doesn't say): the Modem window left alone");
     const sel = e.doc.getElementById("spotsMode");
     sel.value = "SSTV"; e.change(sel);
     eq(e.rows().map((r) => e.text(r)[3]), ["JA1CALL", "S0CALL", "N4CALL"],
        "P29 the SSTV filter on the live list: the SSTV spots, newest first, under the spot last tuned (pinned whatever the filters)");
+  }
+  // P30: tuning exactly
+  {
+    const LIVE = [
+      { src: "pota", call: "N8CALL", hz: 14286000, mode: "SSB", sub: "", ref: "US-0005", name: "Sample", spotter: "N9CALL", time: at(1), note: "" },
+      { src: "dx", call: "JA2CALL", hz: 14075420, mode: "DIGI", sub: "FT8", ref: "", name: "Japan", spotter: "K5CALL", time: at(2), note: "" },
+      { src: "dx", call: "DL0CALL", hz: 14085000, mode: "DIGI", sub: "RTTY", ref: "", name: "Germany", spotter: "K6CALL", time: at(3), note: "" },
+      { src: "dx", call: "VE0CALL", hz: 7185000, mode: "SSB", sub: "USB", ref: "", name: "Canada", spotter: "K7CALL", time: at(4), note: "" },
+      { src: "dx", call: "PY0CALL", hz: 14080000, mode: "DIGI", sub: "FT4", ref: "", name: "Brazil", spotter: "K8CALL", time: at(5), note: "" },
+      { src: "dx", call: "ZL0CALL", hz: 14090000, mode: "DIGI", sub: "FT8", ref: "", name: "New Zealand", spotter: "K9CALL", time: at(6), note: "" },
+      { src: "pota", call: "N1SSTV", hz: 14230000, mode: "SSTV", sub: "", ref: "US-0006", name: "Sample", spotter: "N2CALL", time: at(7), note: "" },
+    ];
+    const ANS = { spots: LIVE, sources: { pota: { ok: true }, wwff: { ok: true }, dx: { ok: true } }, now: NOW / 1000 };
+    const e = page({ modem: true, modemTile: "grid", answer: ANS });
+    await settle(e);
+    const byCall = (c) => e.rows().find((r) => e.text(r)[3] === c);
+    const go = (c, st) => {
+      if (st) e.st = Object.assign({}, e.st, st);
+      e.raw.length = 0; e.modemShown.length = 0;
+      e.click(byCall(c));
+      return [e.raw.slice(), e.modemShown.slice()];
+    };
+    eq(go("N8CALL", { mode_name: "CW-USB" }), [[F(14286000), M("USB"), F(14286000), NAR, W(14)], []],
+       "P30 a Yaesu from CW to an SSB spot: the frequency again right after the mode (its CW display carries the pitch), so it lands exactly");
+    eq(go("N8CALL", { mode_name: "USB" })[0], [F(14286000)], "P30 ... already in USB: the frequency, once");
+    eq([e.text(byCall("JA2CALL"))[2], e.text(byCall("DL0CALL"))[2], e.text(byCall("PY0CALL"))[2], e.text(byCall("N8CALL"))[2]],
+       ["FT8", "RTTY", "FT4", "SSB"], "P30 a data spot says its own mode");
+    eq(go("JA2CALL", { mode_name: "USB" }), [[F(14074000), M("DATA-USB"), F(14074000), NAR, W(17)], ["ft8"]],
+       "P30 an FT8 spot inside the 20 m FT8 window: the window's dial (all of it heard and decoded), FT8 in the Modem window");
+    e.st = Object.assign({}, e.st, { freq: 14074000, mode_name: "DATA-USB" }); e.clock.advance(3500); await settle(e);
+    eq(e.text(e.rows()[0])[3], "JA2CALL", "P30 ... and it stays pinned while the radio is on that dial");
+    eq(go("ZL0CALL", { mode_name: "USB" }), [[F(14090000), M("DATA-USB"), F(14090000), NAR, W(17)], ["ft8"]],
+       "P30 an FT8 spot outside the windows (a DXpedition's): the spot as it is, FT8 in the Modem window");
+    eq(go("DL0CALL", { mode_name: "USB" }), [[F(14085000 - 2210), M("DATA-USB"), F(14085000 - 2210), NAR, W(17)], ["rtty"]],
+       "P30 an RTTY spot: DATA-USB with its signal on the RTTY tab's tones, RTTY in the Modem window");
+    eq(go("PY0CALL", { mode_name: "USB" }), [[F(14080000), M("DATA-USB"), F(14080000), NAR, W(17)], []],
+       "P30 an FT4 spot: data at the spot, the Modem window left alone (TeleRig doesn't decode FT4)");
+    eq(go("VE0CALL", { mode_name: "LSB" })[0], [F(7185000), M("USB"), F(7185000), NAR, W(14)],
+       "P30 an SSB spot the source calls USB, on 40 m: USB, not the band's LSB");
+    eq(go("N1SSTV", { mode_name: "USB" }), [[F(14230000), M("DATA-USB"), F(14230000), NAR, W(17)], ["sstv"]],
+       "P30 an SSTV spot on a Yaesu: DATA-USB at 3 kHz");
+    // an Icom: the repeat too (SSB/CW Synchronous Tuning moves it when on); SSTV in the voice mode on FIL1, 3 kHz
+    const ic = page({ radio: IC7300, answer: ANS });
+    await settle(ic);
+    const icGo = (c, st) => { ic.st = Object.assign({}, ic.st, st); ic.raw.length = 0; ic.click(ic.rows().find((r) => ic.text(r)[3] === c)); return ic.raw.slice(); };
+    eq(icGo("N8CALL", { mode_name: "CW", filter: 2 }), [F(14286000), M("USB"), F(14286000)],
+       "P30 an Icom from CW to SSB: the frequency again after the mode (FIL2 kept, 2.4 kHz)");
+    eq(icGo("N8CALL", { mode_name: "USB", filter: 2 }), [F(14286000)], "P30 ... already in USB: once");
+    eq(icGo("N1SSTV", { mode_name: "USB", filter: 2 }), [F(14230000), FIL(1)], "P30 an Icom's SSTV: FIL1, 3 kHz");
+    eq(icGo("JA2CALL", { mode_name: "USB", filter: 1, data: 0 }), [F(14074000), DATA(true)], "P30 an Icom's FT8 spot: the window's dial, DATA on");
+    // the calling rows and the memories tune the same way
+    const c = calling();
+    await settle(c);
+    c.st = Object.assign({}, c.st, { mode_name: "CW-USB" }); c.raw.length = 0; c.click(c.row("14.285.0"));
+    eq(c.raw, [F(14285000), M("USB"), F(14285000), NAR, W(14)], "P30 a calling row from CW: the frequency again after the mode");
+    const m = memory();
+    await settle(m);
+    m.st = Object.assign({}, m.st, { mode_name: "CW-USB" }); m.raw.length = 0; m.click(m.memRow("40 m net"));
+    eq(m.raw, [F(7200000), M("LSB"), F(7200000), NAR, W(0)], "P30 a memory from CW: the frequency again after the mode");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

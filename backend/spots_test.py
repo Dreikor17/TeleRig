@@ -107,7 +107,10 @@ C("modes normalised", [S.norm_mode(m) for m in ("ft8", "USB", "psk31", "", None,
 C("SSTV is a category of its own, not data (the page tunes it as SSB, by band)",
   [S.norm_mode(m) for m in ("SSTV", "sstv", " Sstv ")], ["SSTV", "SSTV", "SSTV"])
 C("every spot has the same keys", {tuple(sorted(x)) for x in r["spots"]},
-  {("call", "hz", "mode", "name", "note", "ref", "spotter", "src", "time")})
+  {("call", "hz", "mode", "name", "note", "ref", "spotter", "src", "sub", "time")})
+C("sub: the sideband a source names, and a data spot's own mode (the page tunes by them)",
+  [S.sub_mode(m) for m in ("USB", "lsb", "SSB", "FT8", "ft4", "RTTY", "PSK", "PSK31", "JS8", "DATA", "DIGI", "CW", "", None, "C4FM", "SSTV")],
+  ["USB", "LSB", "", "FT8", "FT4", "RTTY", "PSK31", "PSK31", "JS8", "", "", "", "", "", "", ""])
 
 # -- 2. order, age, sources asked for ------------------------------------------------------------------
 times = [x["time"] for x in r["spots"]]
