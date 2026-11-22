@@ -825,6 +825,8 @@
     "431", "432", "445", "446", "452", "454", "455", "462", "464", "465", "466", "503", "506", "516",
     "523", "526", "532", "546", "565", "606", "612", "624", "627", "631", "632", "654", "662", "664",
     "703", "712", "723", "731", "732", "734", "743", "754"];
+  // the same tables for the Spots panel's memories (spots.js: a memory keeps the tone, restored by index)
+  window.FmTones = Object.freeze({ ctcss: Object.freeze(CTCSS_TONES.slice()), dcs: Object.freeze(DCS_CODES.slice()) });
   const TONE_MODES = [[0, "OFF"], [2, "TONE"], [1, "TSQL"], [3, "DCS"], [4, "DCS-ENC"]]; // [wire value, label]
   const RPT_SHIFTS = [[0, "SIMPLEX"], [1, "+ SHIFT"], [2, "- SHIFT"]];
   const FM_MODES = ["FM", "FM-N", "DATA-FM", "C4FM"];

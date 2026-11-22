@@ -930,9 +930,21 @@ class Radio:
         self._write(self._b(0x0F, 0x10 + mode))
         self._emit_state()
 
+    def set_offset(self, hz: int) -> None:
+        """The duplex (repeater) offset: CI-V 0D, 3-byte BCD with a 100 Hz LSB (civ.offset_to_bcd), so
+        the value is rounded down to 100 Hz and kept within 0..99.9999 MHz (the radio takes the 10 MHz
+        digit on its 1.2 GHz band only). The poll's 0C read shows what the radio kept. Ignored on a
+        radio TeleRig does not set the offset of (capabilities.duplex_offset), like set_data."""
+        if not getattr(getattr(self.profile, "capabilities", None), "duplex_offset", False):
+            return
+        hz = max(0, min(99_999_900, int(hz) // 100 * 100))
+        self.state["offset"] = hz
+        self._write(self._b(0x0D, None, civ.offset_to_bcd(hz)))
+        self._emit_state()
+
     # -- Icom operating controls: FM tone, APF, break-in, filter shape --------
     def set_tone_mode(self, v: int) -> None:
-        # Icom has separate TONE (16 42) + TSQL (16 43) on/off, no DTCS over CI-V. Map the
+        # Icom has separate TONE (16 42) + TSQL (16 43) on/off; TeleRig drives no DTCS. Map the
         # shared 0-4 tone-mode: 0 OFF, 1 TSQL, 2 TONE (DCS 3/4 unsupported -> treated as OFF).
         v = int(v)
         tone = 1 if v == 2 else 0
@@ -951,7 +963,7 @@ class Radio:
         self._emit_state()
 
     def set_dcs_code(self, idx: int) -> None:
-        return                                                    # IC-7300MK2 CI-V has no DTCS
+        return          # no DTCS: the IC-7300MK2 has none, the IC-9700's (16 4B / 1B 02) is not driven
 
     def set_apf_lvl(self, v: int) -> None:
         v = max(0, min(3, int(v)))                                # 16 32: 0 OFF/1 WIDE/2 MID/3 NAR

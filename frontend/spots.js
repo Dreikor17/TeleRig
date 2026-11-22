@@ -26,9 +26,12 @@
  *            frequency is filled in and selected, so typing replaces it; SAVE again (or Enter) keeps
  *            it, Esc or the X drops it. A click on a memory brings all of that back, with the same
  *            actions a spot sends, each only when the radio is not there already; a memory may be
- *            anywhere the radio receives (freqentry.js's coverage), not only on its ham bands. Its X
- *            deletes it at the second tap (the first arms it for 4 s). Repeater shift and tone are not
- *            kept. Operators only: a viewer has no memories.
+ *            anywhere the radio receives (freqentry.js's coverage), not only on its ham bands. In FM a
+ *            memory also keeps the repeater shift and tone (DV: the shift), as far as the radio has them:
+ *            simplex / + / -, the offset where the radio can set it (the IC-9700), TONE / TSQL with the
+ *            CTCSS tone, DCS with its code (Yaesu); a click sets them every time, after the mode. Its X
+ *            deletes it at the second tap (the first arms it for 4 s). Operators only: a viewer has no
+ *            memories.
  *   In CALLING and MEMORY the two filters (mode, this band) apply, and the row the radio is on (within
  *   ON_HZ) is marked "Tuned", however it got there. The mark follows the radio in place: nothing is
  *   pinned or moved, and a row with the keyboard focus keeps it.
@@ -288,7 +291,8 @@
 
   // ---- the Memory view: this account's own frequencies for this radio (/api/me/memories) ----
   const MEM_API = "/api/me/memories", MEM_FRESH_MS = 30000, NAME_MAX = 32, ARM_MS = 4000;
-  // radios: {radio id: [{id, hz, mode, name, data?, filter?, narrow?, width?}]}; seq counts every change
+  // radios: {radio id: [{id, hz, mode, name, data?, filter?, narrow?, width?, shift?, offset?, tone?, ctcss?,
+  // dcs?}]}; seq counts every change
   // of it here; draft: the radio as it was when SAVE was pressed, waiting for its name
   const mem = { radios: {}, max: 100, seq: 0, at: 0, loaded: false, error: false, loading: false, busy: false, draft: null };
   function adopt(radio, j) {                                // a write's answer carries that radio's whole list
@@ -350,9 +354,89 @@
     if (!modes.includes(mode) && /-N$/.test(mode) && modes.includes(mode.slice(0, -2))) { mode = mode.slice(0, -2); narrow = true; }
     return { mode, narrow, known: modes.includes(mode) };
   }
-  // What a memory keeps of the radio as it is: the frequency, the mode by its own name, and the filter as
-  // the radio says it (an Icom's FIL slot and DATA switch; a Yaesu's NAR, and its WIDTH code in the modes
-  // that have one). null: nothing to keep (no radio connected, a mode that is not in the radio's list).
+  // ---- repeater shift and tone: kept by a memory in FM (the shift in DV too, for a D-STAR repeater) ----
+  // The memory says it the radio's way round: shift "simplex" | "+" | "-" (an Icom's duplex 0 / 2 DUP+ /
+  // 1 DUP-, a Yaesu's repeater shift 0 / 1 + / 2 -), the offset in Hz where the radio can set it (the
+  // IC-9700, CI-V 0D; other radios keep their own per band), tone "off" | "tone" | "tsql" | "dcs" |
+  // "dcs-enc" (the radio's tone mode 0..4: an Icom has the first three) with the CTCSS tone in tenths of
+  // Hz or the DCS code. The tables are app.js's (window.FmTones): the radio takes a tone by its index.
+  const FM_MODES = ["FM", "DATA-FM", "C4FM"], SHIFT_MODES = FM_MODES.concat(["DV"]);
+  const TONES = ["off", "tsql", "tone", "dcs", "dcs-enc"];          // index = the radio's tone_mode
+  const TONE_LABEL = { tone: "TONE", tsql: "TSQL", dcs: "DCS", "dcs-enc": "DCS-ENC" };
+  const OFFSET_MAX = 99999900, OFFSET_10M = 10000000, GHZ = 1000000000;
+  const canShift = (p) => { const c = p.capabilities || {}; return p.protocol === "yaesu" ? !!c.fm_tone : !!c.duplex; };
+  const canDcs = (p) => (p.capabilities || {}).fm_dcs !== false;
+  function fmTables() { const t = window.FmTones; return t && Array.isArray(t.ctcss) && Array.isArray(t.dcs) ? t : null; }
+  const ctcssAt = (i) => { const T = fmTables(), s = T && T.ctcss[i]; return typeof s === "string" ? Math.round(parseFloat(s) * 10) : 0; };
+  const dcsAt = (i) => { const T = fmTables(), s = T && T.dcs[i]; return typeof s === "string" ? parseInt(s, 10) : 0; };
+  const ctcssIdx = (v) => { const T = fmTables(); return T ? T.ctcss.findIndex((s) => Math.round(parseFloat(s) * 10) === v) : -1; };
+  const dcsIdx = (v) => { const T = fmTables(); return T ? T.dcs.findIndex((s) => parseInt(s, 10) === v) : -1; };
+  // the radio's shift and tone into the memory m (its mode already chosen); only what the radio reports
+  function captureRpt(p, st, m) {
+    const caps = p.capabilities || {}, yaesu = p.protocol === "yaesu";
+    const v = yaesu ? st.rpt_shift : st.duplex;
+    if (SHIFT_MODES.includes(m.mode) && canShift(p) && [0, 1, 2].includes(v)) {
+      const plus = yaesu ? v === 1 : v === 2;                // a Yaesu's 1 is +, an Icom's 2 is DUP+
+      m.shift = !v ? "simplex" : plus ? "+" : "-";
+      const off = Math.floor((st.offset || 0) / 100) * 100;
+      // the IC-9700 takes the 10 MHz digit on its 1.2 GHz band only (an offset it can't take is not kept)
+      if (m.shift !== "simplex" && caps.duplex_offset && off > 0 && off <= OFFSET_MAX && (off < OFFSET_10M || m.hz >= GHZ)) m.offset = off;
+    }
+    const tone = TONES[st.tone_mode];
+    if (!FM_MODES.includes(m.mode) || !caps.fm_tone || !tone || (/^dcs/.test(tone) && !canDcs(p))) return;
+    if (tone === "tone" || tone === "tsql") {
+      const hz = ctcssAt(st.tone_freq);
+      if (hz) { m.tone = tone; m.ctcss = hz; }
+    } else if (tone !== "off") {
+      const code = dcsAt(st.dcs_code);
+      if (code) { m.tone = tone; m.dcs = code; }
+    } else m.tone = "off";
+  }
+  // What brings a memory's shift and tone back, after its mode: sent every time (a band change brings that
+  // band's own shift and tone, so the radio's state before the click says nothing about after it). The
+  // offset before the shift, the tone or code before the tone mode (no squelch opening on the old tone).
+  function recallRpt(p, m) {
+    const caps = p.capabilities || {}, out = [];
+    if (["simplex", "+", "-"].includes(m.shift) && canShift(p)) {
+      if (typeof m.offset === "number" && caps.duplex_offset) out.push({ action: "offset", hz: m.offset });   // the server keeps one only with + or -
+      if (p.protocol === "yaesu") out.push({ action: "rpt_shift", value: m.shift === "+" ? 1 : m.shift === "-" ? 2 : 0 });
+      else out.push({ action: "duplex", mode: m.shift === "+" ? 2 : m.shift === "-" ? 1 : 0 });
+    }
+    const v = TONES.indexOf(m.tone);
+    if (v < 0 || !caps.fm_tone || (v > 2 && !canDcs(p))) return out;
+    if (m.tone === "tone" || m.tone === "tsql") {
+      const i = ctcssIdx(m.ctcss);
+      if (i < 0) return out;                                // a tone the table doesn't have: the tone is left as it is
+      out.push({ action: "tone_freq", idx: i });
+    } else if (m.tone !== "off") {
+      const i = dcsIdx(m.dcs);
+      if (i < 0) return out;
+      out.push({ action: "dcs_code", idx: i });
+    }
+    out.push({ action: "tone_mode", value: v });
+    return out;
+  }
+  // how a memory's row says it: [shift, tone] ("+600 kHz", "TSQL 100.0"; "" for simplex, no tone or
+  // nothing kept). The row leaves the tone's " Hz" off (it fits the narrowest panel beside "Tuned"); its
+  // title has it, and says simplex and no tone too
+  const MINUS = "−";
+  const offsetLabel = (hz) => (hz >= 1e6 ? +(hz / 1e6).toFixed(4) + " MHz" : +(hz / 1e3).toFixed(1) + " kHz");
+  function rptParts(m, hz) {
+    const shift = m.shift === "+" || m.shift === "-"
+      ? (m.shift === "+" ? "+" : MINUS) + (typeof m.offset === "number" ? offsetLabel(m.offset) : " shift") : "";
+    const tone = (m.tone === "tone" || m.tone === "tsql") && typeof m.ctcss === "number" ? TONE_LABEL[m.tone] + " " + (m.ctcss / 10).toFixed(1) + (hz ? " Hz" : "")
+      : (m.tone === "dcs" || m.tone === "dcs-enc") && typeof m.dcs === "number" ? TONE_LABEL[m.tone] + " " + String(m.dcs).padStart(3, "0") : "";
+    return [shift, tone];
+  }
+  function rptTitle(m) {
+    const [shift, tone] = rptParts(m, true);
+    return [shift || (m.shift === "simplex" ? "simplex" : ""), tone || (m.tone === "off" ? "no tone" : "")].filter(Boolean).map((t) => " · " + t).join("");
+  }
+
+  // What a memory keeps of the radio as it is: the frequency, the mode by its own name, the filter as the
+  // radio says it (an Icom's FIL slot and DATA switch; a Yaesu's NAR, and its WIDTH code in the modes that
+  // have one) and, in FM, the repeater shift and tone (captureRpt). null: nothing to keep (no radio
+  // connected, a mode that is not in the radio's list).
   function capture(p, st) {
     if (!p || !st.connected || !(st.freq > 0)) return null;
     const cur = plainMode(p, st), caps = p.capabilities || {}, PB = window.Passband;
@@ -366,6 +450,7 @@
       if (caps.tab_rx !== false && [1, 2, 3].includes(st.filter)) m.filter = st.filter;
       if (caps.data_mode) m.data = (st.data || 0) > 0;
     }
+    captureRpt(p, st, m);
     return m;
   }
   // What brings the radio back to a memory after set_freq, each only when the radio is not there already.
@@ -385,7 +470,7 @@
       if (typeof m.filter === "number" && (moved || st.filter !== m.filter)) out.push({ action: "set_filter", filter: m.filter });
       if (caps.data_mode && want && (moved || !on)) out.push({ action: "data_mode", on: true });
     }
-    return out;
+    return out.concat(recallRpt(p, m));
   }
   function tuneMem(radio, m) {
     const c = ctl(), p = profile();
@@ -447,12 +532,15 @@
         const ok = covers(p, m.hz), radio = p.id;
         const wrap = document.createElement("div"), row = document.createElement(ok ? "button" : "div");
         const del = document.createElement("button"), src = cell("sp-src", "");
-        const title = (on) => (on ? "Tuned to " : ok ? "Tune to " : "Not on this radio: ") + m.name + " " + fmtFreq(m.hz) + " " + memMode(m) + memFilter(p, m);
+        const rpt = rptParts(m).filter(Boolean).join(" · ");       // a repeater's shift and tone: a second line
+        const title = (on) => (on ? "Tuned to " : ok ? "Tune to " : "Not on this radio: ") + m.name + " " + fmtFreq(m.hz) + " " + memMode(m) + memFilter(p, m) + rptTitle(m);
         wrap.className = "spot-mem";
-        row.className = "spot spot-call" + (ok ? "" : " off");
+        row.className = "spot spot-call" + (rpt ? " rpt" : "") + (ok ? "" : " off");
         if (ok) { row.type = "button"; row.addEventListener("click", () => tuneMem(radio, m)); }
         row.title = title(false);
-        row.append(cell("sp-freq", fmtFreq(m.hz)), cell("sp-mode", memMode(m)), cell("sp-call", m.name), src);
+        row.append(cell("sp-freq", fmtFreq(m.hz)), cell("sp-mode", memMode(m)), cell("sp-call", m.name));
+        if (rpt) row.append(cell("sp-ref", rpt));
+        row.append(src);
         del.type = "button";
         del.className = "mem-del";
         setDel(del, m.name, false);

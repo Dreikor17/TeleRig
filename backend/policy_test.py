@@ -40,15 +40,21 @@ def raises(fn, exc):
 SRC = (Path(__file__).resolve().parent / "server.py").read_text(encoding="utf-8")
 lits = policy.action_literals(SRC)
 
-C("T30 server.py has >= 58 action literals (regex still matches the dispatcher)", len(lits) >= 58, True)
+C("T30 server.py has >= 59 action literals (regex still matches the dispatcher)", len(lits) >= 59, True)
 C("T30 no completeness errors", policy.completeness_errors(SRC), [])
 C("T30 every literal has a row or is REMOVED", sorted(lits - set(policy.WS_POLICY) - policy.REMOVED), [])
 C("T30 host_rx/host_tx branches deleted from server.py", sorted(lits & policy.REMOVED), [])
 C("T30 REMOVED = host_rx, host_tx", sorted(policy.REMOVED), ["host_rx", "host_tx"])
 C("T30 NEW_ACTIONS", sorted(policy.NEW_ACTIONS), ["bridge_tx", "mic", "rx_audio", "tx_hb", "tx_stop"])
-C("T30 rows == the dispatcher's 58 literals + the 5 new actions",
+C("T30 rows == the dispatcher's 59 literals + the 5 new actions",
   sorted(set(policy.WS_POLICY) ^ (lits | policy.NEW_ACTIONS)), [])
-C("T30 63 rows; 65 actions covered with REMOVED", (len(policy.WS_POLICY), len(set(policy.WS_POLICY) | policy.REMOVED)), (63, 65))
+C("T30 64 rows; 66 actions covered with REMOVED", (len(policy.WS_POLICY), len(set(policy.WS_POLICY) | policy.REMOVED)), (64, 66))
+_hc = SRC[SRC.index("\ndef _handle_cmd("):]
+_hc = _hc[:_hc.index("\ndef ", 1)]                       # the dispatcher's body, up to the next function
+C("RADIO_ACTIONS: every action _handle_cmd handles, in its order", policy.RADIO_ACTIONS, tuple(policy._LITERAL_RE.findall(_hc)))
+C("... 59 of them, none twice, each with a row", (len(policy.RADIO_ACTIONS), len(set(policy.RADIO_ACTIONS)),
+                                                   [a for a in policy.RADIO_ACTIONS if a not in policy.WS_POLICY]), (59, 59, []))
+C("... the offset right after duplex", policy.RADIO_ACTIONS[policy.RADIO_ACTIONS.index("duplex") + 1], "offset")
 C("T30 every row is real: a validator, no placeholder",
   [a for a, r in policy.WS_POLICY.items() if r.placeholder or r.validate is None], [])
 C("T30 every role is known", [a for a, r in policy.WS_POLICY.items() if r.min_role not in policy.ROLES], [])
@@ -259,6 +265,31 @@ C("mic on: operator, connected, ptt-capable -> new", ev(OP, {"action": "mic", "o
 C("mic on: radio not connected -> not_connected", ev(OP, {"action": "mic", "on": True}, ctx(radio=FakeRadio(connected=False))).reason, "not_connected")
 C("mic on: IC-728 -> unsupported", ev(OP, {"action": "mic", "on": True}, ctx(radio=FakeRadio("ic728"))).reason, "unsupported")
 C("mic is NOT a TX claim (F12): non-owner mic on while OP1 owns -> new", ev(OP2, {"action": "mic", "on": True}, owned).kind, "new")
+
+# ---- offset: the duplex offset (CI-V 0D), a setter only some radios have ------------------------------------
+OFS = {"action": "offset", "hz": 600000}
+C("offset row: operator, X lock, a radio command, not continuous, not rate-exempt",
+  (R["offset"].min_role, R["offset"].lock, R["offset"].radio, R["offset"].continuous, R["offset"].rate_exempt),
+  ("operator", "X", True, False, False))
+C("setters gated on a capability (else unsupported)", policy.NEEDS_CAP, {"data_mode": "data_mode", "offset": "duplex_offset"})
+v = ev(OP, {**OFS, "evil": 1})
+C("offset on the IC-9700 (duplex_offset) -> plain, canonical", (v.kind, v.cmd), ("plain", {"action": "offset", "hz": 600000}))
+C("offset: 0 and 99.9999 MHz are the ends", [ev(OP, {"action": "offset", "hz": h}).kind for h in (0, 99_999_900)], ["plain"] * 2)
+for bad in (-1, 99_999_901, 100_000_000, True, 600000.0, "600000", None, [600000]):
+    C(f"offset hz={bad!r} -> invalid", ev(OP, {"action": "offset", "hz": bad}).reason, "invalid")
+C("offset without hz -> invalid", ev(OP, {"action": "offset"}).reason, "invalid")
+C("offset: a viewer -> denied role", ev(V, OFS).reason, "role")
+for pid in ("ic7300mk2", "ft991a", "ft891", "ic728"):
+    C(f"offset on the {pid} (no duplex_offset) -> unsupported", ev(OP, OFS, ctx(radio=FakeRadio(pid))).reason, "unsupported")
+C("offset: role and types come first (a viewer, a bad hz on the FT-991A)",
+  (ev(V, OFS, ctx(radio=FakeRadio("ft991a"))).reason, ev(OP, {"action": "offset", "hz": -1}, ctx(radio=FakeRadio("ft991a"))).reason),
+  ("role", "invalid"))
+C("offset: X lock (another owner -> busy; the owner, an admin -> plain)", [ev(c, OFS, owned).kind for c in (OP2, OP, ADM)],
+  ["busy", "plain", "plain"])
+C("offset during a connect transition -> connecting", ev(OP, OFS, ctx(transition=True)).reason, "connecting")
+C("data_mode keeps its own gate: the FT-991A -> unsupported, the IC-9700 -> plain",
+  (ev(OP, {"action": "data_mode", "on": True}, ctx(radio=FakeRadio("ft991a"))).reason, ev(OP, {"action": "data_mode", "on": True}).kind),
+  ("unsupported", "plain"))
 
 # ---- menu_write (F8, AR-13, AR-14; T23 / T71 in-process) --------------------------------------------------
 ic = ctx(radio=FakeRadio("ic9700"))

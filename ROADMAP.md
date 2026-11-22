@@ -100,8 +100,7 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   and DATA, a Yaesu's NAR and WIDTH); the X beside it deletes it at the second tap. A memory can be
   anywhere the radio receives (WWV, an airband channel), not only on its ham bands. They are TeleRig's,
   not the radio's own memory channels: the server keeps them per account and per radio
-  (`/api/me/memories`, up to 100 a radio), so every device you sign in on has them. Repeater shift and
-  tone are not kept. Operators only.
+  (`/api/me/memories`, up to 100 a radio), so every device you sign in on has them. Operators only.
 - **The Modem window, easier to get going.** Every mode decodes the radio's audio, so with RX off the
   window now says so under its mode keys, with an **RX on** key right there (it presses the Audio
   panel's RX key; no more "turn on RX in the Audio panel" in each mode). CW, FT8 and SSTV have a **Tune
@@ -133,6 +132,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   over the scope (14.05|780 MHz in CW). The line now starts under the label, and the label stands on a
   small plate of the scope's own colour, so neither the line, the passband's shading nor a strong signal
   right on the marker covers a digit. With the marker at an edge of the scope the label stays whole.
+- **Memories keep a repeater's shift and tone.** A memory saved in FM keeps the repeater shift (simplex,
+  + or −) and the tone (off, TONE or TSQL with its CTCSS tone, and on the Yaesus DCS or DCS-ENC with its
+  code); one saved in DV (D-STAR) keeps the shift. The IC-9700 keeps the offset too (it can be set over
+  CI-V); the other radios use their own offset for the band. A click sets them every time, after the
+  mode, so a simplex memory also turns a repeater's shift and tone off; memories saved before keep
+  leaving them as they are. The row shows the shift and the tone on a second line (−600 kHz · TSQL
+  100.0 Hz). The IC-9700 now has the FM tone controls in its Controls panel too (TONE / TSQL and the
+  tone; TeleRig drives no DTCS on it).
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
@@ -442,7 +449,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   VHF: ft8_lib skips them too), RTTY's AFC, decoding a saved recording, FT4.
 - **More overlay tools** over the waterfall (the framework is in place) — e.g. a tuning/zero-beat aid,
   memory keyer.
-- **Tone / DTCS** (CTCSS encode/decode) + an editable duplex offset (M3.5).
+- **Tone / DTCS** — DTCS on the Icoms (the IC-9700 has it over CI-V: 16 4B, 1B 02) + an editable
+  duplex offset in the Controls panel (M3.5; a memory already sets the IC-9700's).
 - **Memory channels**, band-stacking registers, scan control.
 - **CW** keyer/memories; **DV / D-STAR** (DR, call signs, GPS);
   **satellite** dual-scope.

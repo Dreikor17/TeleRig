@@ -2,7 +2,9 @@
 
 One memories file per user, a list per radio. Every field of an item is validated and nothing is
 clamped: a shape, type or range error names its field, the frequency is checked against the radio's
-own receive coverage and the mode against its own modes (the real profiles). Ids start at 1 and are
+own receive coverage and the mode against its own modes (the real profiles), and the repeater
+settings (shift, offset, tone, CTCSS tone, DCS code) against what the radio can set and the modes
+they go with; an item without them is what it always was. Ids start at 1 and are
 never used twice in a file; `rev` counts writes; a radio holds at most MAX_PER_RADIO; deleting an id
 that is not there writes nothing; a read never changes the file; files are memories/<hex>.json; an
 unreadable file is reported and replaced by the next save, never locking anything.
@@ -42,6 +44,7 @@ r = subprocess.run([sys.executable, "-c", "import backend.memory_store"], cwd=st
 after = sorted(p.name for p in Path(cfg).parent.iterdir()) if Path(cfg).parent.is_dir() else []
 C("I12: import does no file I/O", (r.returncode, before == after), (0, True))
 
+from backend import civ  # noqa: E402
 from backend import memory_store as M  # noqa: E402
 from backend.memory_store import MemoryFull, MemoryInvalid  # noqa: E402
 from backend.profiles import PROFILES  # noqa: E402
@@ -80,6 +83,9 @@ V = M.validate_item
 ITEM = {"hz": 146520000, "mode": "FM", "name": "Simplex"}
 YAESU = {"hz": 146520000, "mode": "FM", "name": "Simplex", "narrow": False, "width": 0}     # NAR, WIDTH
 ICOM = {"hz": 145500000, "mode": "FM", "name": "Calling", "data": False, "filter": 1}       # DATA, FIL
+# repeater memories: the IC-9700's + shift, 600 kHz offset, TSQL 100.0 Hz; the FT-991A's - shift and DCS 023
+RPT_ICOM = {"hz": 147240000, "mode": "FM", "name": "Club", "shift": "+", "offset": 600000, "tone": "tsql", "ctcss": 1000}
+RPT_YAESU = {"hz": 146940000, "mode": "FM", "name": "Hilltop", "shift": "-", "tone": "dcs", "dcs": 23}
 NONE = ({"rev": 0, "radios": {}}, False)
 UNREADABLE = ({"rev": 0, "radios": {}}, True)
 
@@ -92,6 +98,15 @@ C("the optional fields ride along (a Yaesu's NAR and WIDTH, an Icom's DATA and F
 C("one stored order, whatever the request's",
   list(V("ic9700", {"width": 5, "name": "N", "filter": 2, "mode": "USB", "narrow": True, "hz": 144200000, "data": True})),
   ["hz", "mode", "name", "data", "filter", "narrow", "width"])
+C("... the repeater settings after those, in their own order (shift, offset, tone, ctcss, dcs)",
+  [list(V("ic9700", {"ctcss": 885, "tone": "tone", "offset": 600000, "shift": "-", "width": 5, "name": "N", "filter": 2,
+                     "mode": "FM", "narrow": True, "hz": 146940000, "data": True})),
+   list(V("ft991a", {"dcs": 754, "tone": "dcs-enc", "shift": "+", "name": "N", "mode": "C4FM", "hz": 145000000}))],
+  [["hz", "mode", "name", "data", "filter", "narrow", "width", "shift", "offset", "tone", "ctcss"],
+   ["hz", "mode", "name", "shift", "tone", "dcs"]])
+C("an item without repeater settings is what it always was, on every radio (old files read the same)",
+  [V(rid, {"hz": p.default_freq, "mode": p.modes[0], "name": "x"}) for rid, p in PROFILES.items()],
+  [{"hz": p.default_freq, "mode": p.modes[0], "name": "x"} for p in PROFILES.values()])
 C("the name is stored stripped", V("ft991a", {**ITEM, "name": "  Simplex \n"})["name"], "Simplex")
 C("the result is a new dict (the caller's is not kept)", V("ft991a", ITEM) is ITEM, False)
 fine = [{**ITEM, "filter": 1}, {**ITEM, "filter": 3}, {**ITEM, "width": 0}, {**ITEM, "width": 99}, {**ITEM, "data": True},
@@ -131,6 +146,101 @@ C("a mode of another radio is refused (DV is the IC-9700's, C4FM the FT-991A's)"
   ["item.mode", "item.mode", None, None])
 C("a mode the radio reports but has no key for (a Yaesu's FM-N) is not in its list", field_of(V, "ft991a", {**ITEM, "mode": "FM-N"}),
   "item.mode")
+
+
+# ---- the repeater settings: only what the radio can set, in a mode that has them ---------------------------
+def rpt(radio, hz, mode="FM", **settings):
+    """The field a repeater memory is refused for, None when it is kept."""
+    return field_of(V, radio, {"hz": hz, "mode": mode, "name": "x", **settings})
+
+
+FM_AT = {"ic9700": 147_240_000, "ic7300mk2": 29_620_000, "ft991a": 146_940_000, "ft891": 29_620_000, "ic728": 29_620_000}
+C("a repeater memory is kept as is (IC-9700: + shift, 600 kHz, TSQL 100.0 Hz; FT-991A: - shift, DCS 023)",
+  (V("ic9700", RPT_ICOM), V("ft991a", RPT_YAESU)), (RPT_ICOM, RPT_YAESU))
+C("what each radio's memory keeps in FM: a + shift, a - shift with its offset, TSQL with its tone, DCS with its code",
+  {rid: [rpt(rid, hz, shift="+"), rpt(rid, hz, shift="-", offset=600_000), rpt(rid, hz, tone="tsql", ctcss=1000),
+         rpt(rid, hz, tone="dcs", dcs=23)] for rid, hz in FM_AT.items()},
+  {"ic9700": [None, None, None, "item.tone"],                     # shift, offset (CI-V 0D), TONE/TSQL; no DCS
+   "ic7300mk2": [None, "item.offset", None, "item.tone"],         # shift (duplex), TONE/TSQL; no offset, no DCS
+   "ft991a": [None, "item.offset", None, None],                   # shift (the FM panel's OS), every tone; the
+   "ft891": [None, "item.offset", None, None],                    # offset is a menu item on a Yaesu
+   "ic728": ["item.shift", "item.shift", "item.tone", "item.tone"]})
+C("the IC-728 keeps none of them (each one alone)",
+  [rpt("ic728", 29_620_000, **s) for s in ({"shift": "simplex"}, {"offset": 600_000}, {"tone": "off"}, {"ctcss": 885}, {"dcs": 23})],
+  ["item.shift", "item.offset", "item.tone", "item.ctcss", "item.dcs"])
+C("... the refusals say why, naming the radio",
+  [message_of(V, rid, {"hz": FM_AT[rid], "mode": "FM", "name": "x", **s}) for rid, s in (
+      ("ic728", {"shift": "+"}), ("ic7300mk2", {"shift": "+", "offset": 600_000}), ("ft891", {"shift": "-", "offset": 600_000}),
+      ("ic728", {"tone": "off"}), ("ic9700", {"tone": "dcs", "dcs": 23}))],
+  ["A repeater shift can't be saved for the IC-728.", "An offset can't be saved for the IC-7300MK2.",
+   "An offset can't be saved for the FT-891.", "A tone setting can't be saved for the IC-728.", "DCS can't be saved for the IC-9700."])
+C("simplex, + and -: on every radio that has a shift",
+  [rpt(rid, FM_AT[rid], shift=s) for rid in ("ic9700", "ic7300mk2", "ft991a", "ft891") for s in M.SHIFTS], [None] * 12)
+FIVE = [{"tone": "off"}, {"tone": "tone", "ctcss": 670}, {"tone": "tsql", "ctcss": 2541}, {"tone": "dcs", "dcs": 23},
+        {"tone": "dcs-enc", "dcs": 754}]
+C("FT-991A and FT-891: all five tone settings (off, TONE, TSQL, DCS, DCS-ENC)",
+  [rpt(rid, FM_AT[rid], **t) for rid in ("ft991a", "ft891") for t in FIVE], [None] * 10)
+C("IC-9700 and IC-7300MK2: off, TONE and TSQL; DCS and DCS-ENC refused (TeleRig drives no DTCS)",
+  [rpt(rid, FM_AT[rid], **t) for rid in ("ic9700", "ic7300mk2") for t in FIVE], [None, None, None, "item.tone", "item.tone"] * 2)
+C("every standard CTCSS tone, in tenths of a hertz (67.0 Hz = 670 ... 254.1 Hz = 2541)",
+  ([t for t in (round(x * 10) for x in civ.CTCSS_TONES) if rpt("ft991a", 146_940_000, tone="tone", ctcss=t)], sorted(M.CTCSS)[:3],
+   len(M.CTCSS)), ([], [670, 693, 719], 50))
+C("every standard DCS code, its three digits read as a decimal number (code 023 = 23 ... 754 = 754)",
+  ([c for c in civ.DCS_CODES if rpt("ft991a", 146_940_000, tone="dcs", dcs=int(c))], sorted(M.DCS)[:3], len(M.DCS)),
+  ([], [23, 25, 26], 104))
+
+# the modes: a shift with FM, DATA-FM, C4FM and DV (the radio's own of them), a tone setting with FM, DATA-FM and C4FM
+C("a shift in the FM modes and DV: IC-9700 FM and DV, FT-991A FM, DATA-FM and C4FM",
+  [rpt("ic9700", 145_000_000, m, shift="-") for m in ("FM", "DV")] + [rpt("ft991a", 145_000_000, m, shift="+") for m in ("FM", "DATA-FM", "C4FM")],
+  [None] * 5)
+C("... and in no other mode: no shift in USB, AM, CW, DATA-USB",
+  [rpt("ic9700", 144_200_000, "USB", shift="+"), rpt("ft991a", 145_000_000, "AM", shift="-"), rpt("ic7300mk2", 29_620_000, "CW", shift="+"),
+   rpt("ft991a", 145_000_000, "DATA-USB", shift="simplex")], ["item.shift"] * 4)
+C("... saying which mode", message_of(V, "ic9700", {"hz": 144_200_000, "mode": "USB", "name": "x", "shift": "+"}),
+  "There is no repeater shift in USB.")
+C("a shift and its offset in DV on the IC-9700, but no tone setting there",
+  [rpt("ic9700", 145_000_000, "DV", shift="-", offset=600_000), rpt("ic9700", 145_000_000, "DV", tone="off"),
+   rpt("ic9700", 145_000_000, "DV", shift="-", tone="tone", ctcss=885)], [None, "item.tone", "item.tone"])
+C("... saying which mode", message_of(V, "ic9700", {"hz": 145_000_000, "mode": "DV", "name": "x", "tone": "off"}),
+  "There is no tone setting in DV.")
+C("a tone setting in FM, DATA-FM and C4FM (FT-991A), in no other mode",
+  [rpt("ft991a", 145_000_000, m, tone="tsql", ctcss=885) for m in ("FM", "DATA-FM", "C4FM", "USB", "AM", "DATA-USB", "CW-USB")],
+  [None, None, None, "item.tone", "item.tone", "item.tone", "item.tone"])
+
+# a CTCSS tone with TONE and TSQL only, and needed there; a DCS code with DCS and DCS-ENC only, and needed there
+tones = [
+    ({"tone": "tone"}, "item.ctcss"), ({"tone": "tsql"}, "item.ctcss"), ({"tone": "dcs"}, "item.dcs"), ({"tone": "dcs-enc"}, "item.dcs"),
+    ({"tone": "off", "ctcss": 885}, "item.ctcss"), ({"tone": "off", "dcs": 23}, "item.dcs"),
+    ({"ctcss": 885}, "item.ctcss"), ({"dcs": 23}, "item.dcs"),                          # no tone setting at all
+    ({"tone": "tone", "ctcss": 885, "dcs": 23}, "item.dcs"), ({"tone": "dcs", "dcs": 23, "ctcss": 885}, "item.ctcss"),
+    ({"tone": "tsql", "dcs": 23}, "item.ctcss"),                                        # its own one missing: named first
+    ({"tone": "dcs-enc", "ctcss": 885}, "item.ctcss"),
+]
+C("a CTCSS tone is needed by TONE and TSQL and refused with anything else; a DCS code likewise for DCS and DCS-ENC",
+  [rpt("ft991a", 146_940_000, **t) for t, _ in tones], [f for _, f in tones])
+C("... the refusals say which", [message_of(V, "ft991a", {**ITEM, **t}) for t in ({"tone": "tsql"}, {"tone": "dcs-enc"}, {"ctcss": 885},
+                                                                                  {"tone": "tone", "ctcss": 885, "dcs": 23})],
+  ["TSQL needs a CTCSS tone.", "DCS-ENC needs a DCS code.", "A CTCSS tone goes with tone or tsql only.",
+   "A DCS code goes with dcs or dcs-enc only."])
+
+# the offset: with a + or - shift; 100 Hz to 99.9999 MHz in 100 Hz steps; 10 MHz and up on the 1200 MHz band only
+C("an offset needs a + or - shift (no shift, simplex: refused); a shift needs no offset (the radio keeps its own)",
+  [rpt("ic9700", 147_240_000, offset=600_000), rpt("ic9700", 147_240_000, shift="simplex", offset=600_000),
+   rpt("ic9700", 147_240_000, shift="+", offset=600_000), rpt("ic9700", 147_240_000, shift="-", offset=600_000),
+   rpt("ic9700", 147_240_000, shift="+")], ["item.offset", "item.offset", None, None, None])
+C("... saying so", message_of(V, "ic9700", {**ITEM, "shift": "simplex", "offset": 600_000}), "An offset needs a + or - shift.")
+C("the offset's bounds on the 1200 MHz band: 100 Hz, 600 kHz, 9.9999 MHz, 10 MHz, 12 MHz, 99.9999 MHz",
+  [rpt("ic9700", 1_282_000_000, shift="-", offset=o) for o in (100, 600_000, 9_999_900, 10_000_000, 12_000_000, 99_999_900)], [None] * 6)
+C("10 MHz and up only from 1 GHz (the IC-9700 takes that digit on its 1200 MHz band only)",
+  [rpt("ic9700", hz, shift="-", offset=o) for hz, o in ((145_000_000, 9_999_900), (145_000_000, 10_000_000), (440_000_000, 12_000_000),
+                                                         (440_000_000, 99_999_900), (1_240_000_000, 10_000_000))],
+  [None, "item.offset", "item.offset", "item.offset", None])
+C("... saying so", message_of(V, "ic9700", {**ITEM, "shift": "-", "offset": 10_000_000}),
+  "An offset of 10 MHz or more is for the 1200 MHz band only.")
+C("past 99.9999 MHz there is no offset, also on the 1200 MHz band (CI-V 0D has no 100 MHz digit)",
+  [rpt("ic9700", 1_282_000_000, shift="-", offset=o) for o in (100_000_000, 120_000_000)], ["item.offset", "item.offset"])
+C("... saying so", message_of(V, "ic9700", {**ITEM, "hz": 1_282_000_000, "shift": "-", "offset": 100_000_000}),
+  "The offset must be 100 Hz to 99.9999 MHz, in steps of 100 Hz.")
 
 # ---- shape, type and range errors -> MemoryInvalid(field) ---------------------------------------------
 bad = [
@@ -191,6 +301,47 @@ bad = [
     (("ft991a", {**ITEM, "width": False}), "item.width"),         # a bool is not an int
     (("ft991a", {**ITEM, "width": 5.5}), "item.width"),
     (("ft991a", {**ITEM, "width": "5"}), "item.width"),
+    # the repeater settings: types, unknown strings, values that are not standard ones (what each radio can set: above)
+    (("ft991a", {**ITEM, "shift": True}), "item.shift"),          # a bool is not text
+    (("ft991a", {**ITEM, "shift": None}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": 1}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": ["+"]}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": "plus"}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": ""}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": "SIMPLEX"}), "item.shift"),
+    (("ft991a", {**ITEM, "shift": "+600"}), "item.shift"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": True}), "item.offset"),    # a bool is not an int
+    (("ic9700", {**ITEM, "shift": "+", "offset": 600000.0}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": "600000"}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": None}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": 0}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": 99}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": 150}), "item.offset"),     # not in steps of 100 Hz
+    (("ic9700", {**ITEM, "shift": "+", "offset": 600_050}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": 100_000_000}), "item.offset"),
+    (("ic9700", {**ITEM, "shift": "+", "offset": -600_000}), "item.offset"),
+    (("ft991a", {**ITEM, "tone": True}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": None}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": "TSQL"}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": "ctcss"}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": "dtcs"}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": ""}), "item.tone"),
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": True}), "item.ctcss"),   # a bool is not an int
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": 885.0}), "item.ctcss"),
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": "885"}), "item.ctcss"),
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": None}), "item.ctcss"),
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": 88.5}), "item.ctcss"),   # tenths of a hertz, not hertz
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": 886}), "item.ctcss"),    # 88.6 Hz: not a standard tone
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": 0}), "item.ctcss"),
+    (("ft991a", {**ITEM, "tone": "tsql", "ctcss": 2542}), "item.ctcss"),
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": True}), "item.dcs"),        # a bool is not an int
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": "023"}), "item.dcs"),
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": 23.0}), "item.dcs"),
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": None}), "item.dcs"),
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": 19}), "item.dcs"),          # 023 read as octal: the digits count as decimal
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": 24}), "item.dcs"),          # 024: no such code
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": 0}), "item.dcs"),
+    (("ft991a", {**ITEM, "tone": "dcs", "dcs": 755}), "item.dcs"),
 ]
 C("every shape, type and range error names its field", [field_of(V, *a) for a, _ in bad], [f for _, f in bad])
 msgs = [message_of(V, *a) for a, _ in bad]
@@ -205,7 +356,7 @@ C("... and names the radio where that helps", (message_of(V, "ic7300mk2", ITEM),
 C("file name = hex of the canonical name (ADMIN, W1AW/P)",
   (M.path_for("ADMIN").name, M.path_for("W1AW/P").name), ("41444d494e.json", "573141572f50.json"))
 C("path is <config>/memories", M.path_for("OP1").parent, DIR)
-for u in ("OP1", "OP2", "OP3", "FULL", "W1AW/P"):
+for u in ("OP1", "OP2", "OP3", "FULL", "W1AW/P", "RPT"):
     M.delete_file(u)
 nf = M.path_for("NOFILE")
 C("no memories yet -> rev 0, no radios, no error", M.get("NOFILE"), NONE)
@@ -245,6 +396,19 @@ d2 = M.delete("OP1", "ic9700", 3)
 C("the last memory of a radio: an empty list, and the radio leaves the file and the answer",
   (d2, sorted(stored("OP1")["radios"]), sorted(M.get("OP1")[0]["radios"])), ({"rev": 6, "items": []}, ["ft991a"], ["ft991a"]))
 C("... the id counter stays", (stored("OP1")["next"], M.add("OP1", "ic9700", ICOM)["id"]), (5, 5))
+
+# ---- a repeater memory round trip: add() / get() / the file ---------------------------------------------
+C("add: an IC-9700 repeater memory, as given", M.add("RPT", "ic9700", RPT_ICOM), {"rev": 1, "id": 1, "items": [{"id": 1, **RPT_ICOM}]})
+C("add: an FT-991A one, as given", M.add("RPT", "ft991a", RPT_YAESU), {"rev": 2, "id": 2, "items": [{"id": 2, **RPT_YAESU}]})
+C("get: both back, as they were saved",
+  M.get("RPT"), ({"rev": 2, "radios": {"ic9700": [{"id": 1, **RPT_ICOM}], "ft991a": [{"id": 2, **RPT_YAESU}]}}, False))
+d = stored("RPT")["radios"]
+C("the file keeps them in the stored order", (list(d["ic9700"][0]), list(d["ft991a"][0])),
+  (["id", "hz", "mode", "name", "shift", "offset", "tone", "ctcss"], ["id", "hz", "mode", "name", "shift", "tone", "dcs"]))
+wr = written(M.path_for("RPT"))
+C("a repeater memory the radio cannot keep is not added, and nothing is written",
+  (field_of(M.add, "RPT", "ic9700", {**RPT_ICOM, "tone": "dcs", "dcs": 23}), field_of(M.add, "RPT", "ft991a", {**RPT_YAESU, "offset": 600000}),
+   written(M.path_for("RPT")) == wr), ("item.tone", "item.offset", True))
 
 # ---- one file per user ------------------------------------------------------------------------------
 op2 = M.path_for("OP2")
@@ -287,7 +451,8 @@ d["radios"]["ft991a"] += [
     {"id": True, "hz": 146520000, "mode": "FM", "name": "a bool for an id"},
     {"id": 0, "hz": 146520000, "mode": "FM", "name": "ids start at 1"},
     {"hz": 146520000, "mode": "FM", "name": "no id"},
-    {"id": 6, "hz": 146520000, "mode": "FM", "name": "an extra key", "tone": 100},
+    {"id": 6, "hz": 146520000, "mode": "FM", "name": "an extra key", "squelch": 3},
+    {"id": 8, "hz": 146520000, "mode": "FM", "name": "an offset the FT-991A can't set", "shift": "-", "offset": 600000},
     "not an object",
     {"id": 1, "hz": 145000000, "mode": "FM", "name": "the id 1 a second time"},
     {"id": 9, "hz": 145000000, "mode": "FM", "name": "  fine  ", "narrow": True},
@@ -307,10 +472,10 @@ C("a file without `next`: the new id is past every id in the file",
 d = stored("OP3")
 C("a save keeps what a read leaves out (the other radio, the items that do not validate)",
   (len(d["radios"]["ft991a"]), d["radios"]["bandsonly"], d["radios"]["ic9700"]),
-  (12, [{"id": 2, "hz": 7_100_000, "mode": "USB", "name": "40 m"}], "not a list"))
+  (13, [{"id": 2, "hz": 7_100_000, "mode": "USB", "name": "40 m"}], "not a list"))
 x = M.delete("OP3", "ft991a", 3)
 C("an item that is left out can still be deleted by its id",
-  (x["rev"], [i["id"] for i in x["items"]], len(stored("OP3")["radios"]["ft991a"])), (4, [1, 9, 10], 11))
+  (x["rev"], [i["id"] for i in x["items"]], len(stored("OP3")["radios"]["ft991a"])), (4, [1, 9, 10], 12))
 C("a radio whose list is not a list starts one at its next save", M.add("OP3", "ic9700", ICOM)["items"], [{"id": 11, **ICOM}])
 p3.write_text(json.dumps({"radios": {"ft991a": [{"id": n, **ITEM} for n in (1, 2, 3)]}}))     # by hand: no v, rev or next
 M._reset_for_tests()
@@ -348,7 +513,7 @@ C("delete_file of a missing file -> False", M.delete_file("W1AW/P"), False)
 C("after delete: no memories, and a user of that name starts again at id 1",
   (M.get("W1AW/P"), M.add("W1AW/P", "ft991a", ITEM)["id"]), (NONE, 1))
 C("delete_file leaves the other users' files", (M.delete_file("OP2"), p1.exists(), p3.exists()), (True, True, True))
-for u in ("OP1", "OP3", "FULL", "W1AW/P"):
+for u in ("OP1", "OP3", "FULL", "W1AW/P", "RPT"):
     M.delete_file(u)
 
 print("\nALL PASS" if _ok else "\nSOME FAILED")

@@ -438,10 +438,11 @@ async def api_me_memories_get(request):
 
 @requires("operator")
 async def api_me_memories_post(request):
-    """POST {radio, item: {hz, mode, name, data?, filter?, narrow?, width?}} -> {ok, rev, id, items}:
-    one more memory for that radio; `items` is the radio's whole list afterwards. Every shape, type
-    and range error -> 400 {error:"invalid", field} (nothing is clamped); a radio that already holds
-    memory_store.MAX_PER_RADIO -> 409 {error:"full"}. Body > 2 KB -> 413."""
+    """POST {radio, item: {hz, mode, name, data?, filter?, narrow?, width?, shift?, offset?, tone?,
+    ctcss?, dcs?}} -> {ok, rev, id, items}: one more memory for that radio (its repeater settings only
+    where the radio can set them, memory_store.py); `items` is the radio's whole list afterwards. Every
+    shape, type and range error -> 400 {error:"invalid", field} (nothing is clamped); a radio that
+    already holds memory_store.MAX_PER_RADIO -> 409 {error:"full"}. Body > 2 KB -> 413."""
     p = request.state.principal
     body = await read_json(request, max_bytes=memory_store.BODY_MAX)
     if not isinstance(body, dict):

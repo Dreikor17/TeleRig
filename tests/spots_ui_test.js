@@ -38,6 +38,10 @@
  *  P26. SpotsPanel.calls / tuneTo, for the Modem window's "Tune to" menus: the list's rows on this radio's
  *       bands that a test accepts, and the tuning a click on such a row does (not for a viewer, not off
  *       the radio's bands)
+ *  P27. a memory keeps a repeater's shift and tone, in FM (the shift in DV too), as far as the radio has
+ *       them (an Icom's DUP and the IC-9700's offset, TONE / TSQL; a Yaesu's shift, DCS too): SAVE takes
+ *       them, a click sets them every time after the mode (the offset before the shift, the tone before
+ *       its mode), the row shows them; a tone the tables don't have, or no tables, leaves the tone alone
  */
 "use strict";
 const fs = require("fs");
@@ -63,23 +67,26 @@ const LO = [["160", 1.8, 2.0], ["80", 3.5, 4.0]], YAESU60 = [["60", 5.3305, 5.40
 const HI = [["40", 7.0, 7.3], ["30", 10.1, 10.15], ["20", 14.0, 14.35], ["17", 18.068, 18.168], ["15", 21.0, 21.45],
             ["12", 24.89, 24.99], ["10", 28.0, 29.7]];
 const bands = (...lists) => [].concat(...lists).map(([name, lo, hi]) => ({ name, lo: Math.round(lo * 1e6), hi: Math.round(hi * 1e6) }));
-const caps = (o) => Object.assign({ narrow: false, ext_ops: false, data_mode: false, tab_rx: true }, o);
+const caps = (o) => Object.assign({ narrow: false, ext_ops: false, data_mode: false, tab_rx: true, duplex: true, fm_tone: false, fm_dcs: true,
+                                     duplex_offset: false }, o);
 // rx_ranges: where the radio receives (a memory may be anywhere in it); the IC-9700's are its bands
 const STUBS = [
   { id: "ic9700", name: "IC-9700", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-R", "AM", "FM", "RTTY", "DV"],
-    bands: bands([["144", 144, 148], ["430", 430, 450], ["1200", 1240, 1300]]), capabilities: caps({ data_mode: true }),
+    bands: bands([["144", 144, 148], ["430", 430, 450], ["1200", 1240, 1300]]),
+    capabilities: caps({ data_mode: true, fm_tone: true, fm_dcs: false, duplex_offset: true }),
     rx_ranges: [[144e6, 148e6], [430e6, 450e6], [1240e6, 1300e6]] },
   { id: "ic7300mk2", name: "IC-7300MK2", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-R", "RTTY", "RTTY-R", "AM", "FM"],
-    bands: bands(LO, [["60", 5.3, 5.41]], HI, [["6", 50, 54]]), capabilities: caps({ data_mode: true }), rx_ranges: [[30e3, 74.8e6]] },
+    bands: bands(LO, [["60", 5.3, 5.41]], HI, [["6", 50, 54]]), capabilities: caps({ data_mode: true, fm_tone: true, fm_dcs: false }),
+    rx_ranges: [[30e3, 74.8e6]] },
   { id: "ft991a", name: "FT-991A", protocol: "yaesu", modes: ["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",
       "C4FM", "DATA-LSB", "DATA-USB", "DATA-FM"],
-    bands: bands(LO, YAESU60, HI, [["6", 50, 54], ["2", 144, 148], ["70", 430, 450]]), capabilities: caps({ narrow: true, ext_ops: true }),
+    bands: bands(LO, YAESU60, HI, [["6", 50, 54], ["2", 144, 148], ["70", 430, 450]]), capabilities: caps({ narrow: true, ext_ops: true, fm_tone: true }),
     rx_ranges: [[30e3, 56e6], [118e6, 164e6], [420e6, 470e6]] },
   { id: "ft891", name: "FT-891", protocol: "yaesu", modes: ["LSB", "USB", "AM", "CW-LSB", "CW-USB", "FM", "RTTY-LSB", "RTTY-USB",
       "DATA-LSB", "DATA-USB"],
-    bands: bands(LO, YAESU60, HI, [["6", 50, 54]]), capabilities: caps({ narrow: true, ext_ops: true }), rx_ranges: [[30e3, 56e6]] },
+    bands: bands(LO, YAESU60, HI, [["6", 50, 54]]), capabilities: caps({ narrow: true, ext_ops: true, fm_tone: true }), rx_ranges: [[30e3, 56e6]] },
   { id: "ic728", name: "IC-728", protocol: "civ", modes: ["LSB", "USB", "CW", "CW-NAR", "AM", "FM"],
-    bands: bands(LO, HI), capabilities: caps({ tab_rx: false }), rx_ranges: [[500e3, 30e6]] },
+    bands: bands(LO, HI), capabilities: caps({ tab_rx: false, duplex: false, fm_dcs: false }), rx_ranges: [[500e3, 30e6]] },
 ];
 const PROFILES_ARG = process.argv.indexOf("--profiles");
 const REAL = PROFILES_ARG > 0 ? JSON.parse(fs.readFileSync(process.argv[PROFILES_ARG + 1], "utf8")) : null;
@@ -102,6 +109,12 @@ const MEMS = () => ({
   ],
 });
 const copy = (x) => JSON.parse(JSON.stringify(x));
+// app.js's CTCSS and DCS tables, which the page hands spots.js as window.FmTones: read from the file itself
+const TONE_TABLES = (() => {
+  const src = fs.readFileSync(require("path").join(__dirname, "..", "frontend", "app.js"), "utf8");
+  const arr = (name) => JSON.parse(src.match(new RegExp("const " + name + " = (\\[[^\\]]*\\]);"))[1]);
+  return { ctcss: arr("CTCSS_TONES"), dcs: arr("DCS_CODES") };
+})();
 
 function page(opts) {
   opts = opts || {};
@@ -178,6 +191,7 @@ function page(opts) {
   e.ctx.RadioControl = { send: (o) => e.sent.push(o), state: () => e.st, radios: () => RADIOS.slice() };
   e.load("freqentry.js");                                   // FreqEntry.rangesOf: where a radio receives (a memory may be anywhere there)
   e.load("callfreqs.js");                                   // the Calling view's list, as on the page
+  if (opts.tones !== false) e.ctx.FmTones = TONE_TABLES;    // app.js's tables (opts.tones false: app.js missing)
   e.load("spots.js");
   e.asked = asked;
   e.list = e.doc.getElementById("spotsList");
@@ -1047,6 +1061,139 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     await settle(i);
     eq([i.ctx.SpotsPanel.calls((r) => r.name === "FT8").map((r) => r.hz), i.ctx.SpotsPanel.calls((r) => r.name === "SSTV")],
        [[144174000, 432174000, 1296174000], []], "P26 an IC-9700: its own FT8 frequencies, no SSTV ones");
+  }
+  // P27: a memory keeps a repeater's shift and tone
+  const OFF = (hz) => ({ action: "offset", hz }), DUP = (mode) => ({ action: "duplex", mode }), RS = (value) => ({ action: "rpt_shift", value });
+  const TF = (idx) => ({ action: "tone_freq", idx }), DC = (idx) => ({ action: "dcs_code", idx }), TM = (value) => ({ action: "tone_mode", value });
+  check(TONE_TABLES.ctcss.length === 50 && TONE_TABLES.ctcss[12] === "100.0" && TONE_TABLES.dcs.length === 104 && TONE_TABLES.dcs[0] === "023"
+        && TONE_TABLES.dcs[103] === "754", "P27 (app.js's tables: 50 tones, 104 codes)");
+  {
+    const S = (o) => Object.assign({}, BASE, o);
+    const KEEPS = [
+      ["ic9700", S({ freq: 145230000, mode_name: "FM", duplex: 1, offset: 600000, tone_mode: 1, tone_freq: 12 }),
+       { hz: 145230000, mode: "FM", filter: 1, data: false, shift: "-", offset: 600000, tone: "tsql", ctcss: 1000 }, "a repeater: DUP-, its offset, TSQL 100.0"],
+      ["ic9700", S({ freq: 442100000, mode_name: "FM", duplex: 2, offset: 5000000, tone_mode: 2, tone_freq: 8 }),
+       { hz: 442100000, mode: "FM", filter: 1, data: false, shift: "+", offset: 5000000, tone: "tone", ctcss: 885 }, "DUP+ 5 MHz, TONE 88.5"],
+      ["ic9700", S({ freq: 146520000, mode_name: "FM", duplex: 0, offset: 600000, tone_mode: 0, tone_freq: 12 }),
+       { hz: 146520000, mode: "FM", filter: 1, data: false, shift: "simplex", tone: "off" }, "simplex and no tone, as such (no offset, no tone kept)"],
+      ["ic9700", S({ freq: 145330000, mode_name: "DV", duplex: 1, offset: 600000, tone_mode: 1, tone_freq: 12 }),
+       { hz: 145330000, mode: "DV", filter: 1, data: false, shift: "-", offset: 600000 }, "D-STAR (DV): the shift, no tone"],
+      ["ic9700", S({ freq: 144200000, mode_name: "USB", duplex: 2, offset: 600000, tone_mode: 1, tone_freq: 12 }),
+       { hz: 144200000, mode: "USB", filter: 1, data: false }, "USB: neither (a shift and a tone are FM's)"],
+      ["ic9700", S({ freq: 1293100000, mode_name: "FM", duplex: 1, offset: 12000000, tone_mode: 2, tone_freq: 12 }),
+       { hz: 1293100000, mode: "FM", filter: 1, data: false, shift: "-", offset: 12000000, tone: "tone", ctcss: 1000 }, "23 cm: a 12 MHz offset"],
+      ["ic9700", S({ freq: 146940000, mode_name: "FM", duplex: 1, offset: 12000000, tone_mode: 0 }),
+       { hz: 146940000, mode: "FM", filter: 1, data: false, shift: "-", tone: "off" }, "10 MHz or more below 1 GHz (the radio can't take it): the shift alone"],
+      ["ic9700", S({ freq: 146940000, mode_name: "FM", duplex: 2, offset: 0, tone_mode: 0 }),
+       { hz: 146940000, mode: "FM", filter: 1, data: false, shift: "+", tone: "off" }, "no offset reported: the shift alone"],
+      ["ic9700", S({ freq: 146940000, mode_name: "FM", duplex: 2, offset: 600050, tone_mode: 1, tone_freq: 77 }),
+       { hz: 146940000, mode: "FM", filter: 1, data: false, shift: "+", offset: 600000 }, "the offset to 100 Hz; a tone the table doesn't have: no tone"],
+      ["ic9700", S({ freq: 146940000, mode_name: "FM", duplex: 2, offset: 600000, tone_mode: 3, dcs_code: 0 }),
+       { hz: 146940000, mode: "FM", filter: 1, data: false, shift: "+", offset: 600000 }, "DCS on an Icom (TeleRig drives none): no tone"],
+      ["ic9700", S({ freq: 146940000, mode_name: "FM", duplex: 3, offset: 600000, tone_mode: 9 }),
+       { hz: 146940000, mode: "FM", filter: 1, data: false }, "values it doesn't know: neither"],
+      ["ic7300mk2", S({ freq: 29620000, mode_name: "FM", duplex: 1, offset: 100000, tone_mode: 2, tone_freq: 12 }),
+       { hz: 29620000, mode: "FM", filter: 1, data: false, shift: "-", tone: "tone", ctcss: 1000 }, "IC-7300MK2 10 m FM: DUP- without the offset (its own), TONE"],
+      ["ft991a", S({ freq: 146940000, mode_name: "FM", rpt_shift: 2, tone_mode: 3, dcs_code: 0 }),
+       { hz: 146940000, mode: "FM", narrow: false, shift: "-", tone: "dcs", dcs: 23 }, "FT-991A: - shift, DCS 023"],
+      ["ft991a", S({ freq: 442100000, mode_name: "FM", rpt_shift: 1, offset: 5000000, tone_mode: 4, dcs_code: 103 }),
+       { hz: 442100000, mode: "FM", narrow: false, shift: "+", tone: "dcs-enc", dcs: 754 }, "+ shift (no offset: the radio's own), DCS-ENC 754"],
+      ["ft991a", S({ freq: 145330000, mode_name: "C4FM", rpt_shift: 2, tone_mode: 2, tone_freq: 49 }),
+       { hz: 145330000, mode: "C4FM", narrow: false, shift: "-", tone: "tone", ctcss: 2541 }, "C4FM: - shift, TONE 254.1"],
+      ["ft991a", S({ freq: 145010000, mode_name: "DATA-FM", rpt_shift: 0, tone_mode: 0 }),
+       { hz: 145010000, mode: "DATA-FM", narrow: false, shift: "simplex", tone: "off" }, "DATA-FM simplex"],
+      ["ft991a", S({ freq: 146940000, mode_name: "FM-N", rpt_shift: 2, tone_mode: 1, tone_freq: 12 }),
+       { hz: 146940000, mode: "FM", narrow: true, shift: "-", tone: "tsql", ctcss: 1000 }, "narrow FM (FM-N): FM, narrow, the shift and the tone"],
+      ["ft991a", S({ freq: 14285000, mode_name: "USB", width: 14, rpt_shift: 1, tone_mode: 2, tone_freq: 12 }),
+       { hz: 14285000, mode: "USB", narrow: false, width: 14 }, "USB: neither"],
+      ["ft891", S({ freq: 29620000, mode_name: "FM", rpt_shift: 2, tone_mode: 1, tone_freq: 12 }),
+       { hz: 29620000, mode: "FM", narrow: false, shift: "-", tone: "tsql", ctcss: 1000 }, "FT-891 10 m FM"],
+      ["ic728", S({ freq: 29620000, mode_name: "FM", duplex: 1, tone_mode: 2, tone_freq: 12 }),
+       { hz: 29620000, mode: "FM" }, "IC-728 (no duplex or tone over CI-V): neither"],
+    ];
+    for (const [id, st, want, what] of KEEPS) {
+      const e = memory({ radio: R(id) });
+      await settle(e);
+      e.st = Object.assign({}, st, { radio: id });
+      e.submit(); e.submit(); await settle(e);
+      const got = e.posts()[0] ? e.posts()[0].item : null;
+      eq(got, Object.assign({}, want, { name: got ? got.name : "?" }), "P27 " + id + " keeps " + what);
+    }
+  }
+  {
+    const e = memory({ radio: R("ic9700"), mem: { ic9700: [
+      { id: 1, hz: 145230000, mode: "FM", name: "Rpt minus", filter: 1, data: false, shift: "-", offset: 600000, tone: "tsql", ctcss: 1000 },
+      { id: 2, hz: 145330000, mode: "DV", name: "D-STAR", filter: 1, data: false, shift: "-", offset: 600000 },
+      { id: 3, hz: 146520000, mode: "FM", name: "Simplex", filter: 1, data: false, shift: "simplex", tone: "off" },
+      { id: 4, hz: 1293100000, mode: "FM", name: "23 cm", filter: 1, data: false, shift: "-", offset: 12000000, tone: "tone", ctcss: 885 },
+      { id: 5, hz: 145150000, mode: "FM", name: "Odd tone", filter: 1, data: false, shift: "+", tone: "tsql", ctcss: 1234 },
+      { id: 6, hz: 145170000, mode: "FM", name: "Plain", filter: 1, data: false },
+    ] } });
+    await settle(e);
+    const sends = recalls(e);
+    eq(sends("Rpt minus"), [F(145230000), M("FM"), FIL(1), OFF(600000), DUP(1), TF(12), TM(1)],
+       "P27 an IC-9700 repeater from USB: FM, FIL1, then the offset, DUP-, the tone, TSQL");
+    eq(sends("Rpt minus", { mode_name: "FM", duplex: 1, offset: 600000, tone_mode: 1, tone_freq: 12 }), [F(145230000), OFF(600000), DUP(1), TF(12), TM(1)],
+       "P27 ... the radio there already: the shift and the tone all the same (a band change brings that band's own)");
+    eq(sends("D-STAR"), [F(145330000), M("DV"), FIL(1), OFF(600000), DUP(1)], "P27 DV: the shift, no tone");
+    eq(sends("Simplex", { mode_name: "FM", duplex: 2, tone_mode: 1 }), [F(146520000), DUP(0), TM(0)], "P27 simplex and no tone: DUP off, the tone off, no offset");
+    eq(sends("23 cm", {}), [F(1293100000), M("FM"), FIL(1), OFF(12000000), DUP(1), TF(8), TM(2)], "P27 23 cm: its 12 MHz offset, TONE 88.5");
+    eq(sends("Odd tone", {}), [F(145150000), M("FM"), FIL(1), DUP(2)], "P27 a tone the table doesn't have: the shift, and the tone left as it is");
+    eq(sends("Plain", { mode_name: "FM", duplex: 2, tone_mode: 1 }), [F(145170000)], "P27 a memory kept before shift and tone: neither is changed");
+    eq([e.text(e.memRow("Rpt minus")), e.memRow("Rpt minus").classList.contains("rpt")],
+       [["145.230.0", "FM", "Rpt minus", "−600 kHz · TSQL 100.0", ""], true], "P27 a repeater's row: its shift and tone on a second line (the tone without its Hz: it fits beside Tuned)");
+    eq(e.memRow("Rpt minus").title, "Tune to Rpt minus 145.230.0 FM · FIL1 · −600 kHz · TSQL 100.0 Hz", "P27 ... and in its title");
+    eq([e.text(e.memRow("23 cm"))[3], e.text(e.memRow("D-STAR"))[3], e.memRow("D-STAR").title],
+       ["−12 MHz · TONE 88.5", "−600 kHz", "Tune to D-STAR 145.330.0 DV · FIL1 · −600 kHz"], "P27 MHz offsets; DV: the shift alone");
+    eq([e.text(e.memRow("Simplex")), e.memRow("Simplex").classList.contains("rpt"), e.memRow("Simplex").title],
+       [["146.520.0", "FM", "Simplex", ""], false, "Tune to Simplex 146.520.0 FM · FIL1 · simplex · no tone"], "P27 simplex and no tone: one line; the title says so");
+    eq([e.text(e.memRow("Plain")), e.memRow("Plain").title], [["145.170.0", "FM", "Plain", ""], "Tune to Plain 145.170.0 FM · FIL1"], "P27 an older memory: as before");
+  }
+  {
+    const e = memory({ mem: { ft991a: [
+      { id: 1, hz: 146940000, mode: "FM", name: "DCS rpt", narrow: false, shift: "-", tone: "dcs", dcs: 23 },
+      { id: 2, hz: 442100000, mode: "FM", name: "Tone rpt", narrow: false, shift: "+", tone: "tone", ctcss: 1000 },
+      { id: 3, hz: 145330000, mode: "C4FM", name: "Fusion", narrow: false, shift: "-", tone: "dcs-enc", dcs: 754 },
+      { id: 4, hz: 146700000, mode: "FM", name: "Odd code", narrow: false, shift: "-", tone: "dcs", dcs: 24 },
+      { id: 5, hz: 146800000, mode: "FM", name: "Offset?", narrow: false, shift: "-", offset: 600000, tone: "off" },
+    ] } });
+    await settle(e);
+    const sends = recalls(e);
+    eq(sends("DCS rpt"), [F(146940000), M("FM"), NAR, RS(2), DC(0), TM(3)], "P27 FT-991A from USB: FM, NAR as kept, the - shift, DCS 023");
+    eq(sends("Tone rpt", { mode_name: "FM" }), [F(442100000), RS(1), TF(12), TM(2)], "P27 ... + shift, TONE 100.0 (FM already)");
+    eq(sends("Fusion"), [F(145330000), M("C4FM"), NAR, RS(2), DC(103), TM(4)], "P27 C4FM: - shift, DCS-ENC 754");
+    eq(sends("Odd code", {}), [F(146700000), M("FM"), NAR, RS(2)], "P27 a code the table doesn't have: the tone left as it is");
+    eq(sends("Offset?", {}), [F(146800000), M("FM"), NAR, RS(2), TM(0)], "P27 an offset on a radio that can't set it: not sent");
+    eq([e.text(e.memRow("DCS rpt"))[3], e.text(e.memRow("Fusion"))[3], e.text(e.memRow("Tone rpt"))[3]],
+       ["− shift · DCS 023", "− shift · DCS-ENC 754", "+ shift · TONE 100.0"], "P27 a Yaesu's rows: the shift (its offset is the radio's own), the code or the tone");
+  }
+  {
+    const e = memory({ radio: R("ic7300mk2"), mem: { ic7300mk2: [
+      { id: 1, hz: 29620000, mode: "FM", name: "10 m rpt", filter: 1, data: false, shift: "-", offset: 100000, tone: "tone", ctcss: 1000 },
+      { id: 2, hz: 29600000, mode: "FM", name: "DCS?", filter: 1, data: false, shift: "simplex", tone: "dcs", dcs: 23 },
+    ] } });
+    await settle(e);
+    const sends = recalls(e);
+    eq(sends("10 m rpt"), [F(29620000), M("FM"), FIL(1), DUP(1), TF(12), TM(2)], "P27 IC-7300MK2: DUP- (no offset: its own), TONE 100.0");
+    eq(sends("DCS?"), [F(29600000), M("FM"), FIL(1), DUP(0)], "P27 ... DCS, which it can't take: the tone left as it is");
+    const i = memory({ radio: R("ic728"), mem: { ic728: [{ id: 1, hz: 29620000, mode: "FM", name: "FM", shift: "-", tone: "tone", ctcss: 1000 }] } });
+    await settle(i);
+    eq(recalls(i)("FM"), [F(29620000), M("FM")], "P27 an IC-728 (neither over CI-V): the frequency and the mode only");
+  }
+  {
+    // the page without app.js's tables: the shift still, the tone left as it is
+    const e = memory({ radio: R("ic9700"), tones: false, mem: { ic9700: [
+      { id: 1, hz: 145230000, mode: "FM", name: "Rpt", filter: 1, data: false, shift: "-", offset: 600000, tone: "tsql", ctcss: 1000 },
+      { id: 2, hz: 146520000, mode: "FM", name: "Simplex", filter: 1, data: false, shift: "simplex", tone: "off" },
+    ] } });
+    await settle(e);
+    const sends = recalls(e);
+    eq(sends("Rpt", { mode_name: "FM" }), [F(145230000), OFF(600000), DUP(1)], "P27 no tables: the shift, the tone left as it is");
+    eq(sends("Simplex", { mode_name: "FM" }), [F(146520000), DUP(0), TM(0)], "P27 ... no tone needs none");
+    e.st = Object.assign({}, BASE, { radio: "ic9700", freq: 145250000, mode_name: "FM", duplex: 1, offset: 600000, tone_mode: 1, tone_freq: 12 });
+    e.submit(); e.submit(); await settle(e);
+    const got = e.posts()[0] ? e.posts()[0].item : null;
+    eq(got, { hz: 145250000, mode: "FM", filter: 1, data: false, shift: "-", offset: 600000, name: got ? got.name : "?" }, "P27 ... SAVE keeps the shift, not a tone it can't read");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

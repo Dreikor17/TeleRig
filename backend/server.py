@@ -1200,6 +1200,8 @@ def _handle_cmd(cmd: dict) -> None:
             radio.set_split(bool(cmd["on"]))
         elif action == "duplex":
             radio.set_duplex(int(cmd["mode"]))
+        elif action == "offset":
+            radio.set_offset(int(cmd["hz"]))
         elif action == "narrow":
             radio.set_narrow(bool(cmd["on"]))
         elif action == "tone_mode":

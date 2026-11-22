@@ -18,6 +18,9 @@ ITEM = {"hz": 146520000, "mode": "FM", "name": "Simplex"}
 YAESU = {"hz": 146520000, "mode": "FM", "name": "Simplex", "narrow": False, "width": 0}     # NAR, WIDTH
 ICOM = {"hz": 145500000, "mode": "FM", "name": "Calling", "data": False, "filter": 1}       # DATA, FIL
 FT8 = {"hz": 7074000, "mode": "DATA-USB", "name": "FT8 40 m"}
+# repeater memories: the IC-9700's + shift, 600 kHz offset, TSQL 100.0 Hz; the FT-991A's - shift and DCS 023
+RPT_ICOM = {"hz": 147240000, "mode": "FM", "name": "Club", "shift": "+", "offset": 600000, "tone": "tsql", "ctcss": 1000}
+RPT_YAESU = {"hz": 146940000, "mode": "FM", "name": "Hilltop", "shift": "-", "tone": "dcs", "dcs": 23}
 EMPTY = {"rev": 0, "radios": {}, "max": 100, "memories_error": False}
 
 
@@ -150,6 +153,9 @@ BAD = [
     ({"radio": "ft991a", "item": {**ITEM, "narrow": "yes"}}, "item.narrow"),
     ({"radio": "ft991a", "item": {**ITEM, "width": -1}}, "item.width"),
     ({"radio": "ft991a", "item": {**ITEM, "width": 100}}, "item.width"),
+    ({"radio": "ft991a", "item": {**ITEM, "shift": "plus"}}, "item.shift"),
+    ({"radio": "ft991a", "item": {**ITEM, "tone": "tsql"}}, "item.ctcss"),        # TSQL needs its tone
+    ({"radio": "ft991a", "item": {**ITEM, "tone": "dcs", "dcs": 19}}, "item.dcs"),  # 023 read as octal: not a code
 ]
 BAD_DELETE = [
     ("", "id"), ("radio=ft991a", "id"), ("radio=ft991a&id=", "id"), ("radio=ft991a&id=abc", "id"), ("radio=ft991a&id=-1", "id"),
@@ -206,6 +212,41 @@ def memories_roles_and_refused_requests(ctx):
 
     check(not (srv.tmp / "memories").exists(), "a refused request wrote something")
     eq(op.get(API).json(), EMPTY, "nothing was kept")
+    check(srv.alive(), "server died")
+
+
+# -- the repeater settings ------------------------------------------------------------------------------------
+@test("layout")
+def memories_keep_the_repeater_settings(ctx):
+    """A memory keeps the radio's repeater shift and tone where the radio can set them: the IC-9700 its
+    shift, offset and TONE / TSQL (no DCS: TeleRig drives none on it), the FT-991A its shift and DCS
+    (its offset is a menu item). What a radio cannot keep is refused, naming the field, and nothing is
+    written."""
+    srv, cl = users(ctx, ("OP1", "operator"))
+    op = cl["OP1"]
+    r = op.post(API, {"radio": "ic9700", "item": RPT_ICOM})
+    eq((r.status, r.json()), (200, {"ok": True, "rev": 1, "id": 1, "items": [{"id": 1, **RPT_ICOM}]}),
+       f"IC-9700: + shift, 600 kHz offset, TSQL 100.0 Hz {r!r}")
+    r = op.post(API, {"radio": "ft991a", "item": RPT_YAESU})
+    eq((r.status, r.json()), (200, {"ok": True, "rev": 2, "id": 2, "items": [{"id": 2, **RPT_YAESU}]}), f"FT-991A: - shift, DCS 023 {r!r}")
+    w = written(mfile(srv, "OP1"))
+    for radio, item, field, what in (
+            ("ic9700", {**ITEM, "tone": "dcs", "dcs": 23}, "item.tone", "a DCS memory on the IC-9700"),
+            ("ft991a", {**RPT_YAESU, "offset": 600000}, "item.offset", "an offset on the FT-991A"),
+            ("ic9700", {**RPT_ICOM, "mode": "USB"}, "item.shift", "a shift in USB"),
+            ("ic9700", {**RPT_ICOM, "ctcss": 1001}, "item.ctcss", "a tone that is not a standard one"),
+            ("ic9700", {**RPT_ICOM, "offset": True}, "item.offset", "a bool for the offset")):
+        r = op.post(API, {"radio": radio, "item": item})
+        j = r.json() or {}
+        eq((r.status, j.get("ok"), j.get("error"), j.get("field")), (400, False, "invalid", field), f"{what} {r!r}")
+        check(isinstance(j.get("message"), str) and j["message"].endswith("."), f"a sentence for the user: {j}")
+    eq(written(mfile(srv, "OP1")), w, "the refused ones wrote nothing")
+    eq(op.get(API).json(), {"rev": 2, "radios": {"ic9700": [{"id": 1, **RPT_ICOM}], "ft991a": [{"id": 2, **RPT_YAESU}]},
+                            "max": 100, "memories_error": False}, "GET: both, as they were saved")
+    kept = json.loads(mfile(srv, "OP1").read_text(encoding="utf-8"))["radios"]
+    eq((list(kept["ic9700"][0]), list(kept["ft991a"][0])),
+       (["id", "hz", "mode", "name", "shift", "offset", "tone", "ctcss"], ["id", "hz", "mode", "name", "shift", "tone", "dcs"]),
+       "the file keeps them in one order")
     check(srv.alive(), "server died")
 
 

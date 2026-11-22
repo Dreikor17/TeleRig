@@ -593,6 +593,7 @@ a.key.rec-save{flex:none;min-width:0;padding:5px 9px;font-size:11px;text-decorat
 .mem-form input{flex:1 1 auto;min-width:0;font-size:12px;padding:4px 8px}
 .spot-mem{display:flex;align-items:stretch;gap:3px}
 .spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}
+.spot-mem>.spot.rpt{grid-template-areas:"freq mode call call" "ref ref ref src"}   /* a repeater: its shift and tone under it */
 .mem-del{flex:0 0 auto;min-width:28px;padding:0 6px;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-sm);
   color:var(--txt-dim);font:700 14px/1 var(--font-ui);cursor:pointer}
 .mem-del:hover{background:var(--key-hi);border-color:var(--border-strong);color:var(--txt)}

@@ -53,8 +53,8 @@ Conventions:
 | SPLIT LOCK | `1A 05 0045` | toggle | menus | 00=OFF,01=ON | TODO | |
 | FM SPLIT Offset | `1A 05 0044` | number | menus | dir(00=+,01=-)+offset BCD | TODO | FM quick-split default |
 | Duplex/simplex (set) | `0F 10`/`11`/`12`/`13` | enum | both | 10=Simplex,11=DUP-,12=DUP+,13=RPS(DD) | TODO | See TX area |
-| Read duplex offset | `0C` | readout | both | 3-byte BCD (1kHz–10MHz; 10MHz only 1.2G) | TODO | |
-| Set duplex offset | `0D` | number | both | 3-byte BCD (1kHz–10MHz) | TODO | |
+| Read duplex offset | `0C` | readout | both | 3-byte BCD (1kHz–10MHz; 10MHz only 1.2G) | done | Polled into state `offset` |
+| Set duplex offset | `0D` | number | both | 3-byte BCD (1kHz–10MHz) | done | `offset` action (`duplex_offset`); set by a Spots memory, no Controls key yet |
 | Cancel scan | `0E 00` | action | both | stop scan | TODO | |
 | Start Programmed/Memory scan | `0E 01` | action | both | per V/M mode | TODO | |
 | Start Programmed scan | `0E 02` | action | both | between program edges | TODO | |
@@ -158,12 +158,12 @@ Power, mic/comp, VOX, BK-IN, monitor, tone/squelch, split, RIT, PTT, meters.
 | AM TX Tone Bass/Treble | `1A 05 0021`/`0022` | level | menus | 00–10 | TODO | |
 | FM TX Tone Bass/Treble | `1A 05 0023`/`0024` | level | menus | 00–10 | TODO | |
 | DV TX Tone Bass/Treble | `1A 05 0025`/`0026` | level | menus | 00–10 | TODO | |
-| Repeater Tone (TONE) on/off | `16 42` | toggle | both | 00=OFF,01=ON | TODO | CTCSS encode |
-| Tone Squelch (TSQL) on/off | `16 43` | toggle | both | 00=OFF,01=ON | TODO | |
+| Repeater Tone (TONE) on/off | `16 42` | toggle | both | 00=OFF,01=ON | done | CTCSS encode; FM panel TONE |
+| Tone Squelch (TSQL) on/off | `16 43` | toggle | both | 00=OFF,01=ON | done | FM panel TSQL |
 | DTCS on/off | `16 4B` | toggle | both | 00=OFF,01=ON | TODO | |
 | Tone Squelch type (combined) | `16 5D` | enum | both | 00=OFF,01=TONE,02=TSQL,03=DTCS,06=DTCS(T),07=TONE(T)/DTCS(R),08=DTCS(T)/TSQL(R),09=TONE(T)/TSQL(R) | TODO | Single full-mode set |
-| Repeater Tone frequency | `1B 00` | enum | both | BCD `00 XX XX`, e.g. 0885 = 88.5Hz | TODO | CTCSS list |
-| TSQL Tone frequency | `1B 01` | enum | both | same as `1B 00` | TODO | |
+| Repeater Tone frequency | `1B 00` | enum | both | BCD `00 XX XX`, e.g. 0885 = 88.5Hz | done | CTCSS list (set with `1B 01`) |
+| TSQL Tone frequency | `1B 01` | enum | both | same as `1B 00` | done | Set with `1B 00`, the same tone |
 | DTCS code + polarity | `1B 02` | enum | both | [TXpol\|RXpol] + 0 + 3 octal digits; pol 0=Norm,1=Rev | TODO | |
 | CSQL code (DV) | `1B 07` | enum | both | 2 digits 00–99 | TODO | DV only (see DV area) |
 | Duplex direction (set) | `0F 10`/`11`/`12`/`13` | enum | both | 10=Simplex,11=DUP-,12=DUP+,13=RPS(DD) | TODO | Read via `0F` |

@@ -403,7 +403,9 @@ def spots_panel_in_node_vm(ctx):
     account's memories (/api/me/memories) when it is shown, lists this radio's, brings one back with the
     mode by its name and the filter as kept (a Yaesu's NAR + WIDTH code, an Icom's FIL slot + DATA), saves
     the radio as it is under a name (the frequency, selected; SAVE again or Enter), deletes at the second
-    tap, and is for operators only. The real tr.js + waterfall.js + freqentry.js + callfreqs.js + spots.js
+    tap, and is for operators only; in FM it keeps a repeater's shift and tone (the radio's own way: an
+    Icom's DUP and the IC-9700's offset, a Yaesu's shift, TONE / TSQL / DCS) and sets them every time it is
+    recalled. The real tr.js + waterfall.js + freqentry.js + callfreqs.js + spots.js
     in a Node vm (tests/spots_ui_test.js), on its own profiles and again on the real ones (to_json() of
     every profile in backend/profiles.py). Static: no HTML parsing, only the tuning actions are sent, the
     server is asked only for the spots and the memories; callfreqs.js is data; the page's keys, SAVE form
@@ -424,8 +426,12 @@ def spots_panel_in_node_vm(ctx):
     for bad in ("innerHTML", "insertAdjacentHTML", "outerHTML", "eval(", "new Function"):
         check(bad not in js, f"spots.js never uses {bad}")
     eq(sorted(set(re.findall(r'action: "([a-z_]+)"', js))),
-       ["data_mode", "narrow", "set_filter", "set_freq", "set_mode", "width"],
-       "spots.js sends only the tuning actions: freq, mode, DATA, filter, NAR, WIDTH")
+       ["data_mode", "dcs_code", "duplex", "narrow", "offset", "rpt_shift", "set_filter", "set_freq", "set_mode", "tone_freq",
+        "tone_mode", "width"],
+       "spots.js sends only the tuning actions: freq, mode, DATA, filter, NAR, WIDTH, and a repeater's shift and tone")
+    app = _strip_comments(_read("app.js"))
+    check("window.FmTones = Object.freeze({ ctcss: Object.freeze(CTCSS_TONES.slice()), dcs: Object.freeze(DCS_CODES.slice()) });" in app,
+          "app.js hands spots.js its CTCSS and DCS tables (a memory's tone goes back by the radio's own index)")
     # the server is asked through TR.api only, for the spots and for the account's memories
     check("fetch(" not in js and "XMLHttpRequest" not in js and "WebSocket" not in js, "spots.js asks the server through TR.api only")
     eq(sorted(set(re.findall(r'"(/api/[a-z_/]+)', js))), ["/api/me/memories", "/api/spots"], "spots.js asks for the spots and the memories, nothing else")
@@ -453,12 +459,14 @@ def spots_panel_in_node_vm(ctx):
     check(form.index('id="memSave"') < form.index('id="memName"') < form.index('id="memCancel"'), "index.html: SAVE, the name, the X, in that order")
     check('<p class="spots-credit" id="spotsCredit">' in spots and '<p class="spots-credit" id="callCredit" hidden>' in spots, "index.html: the spots' credit and the calling list's")
     check(html.index("/static/freqentry.js") < html.index("/static/callfreqs.js") < html.index("/static/spots.js"), "index.html: freqentry.js and callfreqs.js load before spots.js")
+    check(html.index("/static/app.js") < html.index("/static/spots.js"), "index.html: app.js (its tone tables) loads before spots.js")
     css = re.sub(r"/\*.*?\*/", "", _read("style.css"), flags=re.S)
     for rule in (".spots-tabs{display:grid;grid-template-columns:repeat(3,1fr);",
                  ".spots-tab.on{background:var(--accent-tint);color:var(--accent-hi);box-shadow:inset 0 -2px 0 var(--accent)}",
                  '.spot-call{grid-template-areas:"freq mode call call" "ref ref ref src"}',
                  ".mem-form.naming{flex:1 1 100%}",
                  '.spot-mem>.spot{flex:1 1 auto;min-width:0;grid-template-areas:"freq mode call src";align-content:center}',
+                 '.spot-mem>.spot.rpt{grid-template-areas:"freq mode call call" "ref ref ref src"}',
                  ".mem-del.arm{background:var(--danger-tint);border-color:var(--danger);color:var(--danger-hi);font-size:10.5px}",
                  ".spots-tab,.spots-bar select,.mem-form .key,.mem-form input,.spot-mem>.spot{min-height:44px}"):
         check(rule in css, f"style.css: {rule}")

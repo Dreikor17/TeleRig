@@ -81,6 +81,9 @@ class Capabilities:
     split: bool = True
     rit: bool = True
     duplex: bool = True
+    # The radio's duplex (repeater) offset can be set over CAT: Icom CI-V 0D (the `offset` action).
+    # False = it is a menu setting only (Yaesu RPT SHIFT) or TeleRig does not set it.
+    duplex_offset: bool = False
     rx_dsp: list = field(default_factory=list)    # ["nb","nr","anotch","mnotch"]
     tx_funcs: list = field(default_factory=list)  # ["comp","vox","mon"]
     tbw: bool = True
@@ -89,7 +92,7 @@ class Capabilities:
     menus: bool = False
     narrow: bool = False        # NAR/WIDE IF-filter toggle (Yaesu NA)
     fm_tone: bool = False       # FM Tone/DCS panel, FM modes only
-    fm_dcs: bool = True         # the FM panel exposes DCS (Yaesu) — False on Icom (CI-V has no DTCS)
+    fm_dcs: bool = True         # the FM panel exposes DCS (Yaesu) — False on Icom (TeleRig drives no DTCS)
     ext_ops: bool = False       # extra Yaesu operating controls: WIDTH/CONTOUR/APF/CW/TXW/scan
     icom_cw: bool = False       # Icom CW/filter group: APF/break-in/pitch/keyer-speed/filter-shape
     # Coarse presence flags for old/limited rigs (IC-728): default True so every existing radio
@@ -343,6 +346,14 @@ IC9700 = RadioProfile(
     ],
 )
 IC9700.capabilities.data_mode = True        # DATA mode with filter: CI-V 1A 06 (CI-V guide p. 18)
+# FM repeater tone: TONE / TSQL on/off (CI-V 16 42 / 16 43) and the tone (1B 00 / 01), which radio.py
+# polls and sets, so the FM panel shows in FM. The radio has DTCS too (16 4B, 1B 02), but TeleRig drives
+# none (radio.set_dcs_code does nothing): no DCS in the panel or in a memory.
+IC9700.capabilities.fm_tone = True
+IC9700.capabilities.fm_dcs = False
+# The duplex offset: CI-V 0D (CI-V guide p. 13-14), 3-byte BCD with a 100 Hz LSB (civ.offset_to_bcd);
+# the radio takes the 10 MHz digit on its 1.2 GHz band only.
+IC9700.capabilities.duplex_offset = True
 
 from .menus.ic7300mk2_menu import IC7300MK2_MENU  # noqa: E402  (after MenuItem is defined above)
 

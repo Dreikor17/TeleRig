@@ -3,9 +3,11 @@
 One file per user: <config_dir>/memories/<hex>.json, where <hex> is the lowercase hex of the UTF-8
 canonical user name, as for the layouts (layout_store.py).
 
-    {"v":1, "rev":12, "next":9,
-     "radios":{"ft991a":[{"id":7,"hz":146520000,"mode":"FM","name":"Simplex","narrow":false,"width":0}, ...],
-               "ic9700":[{"id":8,"hz":145500000,"mode":"FM","name":"Calling","data":false,"filter":1}]}}
+    {"v":1, "rev":12, "next":10,
+     "radios":{"ft991a":[{"id":7,"hz":146520000,"mode":"FM","name":"Simplex","narrow":false,"width":0},
+                         {"id":9,"hz":146940000,"mode":"FM","name":"Hilltop","shift":"-","tone":"dcs","dcs":23}],
+               "ic9700":[{"id":8,"hz":147240000,"mode":"FM","name":"Club","data":false,"filter":1,
+                          "shift":"+","offset":600000,"tone":"tsql","ctcss":1000}]}}
 
 `rev` counts every write. `next` is the id the next memory gets: ids start at 1, one counter for the
 whole file, and an id is never used twice in a file, so a list another device still shows can never
@@ -15,8 +17,25 @@ An item is what the radio was on: `hz` (inside the radio's receive coverage: the
 rx_ranges, else its bands' edges, as frontend/freqentry.js), `mode` (one of the profile's modes),
 `name` (1..NAME_MAX characters, stored stripped, no control characters) and, optionally, how its
 filter was set: `data` and `filter` (an Icom's DATA switch and FIL slot), `narrow` and `width` (a
-Yaesu's NAR and WIDTH code). validate_item() rejects every shape, type and range error and any
-other key (MemoryInvalid -> 400 {error:"invalid", field}); nothing is clamped. A radio holds at most
+Yaesu's NAR and WIDTH code), and its repeater settings, each only on a radio that can set it and in
+a mode that has it:
+
+  shift   "simplex" | "+" | "-". A Yaesu with the FM panel (capabilities.fm_tone: its OS command is
+          there), any other radio with capabilities.duplex; in FM, DATA-FM, C4FM or DV.
+  offset  the duplex offset in Hz, 100..99_999_900 in steps of 100, with a "+" or "-" shift, on a
+          radio with capabilities.duplex_offset (CI-V 0D). 10 MHz or more only from 1 GHz up (the
+          IC-9700 takes the 10 MHz digit on its 1200 MHz band only).
+  tone    "off" | "tone" (a CTCSS tone on transmit) | "tsql" (tone squelch) | "dcs" | "dcs-enc" (DCS
+          on transmit only). capabilities.fm_tone, in FM, DATA-FM or C4FM; the two DCS ones also need
+          capabilities.fm_dcs.
+  ctcss   the CTCSS tone in tenths of a hertz (885 = 88.5 Hz, one of civ.CTCSS_TONES): with "tone" and
+          "tsql", which need it, and with nothing else.
+  dcs     the DCS code, its three digits read as a decimal number (23 = code 023, one of
+          civ.DCS_CODES): with "dcs" and "dcs-enc", which need it, and with nothing else.
+
+validate_item() rejects every shape, type and range error and any other key (MemoryInvalid -> 400
+{error:"invalid", field}); nothing is clamped. An item without repeater settings validates as it
+always did, so the files written before they existed read the same. A radio holds at most
 MAX_PER_RADIO memories (MemoryFull -> 409 {error:"full"}).
 
 Files are written atomically under the OS lock (store.JsonStore). A read never changes the file: a
@@ -33,6 +52,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 
+from . import civ
 from .profiles import PROFILES
 from .store import JsonStore, StoreCorrupt, StoreMissing, console
 
@@ -42,7 +62,19 @@ BODY_MAX = 2048                      # bytes of a POST body (413 above)
 FILE_VERSION = 1
 FLAGS = ("data", "narrow")                       # optional bools
 RANGES = {"filter": (1, 3), "width": (0, 99)}    # optional ints, both ends included
-ITEM_KEYS = ("hz", "mode", "name", "data", "filter", "narrow", "width")   # in the order an item is stored
+ITEM_KEYS = ("hz", "mode", "name", "data", "filter", "narrow", "width",
+             "shift", "offset", "tone", "ctcss", "dcs")              # in the order an item is stored
+FILTER_KEYS = ITEM_KEYS[3:7]                     # how the filter was set: FLAGS and RANGES
+# The repeater settings (the module docstring).
+SHIFTS = ("simplex", "+", "-")
+TONES = ("off", "tone", "tsql", "dcs", "dcs-enc")
+SHIFT_MODES = frozenset({"FM", "DATA-FM", "C4FM", "DV"})          # the modes a shift goes with
+TONE_MODES = frozenset({"FM", "DATA-FM", "C4FM"})                 # the modes a tone setting goes with
+OFFSET_MIN, OFFSET_MAX, OFFSET_STEP = 100, 99_999_900, 100       # Hz: CI-V 0D, 3-byte BCD, 100 Hz LSB
+OFFSET_10MHZ = 10_000_000            # an offset this big or bigger ...
+OFFSET_10MHZ_FROM = 1_000_000_000    # ... only from this frequency up (the IC-9700's 1200 MHz band)
+CTCSS = frozenset(round(t * 10) for t in civ.CTCSS_TONES)        # the standard tones, in tenths of Hz
+DCS = frozenset(int(c) for c in civ.DCS_CODES)                   # the standard codes, digits read as decimal
 
 
 class MemoryInvalid(ValueError):
@@ -87,9 +119,10 @@ def validate_item(radio: Any, item: Any) -> dict:
     """The item as it is stored (without its id), or MemoryInvalid(field).
 
     radio is a profile id. item is {"hz", "mode", "name"} plus, optionally, "data", "filter",
-    "narrow" and "width", and nothing else. ints are non-bool ints, flags are bools, and a number
-    out of range is an error like any other. The name is stripped; its length and its characters
-    are checked on what is left."""
+    "narrow" and "width", and the repeater settings "shift", "offset", "tone", "ctcss" and "dcs"
+    (each only where the radio can set it: _repeater()), and nothing else. ints are non-bool ints,
+    flags are bools, and a number out of range is an error like any other. The name is stripped;
+    its length and its characters are checked on what is left."""
     prof = PROFILES.get(radio) if isinstance(radio, str) else None
     if prof is None:
         raise MemoryInvalid("radio", "Unknown radio.")
@@ -121,7 +154,7 @@ def validate_item(radio: Any, item: Any) -> dict:
     except UnicodeEncodeError:
         raise MemoryInvalid("item.name", "The name contains characters that can't be used.") from None
     out = {"hz": hz, "mode": mode, "name": name}
-    for k in ITEM_KEYS[3:]:
+    for k in FILTER_KEYS:
         if k not in item:
             continue
         v = item[k]
@@ -133,7 +166,66 @@ def validate_item(radio: Any, item: Any) -> dict:
             if not _is_int(v) or not lo <= v <= hi:
                 raise MemoryInvalid(f"item.{k}", f"{k} must be a whole number from {lo} to {hi}.")
         out[k] = v
+    _repeater(prof, item, out)
     return out
+
+
+def _repeater(prof: Any, item: dict, out: dict) -> None:
+    """The item's repeater settings (the module docstring), checked one by one in ITEM_KEYS order and
+    added to `out`, or MemoryInvalid: what the radio cannot set, a mode that has no such setting, a
+    tone or code that is not a standard one, a CTCSS tone or DCS code missing where the tone setting
+    needs it or given where it does not."""
+    caps, mode = prof.capabilities, out["mode"]
+    if "shift" in item:
+        v = item["shift"]
+        if not isinstance(v, str) or v not in SHIFTS:
+            raise MemoryInvalid("item.shift", "The shift must be simplex, + or -.")
+        if not (caps.fm_tone if prof.protocol == "yaesu" else caps.duplex):
+            raise MemoryInvalid("item.shift", f"A repeater shift can't be saved for the {prof.name}.")
+        if mode not in SHIFT_MODES:
+            raise MemoryInvalid("item.shift", f"There is no repeater shift in {mode}.")
+        out["shift"] = v
+    if "offset" in item:
+        v = item["offset"]
+        if not _is_int(v) or not OFFSET_MIN <= v <= OFFSET_MAX or v % OFFSET_STEP:
+            raise MemoryInvalid("item.offset", "The offset must be 100 Hz to 99.9999 MHz, in steps of 100 Hz.")
+        if not caps.duplex_offset:
+            raise MemoryInvalid("item.offset", f"An offset can't be saved for the {prof.name}.")
+        if out.get("shift") not in ("+", "-"):
+            raise MemoryInvalid("item.offset", "An offset needs a + or - shift.")
+        if v >= OFFSET_10MHZ and out["hz"] < OFFSET_10MHZ_FROM:
+            raise MemoryInvalid("item.offset", "An offset of 10 MHz or more is for the 1200 MHz band only.")
+        out["offset"] = v
+    if "tone" in item:
+        v = item["tone"]
+        if not isinstance(v, str) or v not in TONES:
+            raise MemoryInvalid("item.tone", "The tone must be off, tone, tsql, dcs or dcs-enc.")
+        if not caps.fm_tone:
+            raise MemoryInvalid("item.tone", f"A tone setting can't be saved for the {prof.name}.")
+        if mode not in TONE_MODES:
+            raise MemoryInvalid("item.tone", f"There is no tone setting in {mode}.")
+        if v in ("dcs", "dcs-enc") and not caps.fm_dcs:
+            raise MemoryInvalid("item.tone", f"DCS can't be saved for the {prof.name}.")
+        out["tone"] = v
+    tone = out.get("tone")
+    if tone in ("tone", "tsql"):
+        if "ctcss" not in item:
+            raise MemoryInvalid("item.ctcss", f"{tone.upper()} needs a CTCSS tone.")
+        v = item["ctcss"]
+        if not _is_int(v) or v not in CTCSS:
+            raise MemoryInvalid("item.ctcss", "That is not a standard CTCSS tone.")
+        out["ctcss"] = v
+    elif "ctcss" in item:
+        raise MemoryInvalid("item.ctcss", "A CTCSS tone goes with tone or tsql only.")
+    if tone in ("dcs", "dcs-enc"):
+        if "dcs" not in item:
+            raise MemoryInvalid("item.dcs", f"{tone.upper()} needs a DCS code.")
+        v = item["dcs"]
+        if not _is_int(v) or v not in DCS:
+            raise MemoryInvalid("item.dcs", "That is not a standard DCS code.")
+        out["dcs"] = v
+    elif "dcs" in item:
+        raise MemoryInvalid("item.dcs", "A DCS code goes with dcs or dcs-enc only.")
 
 
 def _stored(radio: str, it: Any) -> Optional[dict]:

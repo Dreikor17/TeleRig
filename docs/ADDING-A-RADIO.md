@@ -157,7 +157,11 @@ renders/gates itself from it:
 - **`transports`** (`Transports`) — serial bits/parity/stopbits, RS‑BA1 network + UDP ports,
   audio kind (`usb-codec`/`lan`/`none`), scope kind (`native`/`audio`/`none`).
 - **`capabilities`** (`Capabilities`) — `preamp`/`att`/`tuner`/`dual_watch`/`vfo_select`/
-  `rx_dsp`/`tx_funcs`/`meters`/… The UI **shows only what `capabilities` reports.**
+  `rx_dsp`/`tx_funcs`/`meters`/… The UI **shows only what `capabilities` reports.** The Spots
+  panel's memories keep only what the radio can set: the repeater shift with `duplex` (an Icom) or
+  `fm_tone` (a Yaesu's repeater shift lives in its FM panel), the offset with `duplex_offset` (Icom
+  CI-V `0D`; the server refuses the `offset` action without it), TONE / TSQL with `fm_tone`, DCS
+  with `fm_dcs` (`backend/memory_store.py`).
 - **`menu`** — a declarative `MenuItem` list driving the data‑driven **Setup tab**.
 
 When `transports`/`capabilities` are omitted they are **synthesized from the flat `has_*`

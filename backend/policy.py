@@ -1,6 +1,6 @@
 """Access policy: WebSocket actions (spec §2.12, I2) and HTTP routes (§2.10).
 
-WebSocket. WS_POLICY has one row per action: the dispatcher's 58 radio actions (server._handle_cmd)
+WebSocket. WS_POLICY has one row per action: the dispatcher's 59 radio actions (server._handle_cmd)
 plus the new tx_hb, tx_stop, rx_audio, mic and bridge_tx. The removed host-audio actions are in
 REMOVED, and an unknown action is denied. A WSJT-X bridge client (backend/bridge.py) is decided by
 the same table: its commands arrive as the same canonical commands, from a connection whose role
@@ -55,7 +55,7 @@ RADIO_ACTIONS = (
     "set_level",
     "band", "set_span", "scope_mode", "select_band", "set_meter", "preamp", "att", "lock", "tuner",
     "tune_atu", "atas_step", "rx_func", "agc", "mnotch_w", "tbw", "rit", "rit_freq", "split",
-    "duplex", "narrow", "tone_mode", "tone_freq", "dcs_code", "rpt_shift", "width", "contour",
+    "duplex", "offset", "narrow", "tone_mode", "tone_freq", "dcs_code", "rpt_shift", "width", "contour",
     "contour_freq", "apf", "apf_freq", "txw", "param_eq", "quick_split", "bkin", "keyer",
     "key_speed", "key_pitch", "spot", "zero_in", "scan", "fast", "apf_lvl", "bkin_lvl",
     "filter_shape", "ptt", "cw_tx", "cw_stop", "menu_read", "menu_read_group", "menu_write",
@@ -321,6 +321,7 @@ _ROWS = [
     _row("rit_freq", _field_int("hz", -9999, 9999), continuous=True),
     _row("split", _on),
     _row("duplex", _field_int("mode", 0, 2)),
+    _row("offset", _field_int("hz", 0, 99_999_900)),    # duplex offset (CI-V 0D); needs caps.duplex_offset
     _row("narrow", _on),
     _row("tone_mode", _field_int("value", 0, 4)),
     _row("tone_freq", _field_int("idx", 0, 49)),
@@ -364,6 +365,8 @@ WS_POLICY: dict = {r.action: r for r in _ROWS}
 # Which TX claim an action starts / stops.
 K_CLAIM = {"tune_atu": "tune", "cw_tx": "cw"}
 S_CLAIM = {"cw_stop": "cw"}
+# A setter only some radios have: the capability it needs, else `denied unsupported`.
+NEEDS_CAP = {"data_mode": "data_mode", "offset": "duplex_offset"}
 
 
 # -- the fast path classifier ----------------------------------------------------------------------
@@ -620,9 +623,9 @@ def _decide(rule: Rule, conn: Any, cmd: dict, ctx: Any) -> Verdict:
             if not getattr(caps, "ptt", False):
                 return deny(a, "unsupported")
         return Verdict("new", a, cmd=cmd)
-    if a == "data_mode":
+    if a in NEEDS_CAP:
         caps = getattr(getattr(_radio(ctx), "profile", None), "capabilities", None)
-        if not getattr(caps, "data_mode", False):
+        if not getattr(caps, NEEDS_CAP[a], False):
             return deny(a, "unsupported")            # then the X lock below, like any setter
     if a == "menu_read":
         return Verdict("plain", a, cmd=cmd)

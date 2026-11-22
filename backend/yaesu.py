@@ -662,6 +662,10 @@ class YaesuRadio:
             self._send(f"OS0{v};")
         self._emit_state()
 
+    def set_offset(self, hz: int) -> None:
+        pass          # no CAT command of its own: the offset is a menu item (RPT SHIFT: FT-991A
+                      # 080-083, FT-891 09-04 / 09-05)
+
     # -- DSP filter: WIDTH / CONTOUR / APF ------------------------------------
     def set_width(self, code: int) -> None:
         code = max(0, min(21, int(code)))                   # SH bandwidth code (per-mode table)
