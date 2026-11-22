@@ -134,14 +134,15 @@
     }
     return out;
   }
-  // A spot or a calling frequency ({hz, mode, listen?}): the frequency, then what its mode needs. False when
-  // this page may not tune there (a viewer, a frequency off the radio's bands; a listen row, the time
-  // signals: off where the radio receives): nothing is sent.
+  // A spot or a calling frequency ({hz, mode, listen?, dial?}): the frequency (a calling row's dial where
+  // it has one: an RTTY row tunes below its signal), then what its mode needs. False when this page may
+  // not tune there (a viewer, a frequency off the radio's bands; a listen row, the time signals: off where
+  // the radio receives): nothing is sent.
   function sendTune(x) {
-    const c = ctl(), p = profile();
-    if (!c || !canTune() || !(x.listen ? covers(p, x.hz) : bandOf(p, x.hz))) return false;
+    const c = ctl(), p = profile(), hz = typeof x.dial === "number" ? x.dial : x.hz;
+    if (!c || !canTune() || !(x.listen ? covers(p, hz) : bandOf(p, hz))) return false;
     const st = radioState();
-    c.send({ action: "set_freq", hz: x.hz });
+    c.send({ action: "set_freq", hz });
     for (const m of settings(p, x, st)) c.send(m);
     return true;
   }
@@ -158,7 +159,7 @@
   // window (digital.js) shows that mode, to decode what the radio now hears. Receive only: nothing is keyed,
   // and a mode sending (an SSTV picture, CW) keeps the window (DigitalPanel.show says no). A folded window
   // opens; a closed one stays closed and shows that mode when it is opened. Returns the mode shown, or "".
-  const MODEM_OF = { CW: "cw", SSTV: "sstv" }, MODEM_LABEL = { cw: "CW", ft8: "FT8", sstv: "SSTV" };
+  const MODEM_OF = { CW: "cw", SSTV: "sstv" }, MODEM_LABEL = { cw: "CW", ft8: "FT8", rtty: "RTTY", sstv: "SSTV" };
   function modemTo(m) {
     const D = window.DigitalPanel;
     if (!MODEM_LABEL[m] || !D || typeof D.show !== "function") return "";
@@ -273,13 +274,20 @@
   function setStatus(msg) { if (status.textContent !== msg) status.textContent = msg; }
 
   // ---- the Calling view: callfreqs.js, the bands this radio has (a listen group: where it receives) ----
-  // A row: {hz, mode (what tunes it), cat (its tag and the mode filter's: SSTV for an SSTV row, else the
-  // mode), name, note, modem (the Modem window's mode for it, or ""), listen}.
+  // A row: {hz (shown), dial (what is tuned: hz, or for an RTTY row its signal at the RTTY tab's tones),
+  // mode (what tunes it), cat (its tag and the mode filter's: SSTV for an SSTV row, else the mode), name,
+  // note, modem (the Modem window's mode for it, or ""), listen}. The Tuned mark and the VFO's line follow
+  // the dial.
+  // RTTY_CENTER_HZ == rtty.js CENTER: the RTTY tab listens on mark 2125 / space 2295 Hz, so an RTTY row's
+  // signal goes 2210 Hz above the dial, in the data mode (USB side: the tab reads mark as the higher tone)
+  const RTTY_CENTER_HZ = 2210;
   const CALLS = (Array.isArray(window.CALL_FREQS) ? window.CALL_FREQS : []).map((g) => ({
     band: String(g.band), listen: g.listen === true,
-    rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note, modem]) => ({
-      hz: Math.round(khz * 1000), mode, cat: modem === "sstv" ? "SSTV" : mode, name: String(name), note: String(note || ""),
-      modem: MODEM_LABEL[modem] ? modem : "", listen: g.listen === true })),
+    rows: (Array.isArray(g.rows) ? g.rows : []).map(([khz, mode, name, note, modem]) => {
+      const hz = Math.round(khz * 1000);
+      return { hz, dial: modem === "rtty" && mode === "DIGI" ? hz - RTTY_CENTER_HZ : hz, mode, cat: modem === "sstv" ? "SSTV" : mode,
+               name: String(name), note: String(note || ""), modem: MODEM_LABEL[modem] ? modem : "", listen: g.listen === true };
+    }),
   }));
   const onRadio = (p, r) => (r.listen ? covers(p, r.hz) : !!bandOf(p, r.hz));
   let callSig = null, callRows = [];
@@ -308,7 +316,7 @@
           row.title = title(false);
           row.append(cell("sp-freq", fmtFreq(r.hz)), cell("sp-mode", modeLabel(r.cat)), cell("sp-call", r.name), cell("sp-ref", r.note), src);
           list.appendChild(row);
-          callRows.push({ hz: r.hz, el: row, src, on: false, title });
+          callRows.push({ hz: r.dial, el: row, src, on: false, title });   // marked where it tunes
         }
       }
       const n = callRows.length;
@@ -775,7 +783,7 @@
     if (!(hz > 0)) return null;
     const p = profile();
     for (const g of CALLS) {
-      const r = g.rows.find((x) => Math.abs(x.hz - hz) <= ON_HZ && onRadio(p, x));
+      const r = g.rows.find((x) => Math.abs(x.dial - hz) <= ON_HZ && onRadio(p, x));
       if (r) return { kind: "call", name: g.listen ? r.name : g.band + " " + r.name, note: r.note };
     }
     return null;

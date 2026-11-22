@@ -1,15 +1,18 @@
 /* The Spots panel's Calling view (spots.js): fixed frequencies on the US amateur bands that are worth a
  * click. Each band's calling frequencies (SSB / CW and FM simplex on 6 m and up, low-power CW and SSB
- * on HF), its FT8 dial frequency, the SSTV frequencies, W1AW's CW, the 60 m channels, and a few things to
- * listen to (the 14.300 nets, the NCDXF beacons, APRS, the space station); then the time signals, which
- * are off the amateur bands. United States only (IARU Region 2), like the band plan (bandplan.js); a
+ * on HF), its FT8 dial frequency, the SSTV frequencies, W1AW (CW, voice and RTTY bulletins), the AM
+ * calling frequencies, the 60 m channels, and a few things to listen to (the emergency centers with the
+ * 14.300 nets, the NCDXF beacons, APRS, the space station); then the time signals, which are off the
+ * amateur bands. United States only (IARU Region 2), like the band plan (bandplan.js); a
  * click tunes, it never transmits.
  *
  * Each group: its name and its rows, lowest frequency first: [kHz, mode, name, note, modem]. The mode is
  * a spot's (CW | SSB | DIGI | FM | AM), so a click sets the frequency, the mode in the radio's own names
  * (SSB by band, LSB below 10 MHz but USB on 60 m; DIGI as DATA-USB or USB with the Icom DATA switch)
  * and the filter for it, exactly as a click on a spot does. modem, where a row has one, is the Modem
- * window's mode for it (cw | ft8 | sstv): the click shows that mode there too, receive only. An SSTV row
+ * window's mode for it (cw | ft8 | rtty | sstv): the click shows that mode there too, receive only. An
+ * rtty row's frequency is the signal's: the click tunes the dial below it in the data mode (DATA-USB, or
+ * USB with the Icom DATA switch) so the signal sits on the RTTY tab's tones (spots.js RTTY_CENTER_HZ). An SSTV row
  * is its own category (its tag and the mode filter say SSTV) and tunes by its mode: SSB by band on HF,
  * FM for the space station's picture events. A group shows only the rows on the radio's bands; a group
  * with listen: true (the time signals) shows the rows the radio receives (its rx_ranges), off the
@@ -34,8 +37,15 @@
  *     2 m. It has none for 60 m, 70 cm or 23 cm: 5.357 is the US 60 m one, and 432.174 and 1296.174 follow
  *     144.174 as used in North America (sigidwiki.com/wiki/FT8)
  *   W1AW (arrl.org/w1aw-operating-schedule, updated 2026-03-09): code practice, CW bulletins and
- *     qualifying runs on 1.8025, 3.5815, 7.0475, 14.0475, 18.0775, 21.0675, 28.0675 MHz (and 50.350 and
- *     147.555, whose mode the page doesn't give: left out)
+ *     qualifying runs on 1.8025, 3.5815, 7.0475, 14.0475, 18.0775, 21.0675, 28.0675 MHz; voice bulletins on
+ *     1.855, 3.99, 7.29 (AM, double sideband, full carrier), 14.29, 18.16, 21.39, 28.59; digital bulletins
+ *     on 3.5975, 7.095, 14.095, 18.1025, 21.095, 28.095 (arrl.org/digital-transmissions: weekdays at 6 and
+ *     9 PM Eastern, 45.45-baud Baudot, BPSK31 and MFSK16 in a daily revolving order). The ARRL doesn't say
+ *     whether a digital frequency is the mark or the signal's center: the rows take it as the center,
+ *     unconfirmed on the air (2026-11-22). 50.350 and 147.555 are left out: the page gives no mode for them.
+ *   AM calling (arrl.org/am-frequencies; the Considerate Operator's guide): 3.885, 7.290, 14.286
+ *   IARU Global Centres of Activity for emergency traffic (iaru-r1.org, emergency communications
+ *     frequencies): 14.300, 18.160, 21.360, focal points rather than channels
  *   NCDXF / IARU International Beacon Project (ncdxf.org/beacon): 18 beacons, 10 s each, in turn
  *   ARISS (ariss.org/contact-the-iss.html): the space station's voice downlink 145.800 (its SSTV events
  *     too, in FM) and its FM repeater's downlink 437.800
@@ -52,20 +62,25 @@
   const QRP_CW = "Low-power CW", QRP_SSB = "Low-power SSB", FT8 = "Dial frequency, USB", SSTV = "Analog pictures";
   const BEACON = "18 beacons in turn, 10 s each", SIMPLEX = "National FM simplex", WEAK = "Weak-signal SSB and CW";
   const W1AW = "ARRL code practice, bulletins", CH60 = "USB, 100 W ERP at most", TIME = "NIST time signals. Listen only.";
+  const W1AW_V = "ARRL voice bulletins", W1AW_D = "Weekday bulletins, 6 and 9 PM ET", AM = "Full-carrier AM";
 
   global.CALL_FREQS = [
     { band: "160 m", rows: [
       [1802.5, "CW", "W1AW", W1AW, "cw"],
       [1810, "CW", "QRP calling", QRP_CW, "cw"],
       [1840, "DIGI", "FT8", FT8, "ft8"],
+      [1855, "SSB", "W1AW voice", W1AW_V],
       [1910, "SSB", "QRP calling", QRP_SSB],
     ] },
     { band: "80 m", rows: [
       [3560, "CW", "QRP calling", QRP_CW, "cw"],
       [3573, "DIGI", "FT8", FT8, "ft8"],
       [3581.5, "CW", "W1AW", W1AW, "cw"],
+      [3597.5, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [3845, "SSB", "SSTV", SSTV, "sstv"],
+      [3885, "AM", "AM calling", AM],
       [3985, "SSB", "QRP calling", QRP_SSB],
+      [3990, "SSB", "W1AW voice", W1AW_V],
     ] },
     { band: "60 m", rows: [
       [5330.5, "SSB", "Channel 5332", CH60],
@@ -78,8 +93,10 @@
       [7030, "CW", "QRP calling", QRP_CW, "cw"],
       [7047.5, "CW", "W1AW", W1AW, "cw"],
       [7074, "DIGI", "FT8", FT8, "ft8"],
+      [7095, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [7171, "SSB", "SSTV", SSTV, "sstv"],
       [7285, "SSB", "QRP calling", QRP_SSB],
+      [7290, "AM", "AM calling", "W1AW voice bulletins too"],
     ] },
     { band: "30 m", rows: [
       [10106, "CW", "QRP calling", QRP_CW, "cw"],
@@ -89,27 +106,35 @@
       [14047.5, "CW", "W1AW", W1AW, "cw"],
       [14060, "CW", "QRP calling", QRP_CW, "cw"],
       [14074, "DIGI", "FT8", FT8, "ft8"],
+      [14095, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [14100, "CW", "NCDXF beacons", BEACON, "cw"],
       [14227, "SSB", "SSTV overflow", "When 14.230 is busy", "sstv"],
       [14230, "SSB", "SSTV", "Analog pictures, the busiest", "sstv"],
       [14233, "SSB", "SSTV overflow", "Digital SSTV too: not decoded", "sstv"],
       [14285, "SSB", "QRP calling", QRP_SSB],
-      [14300, "SSB", "Maritime net", "Maritime nets. Listen first."],
+      [14286, "AM", "AM calling", AM],
+      [14290, "SSB", "W1AW voice", W1AW_V],
+      [14300, "SSB", "Maritime net", "Maritime, emergency. Listen first."],
     ] },
     { band: "17 m", rows: [
       [18077.5, "CW", "W1AW", W1AW, "cw"],
       [18096, "CW", "QRP calling", QRP_CW, "cw"],
       [18100, "DIGI", "FT8", FT8, "ft8"],
+      [18102.5, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [18110, "CW", "NCDXF beacons", BEACON, "cw"],
       [18130, "SSB", "QRP calling", QRP_SSB],
+      [18160, "SSB", "Emergency", "Emergency center; W1AW voice too"],
     ] },
     { band: "15 m", rows: [
       [21060, "CW", "QRP calling", QRP_CW, "cw"],
       [21067.5, "CW", "W1AW", W1AW, "cw"],
       [21074, "DIGI", "FT8", FT8, "ft8"],
+      [21095, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [21150, "CW", "NCDXF beacons", BEACON, "cw"],
       [21340, "SSB", "SSTV", SSTV, "sstv"],
+      [21360, "SSB", "Emergency", "Emergency center. Listen first."],
       [21385, "SSB", "QRP calling", QRP_SSB],
+      [21390, "SSB", "W1AW voice", W1AW_V],
     ] },
     { band: "12 m", rows: [
       [24906, "CW", "QRP calling", QRP_CW, "cw"],
@@ -121,8 +146,10 @@
       [28060, "CW", "QRP calling", QRP_CW, "cw"],
       [28067.5, "CW", "W1AW", W1AW, "cw"],
       [28074, "DIGI", "FT8", FT8, "ft8"],
+      [28095, "DIGI", "W1AW RTTY", W1AW_D, "rtty"],
       [28200, "CW", "NCDXF beacons", BEACON, "cw"],
       [28385, "SSB", "QRP calling", QRP_SSB],
+      [28590, "SSB", "W1AW voice", W1AW_V],
       [28680, "SSB", "SSTV", SSTV, "sstv"],
       [29600, "FM", "FM calling", SIMPLEX],
     ] },

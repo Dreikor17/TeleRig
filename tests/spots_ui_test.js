@@ -49,7 +49,9 @@
  *       sideband (FM for the space station); a CW, FT8 or SSTV pick (a calling row; a CW or SSTV spot)
  *       shows that mode in the Modem window, which opens if folded and stays closed if closed, and not
  *       while it is sending; the time signals where the radio receives them (AM, by their own name on the
- *       VFO); the 60 m channels in USB; W1AW; the QRP frequencies of QRP ARCI
+ *       VFO); the 60 m channels in USB; W1AW; the QRP frequencies of QRP ARCI; W1AW's RTTY bulletins
+ *       (the signal on the RTTY tab's tones, rtty.js CENTER; marked and named where the dial is) and voice
+ *       bulletins; the AM calling frequencies; the emergency centers
  */
 "use strict";
 const fs = require("fs");
@@ -478,8 +480,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const firsts = e.list.children.map((c) => (c.classList.contains("spots-bandh") ? c.textContent : e.text(c)[0]));
     eq(firsts.slice(0, 2), ["160 m", e.text(rows[0])[0]], "P8 a band's name, then its rows");
     const i20 = firsts.indexOf("20 m");
-    eq(firsts.slice(i20, i20 + 11), ["20 m", "14.047.5", "14.060.0", "14.074.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0", "14.300.0", "17 m"],
-       "P8 ... lowest first, then the next band");
+    eq(firsts.slice(i20, i20 + 14), ["20 m", "14.047.5", "14.060.0", "14.074.0", "14.095.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0",
+                                     "14.286.0", "14.290.0", "14.300.0", "17 m"], "P8 ... lowest first, then the next band");
     e.clock.advance(65000); await settle(e);
     eq(e.asked.length, 1, "P8 nothing is asked of the server while the calling view shows");
     e.click(e.tab("live")); await settle(e);
@@ -550,8 +552,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     check(e.rows().length > 5, "P11 mode CW: there are CW rows");
     eq(modes(), ["CW"], "P11 ... and only CW rows");
     sel.value = "FMAM"; e.change(sel);
-    eq([modes(), e.heads()], [["AM", "FM"], ["10 m", "6 m", "2 m", "70 cm", "Time signals"]],
-       "P11 FM / AM: the FM rows and the time signals (AM); a band with nothing left loses its heading");
+    eq([modes(), e.heads()], [["AM", "FM"], ["80 m", "40 m", "20 m", "10 m", "6 m", "2 m", "70 cm", "Time signals"]],
+       "P11 FM / AM: the FM rows, the AM calling frequencies and the time signals; a band with nothing left loses its heading");
     sel.value = "SSTV"; e.change(sel);
     eq([modes(), e.heads()], [["SSTV"], ["80 m", "40 m", "20 m", "15 m", "10 m", "2 m"]], "P11 SSTV, a category of its own");
     sel.value = "DIGI"; e.change(sel);
@@ -561,7 +563,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     sel.value = ""; e.change(sel);
     chk.checked = true; e.change(chk);
     eq([e.heads(), e.rows().map((r) => e.text(r)[0]), e.status()],
-       [["20 m"], ["14.047.5", "14.060.0", "14.074.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0", "14.300.0"], "9 frequencies"],
+       [["20 m"], ["14.047.5", "14.060.0", "14.074.0", "14.095.0", "14.100.0", "14.227.0", "14.230.0", "14.233.0", "14.285.0", "14.286.0", "14.290.0",
+                   "14.300.0"], "12 frequencies"],
        "P11 this band: the band the radio is on (never the time signals: they are off the amateur bands)");
     e.st = Object.assign({}, e.st, { freq: 146520000 }); e.clock.advance(500);
     eq(e.heads(), ["2 m"], "P11 the radio changes band: the list follows within half a second");
@@ -667,7 +670,8 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
     const usBand = (khz) => US.findIndex(([lo, hi]) => khz >= lo && khz <= hi);
     check(Array.isArray(CALLS) && CALLS.length >= 10, "P17 callfreqs.js: a list of bands");
     // a row's Modem mode fits it: CW decodes CW, FT8 a data row, SSTV the voice sideband on HF and FM above
-    const FITS = { cw: (mode) => mode === "CW", ft8: (mode) => mode === "DIGI", sstv: (mode, khz) => mode === (khz < 30000 ? "SSB" : "FM") };
+    const FITS = { cw: (mode) => mode === "CW", ft8: (mode) => mode === "DIGI", rtty: (mode) => mode === "DIGI",
+                   sstv: (mode, khz) => mode === (khz < 30000 ? "SSB" : "FM") };
     const seen = new Set(), LISTEN = new Set();
     let last = 0, listening = false;
     for (const g of CALLS) {
@@ -1283,6 +1287,22 @@ const settle = async (e) => { for (let i = 0; i < 6; i++) await e.flush(); };
        "P29 ... the four channels and the FT8 frequency in the segment");
     eq([e.text(e.row("18.077.5"))[2], e.text(e.row("1.802.5"))[2], e.text(e.row("10.106.0"))[2], e.text(e.row("18.096.0"))[2], e.row("10.116.0"), e.row("18.086.0")],
        ["W1AW", "W1AW", "QRP calling", "QRP calling", undefined, undefined], "P29 W1AW's 17 m CW (18.0775, today's schedule); QRP ARCI's 10.106 and 18.096");
+    // W1AW's RTTY bulletins: the signal (the row's frequency) on the RTTY tab's tones, the dial below it
+    const CENTER = +fs.readFileSync(require("path").join(__dirname, "..", "frontend", "rtty.js"), "utf8").match(/const CENTER = (\d+);/)[1];
+    eq(CENTER, 2210, "P29 rtty.js's tones are centered where the RTTY rows put the signal");
+    eq([e.text(e.row("14.095.0")), pick("14.095.0", { mode_name: "USB" })],
+       [["14.095.0", "DATA", "W1AW RTTY", "Weekday bulletins, 6 and 9 PM ET", ""], [[F(14095000 - CENTER), M("DATA-USB"), NAR, W(17)], ["rtty"]]],
+       "P29 W1AW RTTY: DATA-USB with the dial 2210 Hz under the signal, and the Modem window shows RTTY");
+    e.st = Object.assign({}, e.st, { freq: 14095000 - CENTER, mode_name: "DATA-USB" }); e.clock.advance(500);
+    eq([e.marked(), e.ctx.SpotsPanel.here(14095000 - CENTER).name, e.ctx.SpotsPanel.here(14095000)], [["14.095.0"], "20 m W1AW RTTY", null],
+       "P29 ... the row is marked Tuned, and the VFO names it, where the dial is");
+    e.st = Object.assign({}, e.st, { freq: 14074000, mode_name: "USB" }); e.clock.advance(500);
+    eq([pick("14.290.0")[0], pick("3.990.0", { mode_name: "USB" })[0], pick("7.290.0")[0], pick("21.360.0", { mode_name: "USB" })[0]],
+       [[F(14290000)], [F(3990000), M("LSB"), NAR, W(14)], [F(7290000), M("AM"), NAR], [F(21360000)]],
+       "P29 W1AW voice (USB on 20 m, LSB on 80 m); 7.290 AM; the 15 m emergency center USB");
+    eq([e.text(e.row("7.290.0")).slice(1, 4), e.text(e.row("18.160.0")).slice(1, 4), e.text(e.row("14.286.0")).slice(1, 4)],
+       [["AM", "AM calling", "W1AW voice bulletins too"], ["SSB", "Emergency", "Emergency center; W1AW voice too"], ["AM", "AM calling", "Full-carrier AM"]],
+       "P29 one row where two lists share a frequency: 7.290 (AM calling, W1AW voice), 18.160 (emergency, W1AW voice)");
     const nine = calling({ radio: R("ic9700"), modem: true, modemTile: "grid" });
     await settle(nine);
     eq([nine.row("10.000.0"), nine.ctx.SpotsPanel.here(10000000)], [undefined, null], "P29 the IC-9700 doesn't receive WWV: no row, nothing on the VFO");

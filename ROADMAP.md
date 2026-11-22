@@ -206,6 +206,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   on the radios that receive there (not the IC-9700), which the VFO names "WWV". Heard voice on an SSTV
   frequency is normal: SSTV operators talk between pictures, and those frequencies are in the phone
   band.
+- **W1AW's bulletins, the AM calling frequencies and the emergency centers in the Calling list.** W1AW's
+  voice bulletins (1.855, 3.990, 7.290 in AM, 14.290, 18.160, 21.390, 28.590) and its RTTY bulletins
+  (3.5975, 7.095, 14.095, 18.1025, 21.095, 28.095: weekdays at 6 and 9 PM Eastern, Baudot in turn with
+  PSK31 and MFSK16). A click on an RTTY one tunes DATA-USB with the signal on the RTTY tab's tones and
+  shows RTTY in the Modem window; the ARRL doesn't say whether its frequency is the mark or the signal's
+  center, so the rows take the center until a bulletin decodes on the air. The AM calling frequencies
+  3.885, 7.290 and 14.286, and the emergency centers of activity 18.160 and 21.360 beside 14.300.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
