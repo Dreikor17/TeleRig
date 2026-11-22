@@ -27,6 +27,9 @@
  *     passband: the width, centred on the marker.
  *  G. The FFT for a frame (AfMap.plan: ~1 bin a pixel, 4096..16384; as before for 0..3600 Hz) and the
  *     passband's bins (AfMap.pass; none for a wider filter, which keeps the mean floor).
+ *  I. The tuned frequency's label reads whole: on a plate of the scope's own colour (8 to 20 px, 3 px
+ *     wider than the text each side), the marker's line starting under it (it ran through the digits:
+ *     the reported picture), the label and its plate whole on the canvas with the marker at an edge.
  *  H. The noise floor (AfMap.floor) on synthetic frames through a CW filter: the old mean lights the
  *     passband's rim up in two humps (the reported picture; a 250 Hz filter all over); measured inside the
  *     passband the rim looks like the middle, the noise like a flat band's on the old path, the outside
@@ -310,6 +313,56 @@ test("H the noise floor: measured inside the passband, no humps at its edges", (
   check(past.at(250) > 40 && past.at(1150) > 40, "H outside the passband a signal that beats its noise still shows, either side (" + f1(past.at(250)) + ", " + f1(past.at(1150)) + ")");
   near(t3.at(700), t1.at(700), 6, "H ... as bright with two strong tones beside it in a 250 Hz filter");
   near(t3.floorMid, q.floorMid, 1.5, "H three tones in a 250 Hz filter lift the floor about 1 dB at most (" + f1(t3.floorMid - q.floorMid) + " dB)");
+});
+
+test("I the tuned label: on a plate of the scope's colour, the marker's line under it, all of it on the canvas", () => {
+  const FONT = "10px Consolas, monospace";
+  let at = null;
+  const segs = [], plates = [], texts = [];
+  const t = { fillStyle: null, strokeStyle: null, textAlign: "start", textBaseline: "alphabetic", font: "10px sans-serif",
+              moveTo: (x, y) => { at = [x, y]; }, lineTo: (x, y) => { segs.push([t.strokeStyle, at[0], at[1], x, y]); at = [x, y]; },
+              fillRect: (x, y, w, h) => plates.push([t.fillStyle, x, y, w, h]),
+              fillText: (s, x, y) => texts.push([t.fillStyle, String(s), x, y, t.textAlign, t.textBaseline, t.font]),
+              measureText: (s) => ({ width: String(s).length * (t.font === FONT ? 6 : 9) }) };   // another font, another width
+  const ctx = new Proxy(t, { get: (o, k) => (k in o ? o[k] : () => {}), set: (o, k, v) => { o[k] = v; return true; } });
+  const draw = (meta, mode, theme) => {
+    segs.length = 0; plates.length = 0; texts.length = 0; t.font = "10px sans-serif";
+    const sc = Object.create(Scope.prototype);
+    Object.assign(sc, { octx: ctx, W, scopeH: 300, specH: 150, wfH: 150, meta, opMode: mode, showBandplan: false, bandplan: [] });
+    if (theme) sc.pal = Scope.PALETTES[theme];
+    sc.drawOverlay();
+    const pal = sc.pal;
+    return { sc, pal, label: texts.find((x) => x[0] === pal.tuneText), plate: plates.filter((p) => p[0] === pal.tuneBack),
+             line: segs.filter((s) => s[0] === pal.tune && s[1] === s[3] && s[4] === 300) };
+  };
+  // CW on the audio scope (the reported picture): the dial to 10 Hz across the marker at the pitch
+  for (const [mode, theme] of [["CW-USB"], ["CW-LSB"], ["CW-USB", "screen"]]) {
+    const st = { freq: 7020910, key_pitch: 40, cw_disp: 1 }, tag = "I " + mode + (theme ? " (" + theme + ")" : "");
+    const view = AfMap.view(st.freq, SPAN, mode, AfMap.cw(FT991A, st, mode));
+    const d = draw(view, mode, theme), xc = d.sc.freqToX(view.tuned), tw = 6 * "7.02091 MHz".length;
+    eq(d.label && d.label.slice(1), ["7.02091 MHz", xc, 9, "center", "top", FONT], tag + ": the label centred on the marker, its top at 9 px");
+    eq(d.plate.length, 1, tag + ": on one plate");
+    const [, px, py, pw, ph] = d.plate[0] || [];
+    eq([py, py + ph], [8, 20], tag + ": the plate from 8 px (the triangle's tip) to 20 px: the label's 10 px inside it");
+    near(px, xc - tw / 2 - 3, 1e-9, tag + ": ... 3 px wider than the text on the left");
+    near(px + pw, xc + tw / 2 + 3, 1e-9, tag + ": ... and on the right");
+    eq(d.line.map((s) => [s[1], s[2]]), [[xc, 20]], tag + ": the marker's line starts under the plate: no line through the digits");
+  }
+  const rgba = (hex) => "rgba(" + [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(",") + ",.85)";
+  for (const th of ["night", "day", "screen"]) {
+    eq(Scope.PALETTES[th].tuneBack, rgba(Scope.PALETTES[th].bg), "I " + th + ": the plate is the scope's own background, a little see-through");
+  }
+  // the marker at an edge of a sweep: the label and its plate stay whole on the canvas, the line still under it
+  for (const [lower, upper, tuned, text] of [[144100000, 144300000, 144100100, "144.1001 MHz"], [144100000, 144300000, 144299900, "144.2999 MHz"],
+                                             [1296170000, 1296180000, 1296170010, "1296.17001 MHz"], [1296170000, 1296180000, 1296179990, "1296.17999 MHz"]]) {
+    const d = draw({ mode: 1, lower, upper, tuned, filterBw: 0 }, "USB"), tag = "I " + text + " at an edge";
+    const xc = d.sc.freqToX(tuned), [, px, , pw] = d.plate[0] || [];
+    eq(d.label && d.label[1], text, tag + ": labelled");
+    check(px >= 0 && px + pw <= W && (px === 0 || px + pw === W), tag + ": the plate whole on the canvas, against its edge (" + px + " .. " + (px + pw) + ")");
+    near(d.label[2], px + pw / 2, 1e-9, tag + ": ... the label in its middle");
+    check(xc >= px && xc <= px + pw, tag + ": ... the marker runs into it (" + xc + ")");
+    eq(d.line.map((s) => s[2]), [20], tag + ": ... and its line starts under it");
+  }
 });
 
 (async () => {

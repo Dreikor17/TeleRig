@@ -152,16 +152,17 @@ function draw(t) {
 {
   const P = Scope.PALETTES;
   check(P.day === P.night, "D day and night share the instrument colours");
-  // the colours the scope always drew (before themes existed): night and day must not move
+  // the colours the scope always drew (before themes existed): night and day must not move; since 11-21 the
+  // tuned label stands on a plate of the scope's own colour (the last overlay colour)
   const before = { bg: "#020c14", strokes: ["rgba(20,90,130,.45)", "#5ff0c8", "rgba(255,200,120,.55)"],
                    fill: ["rgba(60,210,170,.55)", "rgba(20,90,120,.10)"],
-                   overlay: ["rgba(90,200,255,.16)", "rgba(120,220,255,.5)", "#ff9a2e", "#ff9a2e"], text: ["#ffb15a"] };
+                   overlay: ["rgba(90,200,255,.16)", "rgba(120,220,255,.5)", "#ff9a2e", "#ff9a2e", "rgba(2,12,20,.85)"], text: ["#ffb15a"] };
   eq(draw(), before, "D night draws exactly the old colours");
   eq(draw("day"), before, "D day draws exactly the old colours");
   eq(draw("purple"), before, "D an unknown theme draws night");
   eq(draw("screen"), { bg: "#000000", strokes: ["rgba(70,80,106,.55)", "#ffffff", "rgba(156,203,255,.5)"],
                        fill: ["rgba(220,228,245,.55)", "rgba(140,150,175,.10)"],
-                       overlay: ["rgba(255,255,255,.12)", "rgba(255,255,255,.45)", "#3bd16f", "#3bd16f"], text: ["#5be38a"] },
+                       overlay: ["rgba(255,255,255,.12)", "rgba(255,255,255,.45)", "#3bd16f", "#3bd16f", "rgba(0,0,0,.85)"], text: ["#5be38a"] },
      "D the radio screen: black spectrum, white trace, green tuned marker");
   // the waterfall colormap and floor
   const x = scope();

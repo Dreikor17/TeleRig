@@ -129,6 +129,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   layout is now tall enough for both). SSTV's received pictures are kept by the browser (the newest 12,
   as many as the strip holds), so a reload or a restart of the browser no longer loses them; the X
   deletes a picture there too.
+- **The scope's frequency reads whole.** The tuning line ran down through the middle of the frequency
+  over the scope (14.05|780 MHz in CW). The line now starts under the label, and the label stands on a
+  small plate of the scope's own colour, so neither the line, the passband's shading nor a strong signal
+  right on the marker covers a digit. With the marker at an edge of the scope the label stays whole.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

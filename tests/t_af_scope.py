@@ -20,7 +20,8 @@ def af_scope_cw_map_in_node_vm(ctx):
     """waterfall.js AfMap: in CW every side x display setting x pitch reads true, the marker sits at the
     pitch and a tap lands the signal on it; SSB / data unchanged; the marker is drawn at the pitch. In CW
     with the radio's width known the scope zooms to 2.5 widths around the pitch (reading as true, the
-    passband shaded) and the noise floor is measured inside the passband: no humps at its edges."""
+    passband shaded) and the noise floor is measured inside the passband: no humps at its edges. The
+    tuned frequency's label reads whole: on a plate of the scope's colour, the marker's line under it."""
     r = subprocess.run(["node", str(REPO / "tests" / "af_scope_test.js")], capture_output=True, text=True,
                        timeout=120, cwd=str(REPO))
     eq(r.returncode, 0, f"af_scope_test.js: {r.stdout}{r.stderr}")

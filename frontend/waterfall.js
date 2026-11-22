@@ -7,6 +7,9 @@
   const FLOOR_DB = 22;            // approximate noise floor amplitude
   const STRIP_H = 16;             // band-plan segment height (px)
   const STRIP_PX = STRIP_H + 2;   // the band plan's own canvas above the scope (#bandStrip), 1 px clear above / below
+  // the tuned frequency's label (drawOverlay): on a plate from LABEL_Y0 to LABEL_Y1 px, right under the
+  // marker's 8 px triangle, LABEL_PAD px wider than its text each side; the marker's line starts under it
+  const LABEL_Y0 = 8, LABEL_Y1 = 20, LABEL_PAD = 3;
 
   // Scope colours per page theme (TR.theme()): night and day share the instrument look; "screen" is
   // the radio's own screen (black spectrum, white trace, green tuned marker, a deep-blue waterfall
@@ -16,7 +19,7 @@
       bg: "#020c14", wfBg: "#020c14", grid: "rgba(20,90,130,.45)",
       fillTop: "rgba(60,210,170,.55)", fillBot: "rgba(20,90,120,.10)", trace: "#5ff0c8", hold: "rgba(255,200,120,.55)",
       pass: "rgba(90,200,255,.16)", passEdge: "rgba(120,220,255,.5)", passText: "rgba(120,220,255,.85)",
-      tune: "#ff9a2e", tuneText: "#ffb15a",
+      tune: "#ff9a2e", tuneText: "#ffb15a", tuneBack: "rgba(2,12,20,.85)",   // tuneBack: the label's plate, the scope's own colour
       // Icom-style waterfall colormap: dark navy -> blue -> cyan -> green -> yellow -> red -> white
       lut: [[0.00, [2, 6, 18]], [0.18, [12, 28, 110]], [0.36, [10, 110, 200]], [0.52, [10, 200, 200]],
             [0.66, [40, 210, 90]], [0.80, [240, 220, 40]], [0.92, [240, 90, 30]], [1.00, [255, 245, 230]]],
@@ -25,7 +28,7 @@
       bg: "#000000", wfBg: "#0c1a66", grid: "rgba(70,80,106,.55)",
       fillTop: "rgba(220,228,245,.55)", fillBot: "rgba(140,150,175,.10)", trace: "#ffffff", hold: "rgba(156,203,255,.5)",
       pass: "rgba(255,255,255,.12)", passEdge: "rgba(255,255,255,.45)", passText: "rgba(255,255,255,.8)",
-      tune: "#3bd16f", tuneText: "#5be38a",
+      tune: "#3bd16f", tuneText: "#5be38a", tuneBack: "rgba(0,0,0,.85)",
       // the noise floor sits in blue, as on the radio: deep blue -> blue -> cyan -> green -> yellow -> red
       lut: [[0.00, [12, 26, 102]], [0.20, [29, 53, 181]], [0.38, [40, 110, 230]], [0.52, [22, 180, 232]],
             [0.66, [63, 210, 107]], [0.80, [242, 211, 59]], [0.92, [240, 82, 46]], [1.00, [255, 240, 230]]],
@@ -324,11 +327,23 @@
         ctx.moveTo(x0, 0); ctx.lineTo(x0, h); ctx.moveTo(x1, 0); ctx.lineTo(x1, h); ctx.stroke();
         pass = [Math.min(x0, x1), Math.max(x0, x1)];
       }
-      // tuned channel marker
+      // the tuned frequency's label, worked out before the marker: { text, cx, x0, x1 } (its plate's sides)
+      const [flo, fhi] = this.visibleRange();
+      let label = null;
+      if (tuned && fhi > flo) {
+        const dec = fhi - flo <= 10000 ? 5 : 4;                  // 10 Hz digits on a narrow view (AF / CW)
+        const text = (tuned / 1e6).toFixed(dec) + " MHz";
+        ctx.font = "10px Consolas, monospace";                   // measured in the font it is drawn in
+        const half = ctx.measureText(text).width / 2 + LABEL_PAD;
+        const cx = Math.max(half, Math.min(w - half, this.freqToX(tuned)));   // all of it on the canvas
+        label = { text, cx, x0: cx - half, x1: cx + half };
+      }
+      // tuned channel marker: its line starts under the label's plate (it ran through the digits); the
+      // triangle above points down to the label
       if (tuned) {
         const xc = this.freqToX(tuned);
         ctx.strokeStyle = this.pal.tune; ctx.lineWidth = 1.4;
-        ctx.beginPath(); ctx.moveTo(xc, 0); ctx.lineTo(xc, h); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(xc, LABEL_Y1); ctx.lineTo(xc, h); ctx.stroke();
         // little triangle at top
         ctx.fillStyle = this.pal.tune;
         ctx.beginPath(); ctx.moveTo(xc - 5, 0); ctx.lineTo(xc + 5, 0); ctx.lineTo(xc, 8); ctx.closePath(); ctx.fill();
@@ -341,15 +356,15 @@
       // scope is explicit and verifiable. The left/right EDGE frequencies are the HTML labels
       // #lblLeft/#lblRight over the scope (app.js updateScopeLabels, same visible range); they are
       // drawn only there, never also on this canvas (that drew every edge twice, one over the other).
-      const [flo, fhi] = this.visibleRange();
       if (fhi > flo) {
         ctx.font = "10px Consolas, monospace";
         ctx.textBaseline = "top";
-        if (tuned) {                                            // centre indicator = the tuned freq
-          const cx = Math.max(40, Math.min(w - 40, this.freqToX(tuned)));
-          const dec = fhi - flo <= 10000 ? 5 : 4;                // 10 Hz digits on a narrow view (AF / CW)
+        if (label) {                                            // centre indicator = the tuned freq
+          // on a plate of the scope's own colour: the passband, the grid or a peak under it hide no digit
+          ctx.fillStyle = this.pal.tuneBack;
+          ctx.fillRect(label.x0, LABEL_Y0, label.x1 - label.x0, LABEL_Y1 - LABEL_Y0);
           ctx.textAlign = "center"; ctx.fillStyle = this.pal.tuneText;
-          ctx.fillText((tuned / 1e6).toFixed(dec) + " MHz", cx, 9);
+          ctx.fillText(label.text, label.cx, LABEL_Y0 + 1);
         }
         // the band-plan view: its passband is a few pixels at this span, so it says how wide it is,
         // under the frequency, beside the band on the band's own side of the marker
