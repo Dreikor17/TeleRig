@@ -171,34 +171,6 @@
   </section>
 </div>
 
-<div class="grid-stack-item" gs-id="ptt" data-tile="ptt">
-  <section class="grid-stack-item-content tile" aria-labelledby="th-ptt">
-    <header class="tile-head">
-      <svg class="tile-icon" aria-hidden="true"><use href="#i-mic"/></svg>
-      <h2 class="tile-title" id="th-ptt">TRANSMIT</h2>
-      <span class="tile-summary" aria-hidden="true"></span>
-      <div class="tile-actions">
-        <button type="button" class="tile-btn tile-up" aria-label="Move Transmit up" title="Move up"><svg aria-hidden="true"><use href="#i-arrow-up"/></svg></button>
-        <button type="button" class="tile-btn tile-down" aria-label="Move Transmit down" title="Move down"><svg aria-hidden="true"><use href="#i-arrow-down"/></svg></button>
-        <button type="button" class="tile-btn tile-collapse" aria-expanded="true" aria-label="Collapse Transmit" title="Collapse"><svg aria-hidden="true"><use href="#i-chevron-up"/></svg></button>
-        <button type="button" class="tile-btn tile-remove" aria-label="Remove Transmit panel" title="Remove panel"><svg aria-hidden="true"><use href="#i-x"/></svg></button>
-      </div>
-    </header>
-    <div class="tile-body tile-ptt"><div class="tile-fit">
-      <button class="key ptt ptt-big" id="pttBtn" data-act="ptt" data-tx aria-pressed="false">PTT</button>
-      <!-- ATAS manual antenna tuning — shown only when TUNER SELECT = ATAS. Steps the
-           motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter.
-           A fixed row of the PTT tile: showing it never resizes a desktop tile (G-15). -->
-      <div class="atas-tune" id="atasTune" hidden data-tx>
-        <span class="atas-lbl" title="Active-Tuning Antenna System (ATAS-120A) manual tuning">ATAS</span>
-        <button class="key atas-btn" data-act="atas_step" data-dir="1" title="Extend the ATAS element — hold PTT and step to minimum SWR">&#9650;</button>
-        <button class="key atas-btn" data-act="atas_step" data-dir="-1" title="Retract the ATAS element — hold PTT and step to minimum SWR">&#9660;</button>
-        <span class="atas-hint" id="atasHint">key PTT · watch SWR</span>
-      </div>
-    </div></div>
-  </section>
-</div>
-
 <div class="grid-stack-item" gs-id="audio" data-tile="audio">
   <section class="grid-stack-item-content tile" aria-labelledby="th-audio">
     <header class="tile-head">
@@ -225,6 +197,18 @@
         <div class="host-audio-info" id="hostAudioInfo" hidden></div>
         <div class="mic-meter" id="micMeter" data-tx><span>MIC</span><div class="mic-bar"><div class="mic-bar-fill" id="micLevel"></div></div></div>
         <label class="sl" title="Volume: 0 dB is the audio as the radio sends it; up to +24 dB more"><span>VOL</span><input type="range" min="0" max="100" step="1" id="vol" value="60"><b class="sl-val" id="volVal">0 dB</b></label>
+      </div>
+      <!-- PTT (it had a Transmit panel of its own until 2026-11-22): under the audio controls, taking the room
+           they leave. Operators only ([data-tx]); hidden on a radio that can't transmit (app.js). -->
+      <button class="key ptt ptt-big" id="pttBtn" data-act="ptt" data-tx aria-pressed="false">PTT</button>
+      <!-- ATAS manual antenna tuning — shown only when TUNER SELECT = ATAS. Steps the
+           motorized antenna up/down (mic UP/DN) while you hold PTT and watch the SWR meter.
+           A fixed row under PTT: showing it never resizes a desktop tile (G-15). -->
+      <div class="atas-tune" id="atasTune" hidden data-tx>
+        <span class="atas-lbl" title="Active-Tuning Antenna System (ATAS-120A) manual tuning">ATAS</span>
+        <button class="key atas-btn" data-act="atas_step" data-dir="1" title="Extend the ATAS element — hold PTT and step to minimum SWR">&#9650;</button>
+        <button class="key atas-btn" data-act="atas_step" data-dir="-1" title="Retract the ATAS element — hold PTT and step to minimum SWR">&#9660;</button>
+        <span class="atas-hint" id="atasHint">key PTT · watch SWR</span>
       </div>
     </div></div>
   </section>

@@ -125,7 +125,7 @@
       if (micOn) send({ action: "mic", on: true });
     }
     applyStatusUi();
-    try { Layout().applyGates && Layout().applyGates(); } catch (_) {}   // the role may gate the PTT tile (§3.8)
+    try { Layout().applyGates && Layout().applyGates(); } catch (_) {}   // gates (§3.8): none now; PTT is in the Audio panel, [data-tx] hides it by role
   }
 
   // ---- TX: server-derived ownership (G-1, AR-8), claim seq + heartbeats (§2.13, AR-46) ----

@@ -1364,24 +1364,24 @@ body.arranging .tile-body{opacity:.6}
 .tile:has(#bands){border-color:rgba(16,185,129,.30)}
 .tile:has(#bands.sub-active){border-color:rgba(59,130,246,.35)}
 .tile:has(#bands.split){border-color:rgba(245,158,11,.40)}
-/* PTT tile: the button fills the body; ATAS is ONE fixed compact row under it (G-15, D-11). The default
-   5-row desktop tile fits with and without that row (1280×800 and up; 1280×720 through the short-body
-   rule below), so TUNER SELECT = ATAS never makes the tile scroll or resize. The row is 31 px: label,
-   ▲ ▼ and a one-line hint (cut with …, left out when the tile is too narrow for it). layout.js
-   TILES.ptt.bodyPxAlt (84 px) is this content: PTT 44 + gap 6 + ATAS 31 (+3). On a phone the keys keep
-   their 44 px touch height (a 52 px row), and the phone tile takes 6 rows with ATAS (bodyPxAltPhone). */
-.tile-ptt{container-type:size}
-.tile-ptt>.tile-fit{height:100%;display:flex;flex-direction:column;gap:6px}
-.tile-ptt #pttBtn{flex:1 1 auto;width:100%;min-height:44px;font-size:clamp(14px,11cqmin,28px)}
-.tile-ptt #atasTune{flex:0 0 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;min-width:0;
+/* the Audio panel holds PTT (the Transmit panel's, 2026-11-22): the audio controls at the top, PTT under them
+   and, when TUNER SELECT = ATAS, ONE fixed compact ATAS row under PTT (G-15, D-11): showing it never resizes a
+   desktop tile. On the desktop PTT takes the room the audio controls leave (at least 44 px, 34 in a short
+   panel); on a phone, where the panel's height follows its content, PTT is a fixed 56 px. The ATAS row is
+   31 px: label, ▲ ▼ and a one-line hint (cut with …, left out when the panel is too narrow for it). The
+   default 7-row panel (measured): 1280x800, PTT 73 px, 38 with the ATAS row; 1280x720, PTT 52 px (with the
+   ATAS row the panel scrolls 9 px there: make it a row taller). layout.js TILES.audio: bodyPx = the short
+   panel's audio controls 63 + gap 4 + PTT 34 (+3); bodyPxAlt adds the ATAS row (4 + 31). */
+.tile-audio>.tile-fit{display:flex;flex-direction:column;gap:6px}
+body[data-device=desktop] .tile-audio>.tile-fit{height:100%}
+.tile-audio .audio-grp{flex:0 0 auto}
+.tile-audio #pttBtn{flex:1 1 auto;width:100%;min-height:44px;font-size:clamp(14px,11cqmin,28px)}
+body:not([data-device=desktop]) .tile-audio #pttBtn{flex:0 0 auto;min-height:56px;font-size:20px}
+.tile-audio #atasTune{flex:0 0 auto;flex-direction:row;align-items:center;justify-content:flex-start;gap:6px;min-width:0;
   padding:3px 6px;border-radius:8px}
-.tile-ptt #atasTune .atas-btn{flex:0 0 auto;min-width:40px;padding:3px 10px}
-.tile-ptt #atasTune .atas-hint{flex:1 1 0;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@container (max-width:240px){ .tile-ptt #atasTune .atas-hint{display:none} }   /* a 2-column tile: label + ▲ ▼ only */
-@container (max-height:80px){                                               /* a short desktop body (cells < 26 px) */
-  .tile-ptt>.tile-fit{gap:4px}
-  .tile-ptt #pttBtn{min-height:34px}
-}
+.tile-audio #atasTune .atas-btn{flex:0 0 auto;min-width:40px;padding:3px 10px}
+.tile-audio #atasTune .atas-hint{flex:1 1 0;min-width:0;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@container (max-width:240px){ .tile-audio #atasTune .atas-hint{display:none} }   /* a 2-column panel: label + ▲ ▼ only */
 .tile:has(#pttBtn.tx-mine){border-color:var(--danger);box-shadow:0 0 0 1px var(--danger),0 0 24px rgba(239,68,68,.25)}
 .tile:has(#pttBtn.tx-busy),.tile:has(#pttBtn.tx-external){border-color:rgba(245,158,11,.55)}
 /* scope tile (§3.16): spectrum fixed, waterfall flexes; the split is a fraction applied by app.js */
@@ -1395,11 +1395,13 @@ body.arranging .tile-body{opacity:.6}
 .tile-scope .scope-ctl{flex:0 0 auto;margin:0;padding:6px 8px;border-top:1px solid var(--border)}
 /* audio: tighter rows when its desktop tile is short */
 body[data-device=desktop] .tile-audio{container-type:size}
-@container (max-height:90px){
+@container (max-height:160px){                              /* (PTT is in it now: the controls 63 px here, PTT >= 34) */
   .audio-grp .row{margin-bottom:4px}
   .audio-grp .key{padding:5px 6px}
   .audio-grp .mic-meter{margin-bottom:4px}
   .audio-grp .sl input[type=range]{margin:0}
+  .tile-audio>.tile-fit{gap:4px}
+  .tile-audio #pttBtn{min-height:34px}
 }
 /* controls: the tab bar sits flush at the top of the scrolling body */
 .tile-controls{padding-top:0}
@@ -1465,8 +1467,7 @@ body.tr-nogrid #tileParking{display:flex;flex-direction:column;gap:8px}
 body.tr-nogrid .tile-scope{height:60vh}
 body.tr-nogrid .tile-vfo{height:150px}
 body.tr-nogrid .tile-vfo:has(#bands.dual){height:200px}
-body.tr-nogrid .tile-ptt{height:110px}
-body.tr-nogrid .tile-ptt:has(#atasTune:not([hidden])){height:150px}
+body.tr-nogrid .tile-audio #pttBtn{flex:0 0 64px}
 body.tr-nogrid .tile-audio{container-type:normal}
 body.tr-nogrid .tile-remove,body.tr-nogrid .tile-collapse,body.tr-nogrid .tile-up,body.tr-nogrid .tile-down{display:none}
 body.tr-nogrid .ui-resizable-handle{display:none!important}

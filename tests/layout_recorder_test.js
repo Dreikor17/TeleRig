@@ -1,17 +1,19 @@
 /* Layouts saved by an older TeleRig, tested on the REAL tr.js + layout.js in a Node vm on tests/fakedom.js
  * with a stand-in GridStack that records every placement (no browser, no server, no radio): where the
- * Recorder panel goes, where a CW panel goes now that CW is a mode of the Modem window, and where a Meter
- * panel's rows go now that the meter is in the VFO panel.
+ * Recorder panel goes, where a CW panel goes now that CW is a mode of the Modem window, where a Meter
+ * panel's rows go now that the meter is in the VFO panel, and where a Transmit panel's place goes now that
+ * PTT is in the Audio panel.
  * Run by tests/t_layout_ui.py (unit):
  *
  *     node tests/layout_recorder_test.js   -> exit 0 and "ALL PASS", or exit 1 naming each failure
  *
  *  L1. no saved layout: the default has the Recorder under Controls (desktop 0/18 3x6, Controls 3x18;
- *      phone right after Controls).
+ *      phone right after Controls); no Transmit panel: the VFO 6 columns wide, the Audio panel (with PTT)
+ *      beside it; on a phone the Audio panel right under the VFO.
  *  L2. a desktop layout saved before the Recorder existed: it arrives under Controls, shown, and a
  *      full-height Controls gives up the rows it takes; every other tile stays where it was (that
- *      layout's CW panel: the Modem window in its place, F1; its Meter panel's rows: the VFO, Transmit
- *      and Audio panels above it, M1).
+ *      layout's CW panel: the Modem window in its place, F1; its Transmit panel's columns: the VFO beside
+ *      it, P2; its Meter panel's rows: the VFO and Audio panels above it, M1).
  *  L3. a short Controls keeps its height: the Recorder goes in the rows under it.
  *  L4. Controls hidden: the Recorder starts hidden too (like any tile new to a layout).
  *  L5. a phone layout saved before the Recorder: it comes right after Controls, the tiles after it
@@ -32,6 +34,16 @@
  *  M3. a Meter panel the user had closed: nothing changes.
  *  M4. a panel above it that reaches past its columns, or a collapsed one, keeps its size.
  *  M5. phone: the panels close up, in their order (L5).
+ *  P1. a desktop layout with the Transmit panel showing and a panel right under the Audio panel beside it
+ *      (the operator's picture, 2026-11-22): the Audio panel moves into the Transmit panel's place, the
+ *      Spots panel under it grows up to the top; nothing else moves; the next save has no Transmit panel.
+ *  P2. nothing right under the Audio panel: the VFO left of the Transmit panel takes its columns.
+ *  P3. the Audio panel hidden: it takes the Transmit panel's place, shown (so PTT stays in view).
+ *  P4. a Transmit panel the user had closed: nothing changes.
+ *  P5. no panel beside it on the same rows: its place stays empty, nothing moves.
+ *  P6. phone: the Audio panel takes the Transmit panel's place in the list, shown.
+ *  T1. PTT is in the Audio panel: collapsing it while this page transmits is refused (as collapsing the
+ *      Transmit panel was), with a notice; off the air it collapses.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -40,7 +52,7 @@ let failures = 0, checks = 0;
 function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL " + msg); } }
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
-const IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"];   // the page's panels
+const IDS = ["vfo", "audio", "scope", "controls", "recorder", "spots", "sstv"];   // the page's panels
 const OLD_DESKTOP = [
   { id: "controls", x: 0, y: 0, w: 3, h: 24 }, { id: "vfo", x: 3, y: 0, w: 4, h: 5 }, { id: "ptt", x: 7, y: 0, w: 2, h: 5 },
   { id: "audio", x: 9, y: 0, w: 3, h: 5 }, { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 6, h: 15 },
@@ -83,8 +95,8 @@ function boot(layout, desktop) {
   e.load("layout.js");
   e.domReady();
   e.clock.advance(100);
-  e.at = (id) => { const n = e.doc.querySelector('.grid-stack-item[data-tile="' + id + '"]').gridstackNode;
-                   return n ? (desktop ? [n.x, n.y, n.w, n.h] : n.y) : null; };
+  e.at = (id) => { const el = e.doc.querySelector('.grid-stack-item[data-tile="' + id + '"]'), n = el && el.gridstackNode;
+                   return n ? (desktop ? [n.x, n.y, n.w, n.h] : n.y) : null; };     // a retired panel: no tile at all
   e.put = put;
   return e;
 }
@@ -98,20 +110,18 @@ function boot(layout, desktop) {
   check(p.at("recorder") !== null && p.at("recorder") > p.at("controls") && (p.at("sstv") === null),
         "L1 phone default: the Recorder right after Controls: " + JSON.stringify([p.at("controls"), p.at("recorder")]));
   const order = IDS.filter((id) => p.at(id) !== null).sort((a, b) => p.at(a) - p.at(b));
-  eq(order, ["vfo", "ptt", "scope", "audio", "controls", "recorder"], "L1 phone default order");
-  eq([d.at("vfo"), d.at("ptt"), d.at("audio"), d.at("scope")], [[3, 0, 4, 7], [7, 0, 2, 7], [9, 0, 3, 7], [3, 7, 9, 17]],
-     "L1 desktop default: the VFO (with its meter), Transmit and Audio 7 rows, the Scope under them");
+  eq(order, ["vfo", "audio", "scope", "controls", "recorder"], "L1 phone default order: the Audio panel (with PTT) right under the VFO");
+  eq([d.at("vfo"), d.at("audio"), d.at("scope")], [[3, 0, 6, 7], [9, 0, 3, 7], [3, 7, 9, 17]],
+     "L1 desktop default: the VFO (with its meter) 6 columns, the Audio panel (with PTT) beside it, 7 rows; the Scope under them");
 }
 // L2: a desktop layout saved before the Recorder
 {
   const d = boot({ rev: 4, desktop: { column: 12, items: OLD_DESKTOP } }, true);
   eq([d.at("controls"), d.at("recorder")], [[0, 0, 3, 18], [0, 18, 3, 6]], "L2 the Recorder arrives under a full-height Controls");
-  for (const it of OLD_DESKTOP.filter((i) => i.id !== "controls" && i.id !== "meter")) {
-    const id = it.id === "cw" ? "sstv" : it.id;                // the CW panel's place: the Modem window's (F1)
-    const h = ["vfo", "ptt", "audio"].includes(id) ? it.h + 4 : it.h;   // the Meter panel's 4 rows (M1)
-    eq(d.at(id), [it.x, it.y, it.w, h], "L2 " + it.id + (h !== it.h ? " takes the Meter panel's rows" : " stays where it was") +
-       (id !== it.id ? " (as the Modem window)" : ""));
-  }
+  // the Transmit panel's columns to the VFO (P2), then the Meter panel's 4 rows to the VFO and Audio (M1); the CW
+  // panel's place to the Modem window (F1)
+  eq([d.at("vfo"), d.at("ptt"), d.at("audio"), d.at("scope"), d.at("sstv")], [[3, 0, 6, 9], null, [9, 0, 3, 9], [3, 9, 6, 15], [9, 9, 3, 15]],
+     "L2 the VFO takes the Transmit panel's columns and, with Audio, the Meter panel's rows; the Scope stays; the Modem window in the CW panel's place");
   eq(d.put.filter((p) => /layout/.test(p[0])), [], "L2 nothing is saved until the user changes the layout");
 }
 // L3: a short Controls keeps its height
@@ -130,8 +140,8 @@ function boot(layout, desktop) {
 {
   const p = boot({ rev: 4, phone: { column: 1, items: OLD_PHONE } }, false);
   const order = IDS.filter((id) => p.at(id) !== null).sort((a, b) => p.at(a) - p.at(b));
-  eq(order, ["vfo", "ptt", "scope", "audio", "controls", "recorder", "sstv"],
-     "L5 phone: right after Controls; the CW panel's place, the Modem window's now, moves down one; the Meter panel's closes up (M5)");
+  eq(order, ["vfo", "audio", "scope", "controls", "recorder", "sstv"],
+     "L5 phone: right after Controls; the CW panel's place, the Modem window's now, moves down one; the Meter panel's closes up (M5); the Audio panel in the Transmit panel's place (P6)");
 }
 // L6: the user removed the Recorder: it stays removed
 {
@@ -146,7 +156,8 @@ const TOP = [{ id: "vfo", x: 3, y: 0, w: 4, h: 5 }, { id: "ptt", x: 7, y: 0, w: 
 const LEFT = [{ id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "recorder", x: 0, y: 18, w: 3, h: 6 }];
 const CW = { id: "cw", x: 9, y: 9, w: 3, h: 15, room: { from: "scope", dw: 3 } };   // shown: 3 columns from the Scope
 const stays = (d, items, tag) => { for (const it of items) eq(d.at(it.id), [it.x, it.y, it.w, it.h], tag + " " + it.id + " stays where it was"); };
-const TOP_NOW = TOP.filter((i) => i.id !== "meter").map((i) => Object.assign({}, i, { h: i.h + 4 }));   // with the Meter panel's rows (M1)
+// the Transmit panel's columns to the VFO (P2), then the Meter panel's rows to the VFO and Audio (M1)
+const TOP_NOW = [{ id: "vfo", x: 3, y: 0, w: 6, h: 9 }, { id: "audio", x: 9, y: 0, w: 3, h: 9 }];
 {
   const items = LEFT.concat(TOP, [{ id: "scope", x: 3, y: 9, w: 6, h: 15 }, CW,
     { id: "spots", x: 9, y: 9, w: 3, h: 15, hidden: true }, { id: "sstv", x: 9, y: 9, w: 3, h: 15, hidden: true }]);
@@ -208,16 +219,89 @@ const TOP_NOW = TOP.filter((i) => i.id !== "meter").map((i) => Object.assign({},
   const items = LEFT.concat(TOP.map((i) => (i.id === "meter" ? Object.assign({}, i, { hidden: true }) : i)),
     [{ id: "scope", x: 3, y: 9, w: 9, h: 15 }]);
   const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
-  stays(d, TOP.filter((i) => i.id !== "meter").concat([{ id: "scope", x: 3, y: 9, w: 9, h: 15 }]), "M3 a closed Meter panel: nothing changes;");
+  stays(d, [{ id: "vfo", x: 3, y: 0, w: 6, h: 5 }, { id: "audio", x: 9, y: 0, w: 3, h: 5 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 }],
+        "M3 a closed Meter panel: nothing changes (the VFO has the Transmit panel's columns, P2);");
 }
 {
   const items = [{ id: "controls", x: 0, y: 0, w: 4, h: 5 }, { id: "recorder", x: 0, y: 18, w: 3, h: 6 },
-    { id: "vfo", x: 4, y: 0, w: 4, h: 5, collapsed: true }, { id: "ptt", x: 8, y: 0, w: 4, h: 5 },
+    { id: "vfo", x: 4, y: 0, w: 4, h: 5, collapsed: true }, { id: "spots", x: 8, y: 0, w: 4, h: 5 },
     { id: "meter", x: 3, y: 5, w: 9, h: 4 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 }, { id: "audio", x: 0, y: 5, w: 3, h: 5 }];
   const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
   eq(d.at("controls"), [0, 0, 4, 5], "M4 a panel above that reaches past the Meter panel's columns keeps its size");
   eq(d.at("vfo"), [4, 0, 4, 2], "M4 ... and a collapsed one too (its header slot)");
-  eq(d.at("ptt"), [8, 0, 4, 9], "M4 ... while the one inside its columns takes its rows");
+  eq(d.at("spots"), [8, 0, 4, 9], "M4 ... while the one inside its columns takes its rows");
+}
+
+// P1-P6: a layout saved while PTT had a panel of its own (the Transmit panel, now in the Audio panel)
+const ROW = [{ id: "vfo", x: 3, y: 0, w: 4, h: 7 }, { id: "ptt", x: 7, y: 0, w: 2, h: 7 }, { id: "audio", x: 9, y: 0, w: 3, h: 7 }];
+{
+  const items = LEFT.concat(ROW, [{ id: "scope", x: 3, y: 7, w: 6, h: 17 }, { id: "spots", x: 9, y: 7, w: 3, h: 17 }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq([d.at("audio"), d.at("spots")], [[7, 0, 2, 7], [9, 0, 3, 24]],
+     "P1 the Audio panel in the Transmit panel's place; the Spots panel under it up to the top");
+  stays(d, LEFT.concat([ROW[0], { id: "scope", x: 3, y: 7, w: 6, h: 17 }]), "P1");
+  eq(d.at("ptt"), null, "P1 no Transmit panel");
+  eq(d.put.filter((p) => /layout/.test(p[0])), [], "P1 nothing is saved until the user changes the layout");
+  check(d.ctx.RadioLayout.hideTile("recorder") === true, "P1 a change (the Recorder closed)");
+  d.clock.advance(400);
+  const saved = d.put.filter((p) => /layout/.test(p[0]) && p[1] === "PUT").map((p) => JSON.parse(p[2]));
+  eq(saved.map((sv) => [sv.device, sv.data.items.some((i) => i.id === "ptt"), (sv.data.items.find((i) => i.id === "spots") || {}).h]),
+     [["desktop", false, 24]], "P1 the next save: no Transmit panel in it, the Spots panel with its rows");
+}
+{
+  const items = LEFT.concat(ROW, [{ id: "scope", x: 3, y: 7, w: 9, h: 17 }, { id: "spots", x: 9, y: 7, w: 3, h: 17, hidden: true }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq([d.at("vfo"), d.at("audio"), d.at("scope"), d.at("spots")], [[3, 0, 6, 7], [9, 0, 3, 7], [3, 7, 9, 17], null],
+     "P2 nothing under the Audio panel: the VFO takes the Transmit panel's columns; nothing else moves");
+}
+{
+  const items = LEFT.concat([ROW[0], ROW[1], Object.assign({}, ROW[2], { hidden: true }), { id: "scope", x: 3, y: 7, w: 9, h: 17 }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq([d.at("vfo"), d.at("audio")], [[3, 0, 4, 7], [7, 0, 2, 7]], "P3 the Audio panel hidden: it takes the Transmit panel's place, shown");
+}
+{
+  const items = LEFT.concat([ROW[0], ROW[1], Object.assign({}, ROW[2], { collapsed: true }), { id: "scope", x: 3, y: 7, w: 9, h: 17 }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  eq([d.at("vfo"), d.at("audio")], [[3, 0, 4, 7], [7, 0, 2, 7]], "P3 the Audio panel collapsed: it takes the Transmit panel's place, in full");
+}
+{
+  const items = LEFT.concat([ROW[0], Object.assign({}, ROW[1], { hidden: true }), ROW[2], { id: "scope", x: 3, y: 7, w: 9, h: 17 }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  stays(d, [ROW[0], ROW[2], { id: "scope", x: 3, y: 7, w: 9, h: 17 }], "P4 a closed Transmit panel: nothing changes;");
+}
+{
+  const items = LEFT.concat([{ id: "vfo", x: 3, y: 0, w: 4, h: 9 }, ROW[1], { id: "audio", x: 9, y: 0, w: 3, h: 9 },
+    { id: "scope", x: 3, y: 9, w: 9, h: 15 }]);
+  const d = boot({ rev: 9, desktop: { column: 12, items } }, true);
+  stays(d, [{ id: "vfo", x: 3, y: 0, w: 4, h: 9 }, { id: "audio", x: 9, y: 0, w: 3, h: 9 }, { id: "scope", x: 3, y: 9, w: 9, h: 15 }],
+        "P5 no panel beside it on the same rows: its place stays empty;");
+}
+{
+  const p = boot({ rev: 9, phone: { column: 1, items: [{ id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 },
+    { id: "audio", y: 3, hidden: true }, { id: "controls", y: 4 }, { id: "recorder", y: 5 }] } }, false);
+  const order = IDS.filter((id) => p.at(id) !== null).sort((a, b) => p.at(a) - p.at(b));
+  eq(order, ["vfo", "audio", "scope", "controls", "recorder"], "P6 phone: the Audio panel in the Transmit panel's place, shown");
+}
+// T1: no collapsing the panel that holds PTT while on the air
+{
+  const d = boot(null, true);
+  let tx = true;
+  const toasts = [];
+  d.ctx.RadioTx = { ownedOrPending: () => tx };
+  d.ctx.TR.toast = (m) => { toasts.push(m); return null; };
+  const btn = d.doc.querySelector('.grid-stack-item[data-tile="audio"] .tile-collapse');
+  btn.click();
+  eq([d.at("audio"), toasts], [[9, 0, 3, 7], ["Stop transmitting before collapsing the Audio panel"]],
+     "T1 on the air: the Audio panel (with PTT) stays open, and says why");
+  tx = false;
+  btn.click();
+  eq([d.at("audio"), toasts.length], [[9, 0, 3, 2], 1], "T1 off the air: it collapses");
+  const vfo = d.doc.querySelector('.grid-stack-item[data-tile="vfo"] .tile-collapse');
+  tx = true;
+  vfo.click();
+  eq(d.at("vfo"), [3, 0, 6, 2], "T1 ... the other panels collapse on the air as before");
+  btn.click();
+  eq([d.at("audio"), toasts.length], [[9, 0, 3, 7], 1], "T1 ... and on the air the collapsed Audio panel opens again (PTT back in view)");
 }
 
 console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);

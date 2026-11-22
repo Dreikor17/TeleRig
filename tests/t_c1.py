@@ -161,31 +161,42 @@ def c1_scope_edges_drawn_once(ctx):
 
 
 @test("unit")
-def c1_ptt_tile_fits_with_and_without_atas(ctx):
-    """G-15 / D-11: one compact ATAS row. Arithmetic over the CSS the browser check measured (B2b/C1 report):
-    desktop default tile body at 1280x800 = 84 px content, at 1280x720 = 69 px."""
+def c1_audio_ptt_fits_with_and_without_atas(ctx):
+    """G-15 / D-11: one compact ATAS row, under PTT, in the Audio panel (PTT's since 2026-11-22; it had a
+    Transmit panel of its own before). Arithmetic over the CSS, with the sizes the browser measured on the
+    default 7-row panel: the short panel's audio controls 63 px; body 140 px at 1280x800 (28 px cells), 119 px
+    at 1280x720 (25 px cells)."""
     css = _read("style.css")
     rule = lambda sel: re.search(re.escape(sel) + r"\{([^}]*)\}", css)
-    row = rule(".tile-ptt #atasTune")
-    btn = rule(".tile-ptt #atasTune .atas-btn")
-    hint = rule(".tile-ptt #atasTune .atas-hint")
+    row = rule(".tile-audio #atasTune")
+    btn = rule(".tile-audio #atasTune .atas-btn")
+    hint = rule(".tile-audio #atasTune .atas-hint")
     check(row and "padding:3px 6px" in row.group(1), f"compact ATAS row padding: {row and row.group(1)}")
     check(btn and "padding:3px 10px" in btn.group(1), f"compact ATAS steps: {btn and btn.group(1)}")
     check(hint and "white-space:nowrap" in hint.group(1) and "text-overflow:ellipsis" in hint.group(1), "the hint stays on one line")
-    check("@container (max-width:240px){ .tile-ptt #atasTune .atas-hint{display:none} }" in css, "narrow tile: no hint")
-    m = re.search(r"@container \(max-height:80px\)\{(.*?)\n\}", css, re.S)
-    check(m and "min-height:34px" in m.group(1) and "gap:4px" in m.group(1), "short desktop body: PTT 34 px, gap 4 px")
+    check("@container (max-width:240px){ .tile-audio #atasTune .atas-hint{display:none} }" in css, "narrow panel: no hint")
+    check(".tile-ptt" not in css, "no Transmit panel rules left")
+    m = re.search(r"@container \(max-height:160px\)\{(.*?)\n\}", css, re.S)
+    check(m and ".tile-audio #pttBtn{min-height:34px}" in m.group(1) and ".tile-audio>.tile-fit{gap:4px}" in m.group(1),
+          "short Audio panel: PTT 34 px, gap 4 px")
+    p = rule(".tile-audio #pttBtn")
+    check(p and "flex:1 1 auto" in p.group(1) and "min-height:44px" in p.group(1), f"PTT takes the room the audio controls leave: {p and p.group(1)}")
     # row = 15 px glyph (line-height 1) + 2*3 padding + 2 key border + 2*3 row padding + 2 row border = 31 px
     row_px = 15 + 6 + 2 + 6 + 2
     eq(row_px, 31, "ATAS row height")
-    check(44 + 6 + row_px <= 84, "1280x800: PTT 44 + gap 6 + ATAS fits the 84 px body")
-    check(34 + 4 + row_px <= 69, "1280x720: PTT 34 + gap 4 + ATAS fits the 69 px body")
+    ctl = 63                                                     # the short panel's audio controls (measured)
+    body = lambda rows, cell: rows * cell - (30 + 16 + 2 * 4 + 2)
+    eq((body(7, 28), body(7, 25)), (140, 119), "the default panel's body at 1280x800 and 1280x720")
+    check(ctl + 4 + 34 + 4 + row_px <= body(7, 28), "1280x800: controls + PTT 34 + the ATAS row fit the default panel")
+    check(ctl + 4 + 34 <= body(7, 25), "1280x720: controls + PTT 34 fit the default panel")
     lay = _read("layout.js")
-    check("bodyPxAlt: 84, bodyPxAltPhone: 104" in lay, "layout.js minimums follow the compact row (desktop) and the touch row (phone)")
-    check('return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;' in lay, "the phone minimum is device-aware")
-    # desktop minH at the 1280x800 cell (28 px) with ATAS == the default h 5, so the default never sits below its minimum
-    eq(-(-(30 + 84 + 16 + 8 + 2) // 28), 5, "desktop minH with ATAS at 28 px cells")
-    eq(-(-(38 + 104 + 16 + 8 + 2) // 32), 6, "phone rows with ATAS (§3.6: 6 with the ATAS row)")
+    check("bodyPx: 104, bodyPxAlt: 139" in lay, "layout.js minimums: the short panel's controls + PTT (+3), and the ATAS row")
+    eq((ctl + 4 + 34 + 3, ctl + 4 + 34 + 3 + 4 + row_px), (104, 139), "... which are these sums")
+    check('if (id === "audio" && atasShown()) return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;' in lay,
+          "the Audio panel's minimum counts the ATAS row while it shows")
+    # desktop minH at 28 px cells with ATAS == the default h 7, so the default never sits below its minimum there
+    eq(-(-(30 + 139 + 16 + 8 + 2) // 28), 7, "desktop minH with ATAS at 28 px cells")
+    eq(-(-(30 + 104 + 16 + 8 + 2) // 25), 7, "desktop minH without ATAS at 25 px cells")
 
 
 @test("unit")
@@ -734,7 +745,7 @@ def digital_modes_window_in_node_vm(ctx):
     check(0 < dig.find("window.DigitalPanel = {") < dig.rfind("\n  render();\n  renderCall();"),
           "digital.js: DigitalPanel is set before the first render (what that announces is answered by asking it)")
     lay = _read("layout.js")
-    check('{ id: "spots", y: 6, h: 16, hidden: true }, { id: "sstv", y: 7, h: 15, hidden: true }' in lay,
+    check('{ id: "spots", y: 5, h: 16, hidden: true }, { id: "sstv", y: 6, h: 15, hidden: true }' in lay,
           "layout.js: on a new phone layout the Spots panel has room for its list under its keys, the Modem window for CW's pane")
     # the window is as tall as its panel, never its text: the text screens take the room left and scroll
     # inside (a window that grew with its text made the whole panel scroll, the keys and controls with it)

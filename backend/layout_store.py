@@ -33,13 +33,13 @@ from typing import Any, Optional
 
 from .store import JsonStore, StoreCorrupt, StoreMissing, console
 
-PANEL_IDS = ("vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv")   # == layout.js TILE_IDS (§3.1)
+PANEL_IDS = ("vfo", "audio", "scope", "controls", "recorder", "spots", "sstv")   # == layout.js TILE_IDS (§3.1)
 # Ids a stored layout may still hold for a panel that is gone: "cw" had a panel of its own until CW became a
 # mode of the Modem window (the "sstv" tile), and "meter" until the meter moved into the VFO panel. They stay
 # valid, so those layouts (and the columns such a panel lent or borrowed) still load and an older page still
 # open can still save; layout.js folds a "cw" panel into the Modem window and gives a "meter" panel's rows to
 # the panels above it, and leaves both out of its next save.
-RETIRED_IDS = ("cw", "meter")
+RETIRED_IDS = ("cw", "meter", "ptt")   # "ptt": the Transmit panel, until PTT moved into the Audio panel (foldPtt)
 TILE_IDS = PANEL_IDS + RETIRED_IDS
 DEVICES = ("desktop", "phone")
 COLUMNS = {"desktop": 12, "phone": 1}

@@ -34,7 +34,7 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
     "exo2-latin-italic.woff2": "26a4dc84a13ae17366fcd188e354530db070234c038370df9ee47f1b0d611a7a",
     "OFL.txt": "7f95a8eeecc6904ffc81cd10cc8ebc7fcee72a67922924bf45f02dff03b88127",
 }
-TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"]
+TILE_IDS = ["vfo", "audio", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
 B3_ALLOW_MISSING = ("remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint,cwToolBtn,meterVal,"
@@ -239,7 +239,8 @@ def layout_js_registry_matches_the_server(ctx):
     from backend import layout_store
     eq(_js_array(src, "TILE_IDS"), list(layout_store.PANEL_IDS), "layout.js TILE_IDS == layout_store.PANEL_IDS")
     eq(TILE_IDS, list(layout_store.PANEL_IDS), "registry order")
-    eq(list(layout_store.TILE_IDS), TILE_IDS + ["cw", "meter"], "the server also accepts the retired cw and meter (folded by layout.js)")
+    eq(list(layout_store.TILE_IDS), TILE_IDS + ["cw", "meter", "ptt"],
+       "the server also accepts the retired cw, meter and ptt (folded by layout.js)")
     # the §3.6 desktop default: stored unchanged by the server and filling exactly 24 rows, no overlap
     m = re.search(r"desktop: \{ column: 12, items: \[(.*?)\] \},", src, re.S)
     check(m, "DEFAULT.desktop in layout.js")
@@ -248,7 +249,7 @@ def layout_js_registry_matches_the_server(ctx):
         items.append({"id": mm.group(1), "x": int(mm.group(2)), "y": int(mm.group(3)), "w": int(mm.group(4)),
                       "h": int(mm.group(5)), "hidden": bool(mm.group(6)), "collapsed": False})
     eq(sorted(i["id"] for i in items), sorted(TILE_IDS), "every tile in the desktop default")
-    want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 4, 7), "ptt": (7, 0, 2, 7), "audio": (9, 0, 3, 7),
+    want = {"controls": (0, 0, 3, 18), "vfo": (3, 0, 6, 7), "audio": (9, 0, 3, 7),
             "scope": (3, 7, 9, 17), "recorder": (0, 18, 3, 6),
             "spots": (9, 7, 3, 17), "sstv": (9, 7, 3, 17)}
     for i in items:
@@ -267,7 +268,7 @@ def layout_js_registry_matches_the_server(ctx):
     pm = re.search(r"phone: \{ column: 1, items: \[(.*?)\] \},", src, re.S)
     check(pm, "DEFAULT.phone in layout.js")
     ranks = re.findall(r'\{ id: "(\w+)", y: (\d+)', pm.group(1))
-    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "ptt", "scope", "audio", "controls", "recorder", "spots", "sstv"],
+    eq([r[0] for r in sorted(ranks, key=lambda r: int(r[1]))], ["vfo", "audio", "scope", "controls", "recorder", "spots", "sstv"],
        "§3.6 phone ranks")
     # the bounds layout.js falls back to are the server's table (it normally reads boot.layout_bounds)
     fb = re.search(r"desktop: \{ cols: (\d+), y_max: (\d+), h_max: (\d+), bottom_max: (\d+), dw_max: (\d+) \}", src)

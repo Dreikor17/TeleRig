@@ -185,6 +185,14 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   VOX stays, under the same transmit rules as PTT. docs/ADDING-A-RADIO.md now keeps a list of what the
   radios so far turned up (controls that did nothing on one maker, menus numbered per firmware, values
   that must come from the radio) to check on every new radio.
+- **PTT is in the Audio panel.** The Transmit panel is gone: PTT sits under VOL in the Audio panel and
+  takes the room the audio controls leave (the ATAS row under it, as before), so a column has space
+  for a taller panel. A saved layout moves over by itself: with a panel right under the Audio panel
+  (the Spots panel, say), the Audio panel moves into the Transmit panel's place and that panel grows up
+  to the top; otherwise the panel beside the Transmit panel (the VFO) takes its columns. A hidden or
+  collapsed Audio panel takes the Transmit panel's place, in full, so PTT stays where it was. The
+  default VFO is 6 columns wide now, the Audio panel beside it; on a phone the Audio panel is right under
+  the VFO. A radio that can't transmit (IC-728) and a listener don't see PTT, as before.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

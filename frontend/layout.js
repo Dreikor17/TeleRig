@@ -3,7 +3,8 @@
  * failure fallback. Loads after tr.js and before app.js, so the grid is built before app.js measures.
  *
  *   intent[dev]   the user's saved layout for this device (boot.layout, else DEFAULT)
- *   gate(id)      role + radio capability (ptt: TR.can("tx") && caps.ptt)
+ *   gate(id)      role + radio capability: no tile is gated now (PTT is in the Audio panel; [data-tx] and
+ *                 app.js hide it from a viewer and on a radio that can't transmit)
  *   effective     intent items that are not hidden and pass the gate; only these are in the grid
  *
  * Saving happens on GESTURES only (drag/resize stop in arrange mode, keyboard moves, ▲▼, add, remove,
@@ -63,8 +64,9 @@
   if (!window.GridStack) { fallback("GridStack did not load"); return; }
 
   // ---- the tile registry (§3.1), mirrored by layout_store.PANEL_IDS (the server also accepts the retired
-  // "cw": CW had a panel of its own before it became a mode of the Modem window; foldCw) ----
-  const TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"];
+  // "cw", "meter" and "ptt": CW had a panel of its own before it became a mode of the Modem window, foldCw; the
+  // meter before it moved into the VFO, foldMeter; PTT before it moved into the Audio panel, foldPtt) ----
+  const TILE_IDS = ["vfo", "audio", "scope", "controls", "recorder", "spots", "sstv"];
   const TILES = {
     // vfo bodyPx: one band's lines (with the line under the digits) + the meter along the bottom, with 16 px
     // digits (style.css: 151 px + 16); bodyPxAlt: two bands, each on one line (the short-body layout) + the
@@ -73,10 +75,10 @@
     // 333 px): one band 172 + 25, two bands 123 + 1.72 x 25
     vfo:      { title: "VFO",      icon: "radio",              minW: 3, bodyPx: 167, bodyPxAlt: 130,
                 bodyPxPhone: 197, bodyPxAltPhone: 166 },
-    // ptt bodyPxAlt = the body with the ATAS row (style.css .tile-ptt): desktop PTT 44 + gap 6 + row 31 (+3);
-    // phone 44 + 6 + a 52 px row (its keys keep the 44 px touch height) + 2 -> 6 phone rows (§3.6)
-    ptt:      { title: "Transmit", icon: "mic",                minW: 2, bodyPx: 52,  bodyPxAlt: 84, bodyPxAltPhone: 104 },
-    audio:    { title: "Audio",    icon: "volume-2",           minW: 2, bodyPx: 72 },
+    // audio, with PTT (style.css .tile-audio), at its short-body size (measured 2026-11-22): the audio controls 63
+    // + gap 4 + PTT 34 (+3); bodyPxAlt adds the ATAS row (4 + 31). (A phone fits the panel to its content: these
+    // are only its floor there.)
+    audio:    { title: "Audio",    icon: "volume-2",           minW: 2, bodyPx: 104, bodyPxAlt: 139 },
     scope:    { title: "Scope",    icon: "audio-waveform",     minW: 4, bodyPx: 200 },
     controls: { title: "Controls", icon: "sliders-horizontal", minW: 3, bodyPx: 240 },
     // recorder bodyPx: the Record row (31) and the hint line (21), with room to start the list
@@ -87,7 +89,7 @@
     // bodyPx: the mode keys (28), SSTV's tabs and mode row (31 + 31), the status line (21) and a picture
     sstv:     { title: "Modem",    icon: "tr-sstv",            minW: 3, bodyPx: 250 },
   };
-  const GATEABLE = new Set(["ptt"]);                       // the only tile a gate can park
+  const GATEABLE = new Set();                              // no tile a gate parks now (the Transmit panel was the one)
   const PHONE_RESIZABLE = new Set(["scope", "spots", "sstv"]); // phone: user-sized (stored h, `s` handle)
   const PHONE_FIT = new Set(["audio", "controls", "recorder"]); // phone: height follows the content
   const HEAD_ROWS = 2;                                     // collapsed slot, fixed (AR-58)
@@ -98,16 +100,18 @@
   const SPLIT_DEFAULT = 0.38;
   const DEFAULT = {                                        // §3.6
     desktop: { column: 12, items: [
-      { id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "vfo", x: 3, y: 0, w: 4, h: 7 },
-      { id: "ptt", x: 7, y: 0, w: 2, h: 7 }, { id: "audio", x: 9, y: 0, w: 3, h: 7 },
+      // the VFO takes the columns the Transmit panel had (PTT is in the Audio panel now)
+      { id: "controls", x: 0, y: 0, w: 3, h: 18 }, { id: "vfo", x: 3, y: 0, w: 6, h: 7 },
+      { id: "audio", x: 9, y: 0, w: 3, h: 7 },
       { id: "scope", x: 3, y: 7, w: 9, h: 17 },
       { id: "recorder", x: 0, y: 18, w: 3, h: 6 },
       { id: "spots", x: 9, y: 7, w: 3, h: 17, hidden: true }, { id: "sstv", x: 9, y: 7, w: 3, h: 17, hidden: true }] },
     phone: { column: 1, items: [
-      { id: "vfo", y: 0 }, { id: "ptt", y: 1 }, { id: "scope", y: 2, h: 11 },
-      { id: "audio", y: 3 }, { id: "controls", y: 4 }, { id: "recorder", y: 5 },
+      // the Audio panel (with PTT) right under the VFO, where the Transmit panel was
+      { id: "vfo", y: 0 }, { id: "audio", y: 1 }, { id: "scope", y: 2, h: 11 },
+      { id: "controls", y: 3 }, { id: "recorder", y: 4 },
       // Spots 16: its keys and filters stay put, so the list needs the room (about six rows); Modem 15: CW's pane whole
-      { id: "spots", y: 6, h: 16, hidden: true }, { id: "sstv", y: 7, h: 15, hidden: true }] },
+      { id: "spots", y: 5, h: 16, hidden: true }, { id: "sstv", y: 6, h: 15, hidden: true }] },
   };
   // the Recorder came after layouts were first saved: a saved layout without it gets it right under
   // Controls (placeRecorder), the place the default gives it
@@ -212,9 +216,47 @@
       if (within(r) && r.y === m.y + m.h) { it.y -= m.h; it.h = Math.min(B.desktop.h_max, it.h + m.h); }
     }
   }
+  // A layout saved while PTT had a panel of its own ("ptt", Transmit): PTT is in the Audio panel now. A showing
+  // Transmit panel hands its place on. Desktop: an Audio panel that is hidden or collapsed takes it, in full (so
+  // PTT stays in view where it was); an Audio panel right beside it, on the same rows, moves into it when a panel
+  // lies right under the Audio panel's columns, which then grows up into them (the operator's picture,
+  // 2026-11-22: the Spots panel up to the top); otherwise the panel right left of it (the VFO) or right of it, on
+  // the same rows, takes its columns. Phone: the Audio panel takes its place in the list (right under the VFO, by
+  // default), in full.
+  function foldPtt(d, items, seen) {
+    const raw = items.find((it) => it && typeof it === "object" && it.id === "ptt");
+    if (!raw || raw.hidden === true) return;
+    const p = canonItem(d, raw), audio = seen.get("audio");
+    if (d !== "desktop") {
+      if (audio) { audio.y = p.y; audio.hidden = false; audio.collapsed = false; }
+      else seen.set("audio", Object.assign(canonItem(d, { id: "audio", y: p.y }), { hidden: false }));
+      return;
+    }
+    const r = rectOf(p), shown = () => [...seen.values()].filter((it) => !it.hidden);
+    const sameRows = (q) => q.y === r.y && q.h === r.h;
+    if (!audio || audio.hidden || audio.collapsed) {               // the Audio panel in its place, in full
+      seen.set("audio", Object.assign(canonItem(d, { id: "audio", x: r.x, y: r.y, w: r.w, h: r.h }), { hidden: false }));
+      return;
+    }
+    const a = rectOf(audio);
+    if (sameRows(a) && a.x === r.x + r.w) {
+      const under = shown().filter((it) => { const q = rectOf(it); return !it.collapsed && q.y === a.y + a.h && q.x >= a.x && q.x + q.w <= a.x + a.w; });
+      if (under.length) {
+        audio.x = r.x; audio.w = r.w;
+        for (const it of under) { it.y = a.y; it.h = Math.min(B.desktop.h_max, it.h + a.h); }
+        return;
+      }
+    }
+    const left = shown().find((it) => { const q = rectOf(it); return !it.collapsed && sameRows(q) && q.x + q.w === r.x; });
+    if (left) { left.w += r.w; return; }
+    const right = shown().find((it) => { const q = rectOf(it); return !it.collapsed && sameRows(q) && q.x === r.x + r.w; });
+    if (right) { right.x = r.x; right.w += r.w; }
+  }
   // drop unknown / duplicate ids; a known id missing from a saved layout gets its DEFAULT item, hidden
-  // (the Recorder in a layout saved before it existed: placeRecorder; a CW panel: foldCw, and a Meter panel:
-  // foldMeter, first, so the Recorder's place counts the Modem window where the CW panel was)
+  // (the Recorder in a layout saved before it existed: placeRecorder. The retired panels fold first, so the
+  // Recorder's place counts the Modem window where the CW panel was: a CW panel, foldCw; a Transmit panel,
+  // foldPtt, before foldMeter because its saved rect is from before the Meter panel's rows; a Meter panel,
+  // foldMeter)
   function normalize(d, data) {
     if (!data || typeof data !== "object" || !Array.isArray(data.items)) return null;
     const seen = new Map();
@@ -222,6 +264,7 @@
       if (it && typeof it === "object" && TILE_IDS.includes(it.id) && !seen.has(it.id)) seen.set(it.id, canonItem(d, it));
     }
     foldCw(d, data.items, seen);
+    foldPtt(d, data.items, seen);                              // before foldMeter: its rect is the saved one
     foldMeter(d, data.items, seen);
     if (!seen.has("recorder")) placeRecorder(d, seen);
     const items = TILE_IDS.map((id) => seen.get(id) ||
@@ -303,12 +346,8 @@
   }
   let caps = capsFromBoot(TR.initialRadio);
   const can = (perm) => { try { return !!TR.can(perm); } catch (_) { return false; } };
-  function gate(id) {
-    if (id === "ptt") return can("tx") && caps.ptt;
-    return true;
-  }
+  function gate(id) { return !GATEABLE.has(id); }              // nothing is gated now (GATEABLE is empty)
   function gateReason(id) {
-    if (id === "ptt" && !can("tx")) return "Operator role required";
     if (!gate(id)) return "Not available on " + (caps.name || "this radio");
     return "";
   }
@@ -334,7 +373,7 @@
   function bodyPx(id, d) {
     const t = TILES[id];
     if (id === "vfo") return dualWatch() ? ((d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt) : ((d === "phone" && t.bodyPxPhone) || t.bodyPx);
-    if (id === "ptt" && atasShown()) return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;
+    if (id === "audio" && atasShown()) return (d === "phone" && t.bodyPxAltPhone) || t.bodyPxAlt;
     return t.bodyPx;
   }
   function minFor(d, id) {
@@ -345,7 +384,7 @@
   }
   function phoneH(it) {
     const m = minFor("phone", it.id).h;
-    if (it.id === "vfo" || it.id === "ptt") return m;     // container-query sized: exactly the minimum
+    if (it.id === "vfo") return m;                        // container-query sized: exactly the minimum
     if (PHONE_RESIZABLE.has(it.id)) {
       const def = DEFAULT.phone.items.find((i) => i.id === it.id).h;
       return clamp(isInt(it.h) ? it.h : def, m, B.phone.h_max);
@@ -477,8 +516,9 @@
         for (const it of eff) { it._row = row; row += it.collapsed ? HEAD_ROWS : phoneH(it); placeTile(tileEl[it.id], it, "intent"); }
       } else {
         // pass 1: tiles whose intent slot is free among the accepted fits; pass 2: the rest. A tile a gate
-        // could have parked (ptt) comes last, so a panel the user moved into its hole while it was
-        // gated keeps that spot, and the returning tile goes to a visible free area with a notice (AR-43).
+        // could have parked (none now: GATEABLE is empty since PTT moved into the Audio panel) comes last, so a
+        // panel the user moved into its hole while it was gated keeps that spot, and the returning tile goes
+        // to a visible free area with a notice (AR-43).
         const order = eff.slice().sort((a, b) => (GATEABLE.has(a.id) ? 1 : 0) - (GATEABLE.has(b.id) ? 1 : 0));
         const fits = [], rest = [];
         for (const it of order) {
@@ -536,7 +576,7 @@
       if (dev === "desktop") {
         const mh = Math.min(m.h, n.h), mw = Math.min(m.w, n.w);
         if (n.minH !== mh || n.minW !== mw) grid.update(el, { minH: mh, minW: mw });
-      } else if (id === "vfo" || id === "ptt") {
+      } else if (id === "vfo") {
         if (n.h !== m.h || n.minH !== m.h) gsUpdate(el, { h: m.h, minH: m.h });
       } else if (PHONE_RESIZABLE.has(id) && n.minH !== Math.min(m.h, n.h)) {
         grid.update(el, { minH: Math.min(m.h, n.h) });
@@ -579,7 +619,7 @@
     const ro = new ResizeObserver(() => { if (dev === "phone") scheduleFit(); });
     for (const id of PHONE_FIT) ro.observe(tileEl[id].querySelector(".tile-fit"));
   }
-  // the VFO's dual-watch row and the PTT tile's ATAS row change their pixel minimums
+  // the VFO's dual-watch row and the Audio panel's ATAS row (under PTT) change their pixel minimums
   if ("MutationObserver" in window) {
     const mo = new MutationObserver(() => { if (dev === "phone") scheduleFit(); else refreshMins(); });
     if ($("bands")) mo.observe($("bands"), { attributes: true, attributeFilter: ["class"] });
@@ -741,13 +781,10 @@
     switch (id) {
       case "vfo": return st.freq ? fmtFreq(st.freq) + (st.mode_name ? " " + st.mode_name : "") : "—";
       case "scope": return txt("spanVal");
-      case "ptt": {
-        const o = TR.tx && TR.tx.owner;
-        return !o ? "RX" : (TR.isTxOwner && TR.isTxOwner() ? "ON AIR" : "BUSY");
-      }
-      case "audio": {
-        const on = !!$("audioBtn") && $("audioBtn").classList.contains("active");
-        return on ? "RX on · VOL " + (txt("volVal") || ($("vol") || {}).value || "") : "RX off";
+      case "audio": {                                         // (with PTT: ON AIR / BUSY while someone transmits)
+        const on = !!$("audioBtn") && $("audioBtn").classList.contains("active"), o = TR.tx && TR.tx.owner;
+        const rx = on ? "RX on · VOL " + (txt("volVal") || ($("vol") || {}).value || "") : "RX off";
+        return o ? (TR.isTxOwner && TR.isTxOwner() ? "ON AIR" : "BUSY") + " · " + rx : rx;
       }
       case "controls": { const t = document.querySelector(".controls .tab.on"); return t ? t.textContent.trim() : ""; }
       case "recorder": return (window.Recorder && typeof window.Recorder.summary === "function" && window.Recorder.summary()) || "";
@@ -782,9 +819,9 @@
     if (failed || !grid) return;
     const it = item(dev, id), el = tileEl[id], n = el.gridstackNode;
     if (!n || !!it.collapsed === want) return;
-    if (want && id === "ptt" && ownsTx()) {
-      toast("Stop transmitting before collapsing the Transmit panel", "warn");
-      say("Stop transmitting before collapsing the Transmit panel");
+    if (want && id === "audio" && ownsTx()) {                  // PTT is in it
+      toast("Stop transmitting before collapsing the Audio panel", "warn");
+      say("Stop transmitting before collapsing the Audio panel");
       return;
     }
     try {
