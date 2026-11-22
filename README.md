@@ -25,8 +25,8 @@ and only one operator transmits at a time.
   points), with the tuned-frequency marker and the receive passband shaded over it.
   Radios with no scope over the control link (the Yaesu CATs) get an **audio (AF)
   spectrum** scope built from their RX audio instead.
-- **Tuning** — **step keys** under the scope (− and +, hold one to keep going; pick the step
-  between them), a **click or tap on the waterfall** to jump to a signal (a mouse can drag it too),
+- **Tuning** — **step keys** in the VFO panel, beside the meter (− and +, hold one to keep going;
+  pick the step between them), a **click or tap on the waterfall** to jump to a signal (a mouse can drag it too),
   direct frequency entry, and the mouse wheel over a VFO digit. Scrolling the page over the scope
   never retunes the radio.
 - **Control** — band, mode (with the Icom **DATA** switch: USB-D and friends), filter,

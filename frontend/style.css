@@ -342,9 +342,9 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 
 /* ---- the meter, along the bottom of the VFO tile: S on receive (scale above the bar), on transmit the TX meter
    picked with its keys (its scale under the bar, from the radio's CI-V reference: app.js renderMeter); a
-   mark on the bar holds the highest reading for a moment, then falls back. The reading has its corner to
-   itself, right-aligned, so it never moves. ---- */
-.meter{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"scale read" "bar read" "txs keys";
+   mark on the bar holds the highest reading for a moment, then falls back. No number beside it: the step
+   keys (- the step +) stand on the right, the TX meter keys under the bar on the left. The same on a phone. ---- */
+.meter{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"scale step" "bar step" "txs step" "keys step";
   column-gap:12px;row-gap:2px;align-items:center;margin:0;padding-top:6px;border-top:1px solid var(--tft-border)}
 /* each scale label sits at the value it names on the bar's 0..240 S scale (renderMeter): an S unit
    is 120/9, S9 is 120 (the middle) and +60 dB is 241, so S1 5.6 %, S9 50 %, +20 66.8 %, +40 83.6 % */
@@ -380,12 +380,14 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .meter-tx-scale span{position:absolute;top:0;white-space:nowrap}
 .meter-tx-scale .zone{top:9px;height:2px;background:var(--danger)}       /* ALC: the zone to stay inside */
 .meter.tx .meter-tx-scale{color:var(--tft-digit)}
-.meter-read{grid-area:read;display:flex;align-items:baseline;justify-content:flex-end;min-width:0}
-/* the reading starts at the same place whatever its length: left-aligned in a box as wide as its longest text
-   (S9+60; on transmit COMP 25.5 dB), so S9 stays put when +0 or +20 joins it */
-.meter-val{font:700 16px/1 var(--font-ui);color:var(--num);text-align:left;min-width:6ch;white-space:nowrap;font-variant-numeric:tabular-nums}
-.meter.tx .meter-val{min-width:12ch}
-.meter-sel{grid-area:keys;display:flex;gap:3px;justify-content:flex-end;flex-wrap:nowrap}
+.meter-sel{grid-area:keys;display:flex;gap:3px;justify-content:flex-start;flex-wrap:wrap}   /* wraps where the meter is narrow */
+/* the step keys (app.js stepKey): - [step] +, beside the whole meter. A held key keeps tuning, so a finger
+   resting on one must not scroll the page under it, select its label or open the long-press menu */
+.meter-step{grid-area:step;display:flex;align-items:center;gap:4px;align-self:center}
+.meter-step .step-key{min-width:30px;height:28px;padding:0 8px;font:700 15px/1 var(--font-ui);touch-action:none;
+  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.meter-step .step-sel{min-width:0;height:28px;font-size:11px;padding:3px 5px}
+.meter.no-meter>:not(.meter-step){display:none}   /* a radio with no meters over its link (IC-728): the step keys alone */
 .m-btn{min-width:0;background:var(--key);color:var(--txt);border:1px solid var(--key-edge);
   border-radius:var(--r-sm);padding:2px 5px;cursor:pointer;font:600 10px/1.2 var(--font-ui)}
 .m-btn:hover{background:var(--key-hi)}
@@ -432,18 +434,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
 .sc-btn.active{background:var(--sel-bg);color:var(--sel-fg);border-color:var(--sel-bg);font-weight:700}
 .span-val{font-family:var(--font-ui);color:var(--num);min-width:54px;text-align:center;font-variant-numeric:tabular-nums}
 .scope-ctl .sep{flex:0 0 1px;height:18px;background:var(--border);margin:0 4px}
-/* the step keys at the bar's end: - [step] + (app.js stepKey). A held key keeps tuning, so a finger resting
-   on one must not scroll the page under it, select its label or open the long-press menu. */
-.sc-step{display:inline-flex;align-items:stretch;gap:4px;margin-left:auto}
-.scope-ctl .bandlegend{flex:1 1 200px;min-width:0}   /* the legend takes the room beside the step keys, wrapping its own items */
-.sc-step-key{min-width:30px;padding:3px 8px;font-size:15px;font-weight:700;line-height:1;touch-action:none;
-  user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
-.sc-step-sel{min-width:0;font-size:11px;padding:3px 5px}
-/* any touch screen (a tablet is wider than the phone rules below): thumb-sized step keys */
-@media (hover:none) and (pointer:coarse){
-  .sc-step .sc-step-key{min-width:44px;min-height:44px;font-size:20px}
-  .sc-step .sc-step-sel{min-height:44px;font-size:13px}
-}
+.scope-ctl .bandlegend{flex:1 1 200px;min-width:0}   /* the legend takes the room after BAND PLAN, wrapping its own items */
 .bandlegend{display:inline-flex;gap:9px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--txt-dim)}
 .bandlegend .lg{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
 .bandlegend .lg-sw{width:11px;height:11px;border-radius:2px;border:1px solid var(--border-strong);flex:0 0 auto}
@@ -1181,11 +1172,6 @@ body:not([data-role="operator"]):not([data-role="admin"]) #bands .bandrow{opacit
   .ctl-btn{flex:1 1 auto;min-height:44px}
   .key{min-height:44px;padding:11px 6px}
   .sc-btn{min-height:38px;padding:8px 11px}
-  /* the step keys: thumb-sized, beside BAND PLAN and CW where they fit, else a row of their own that they
-     fill; the band plan's legend goes under them */
-  .sc-step{flex:1 1 172px;gap:6px}
-  .sc-step .sc-step-key{flex:1 1 38px;min-height:44px;padding:8px 6px;font-size:20px}
-  .sc-step .sc-step-sel{flex:0 1 84px;min-height:44px;font-size:13px}
   .scope-ctl .bandlegend{order:2;flex:1 1 100%}
   .freq-entry,#step,#freqSet{min-height:42px}
   .sl{grid-template-columns:34px 1fr 44px}
@@ -1530,7 +1516,6 @@ body.tr-nogrid .ui-resizable-handle{display:none!important}
   mask-image:repeating-linear-gradient(90deg,#000 0 2px,rgba(0,0,0,0) 2px 5px)}
 .screen .meter.tx .meter-fill{background:linear-gradient(90deg,#fff 0 var(--m-warn,100%),var(--warn) var(--m-warn,100%) var(--m-bad,100%),
   #ff4d3d var(--m-bad,100%) 100%);background-size:100cqw 100%}
-.screen .meter-val{font:italic 800 18px/1 var(--font-ui)}
 .screen .meter-tx-scale{height:14px;font:italic 700 11px/1.2 var(--font-ui)}
 .screen .vfo-entry{border-radius:0;border-color:#fff;box-shadow:none;background:rgba(0,0,0,.35)}
 .screen .vfo-entry input{font-style:italic;color:#fff;caret-color:#fff}

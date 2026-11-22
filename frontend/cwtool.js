@@ -5,9 +5,9 @@
  * mode is shown (collapsed too, like the window's other modes); new text puts a dot on the CW key. It
  * decodes without being asked, as the window's other modes do: CW coming into view (the page opening on
  * it, the window brought onto the grid showing it, the CW key; digital.js's tr:modem) turns Decode on.
- * Decode turns it off, until CW next comes into view. The scope's CW button brings CW into view and
- * starts the decoder. While this tab sends a CW message the window stays on CW, its STOP in view
- * (CwPanel.busy()).
+ * Decode turns it off, until CW next comes into view. While this tab sends a CW message the window stays
+ * on CW, its STOP in view (CwPanel.busy()). (The scope's CW key that opened it is gone, 2026-11-22: the
+ * Modem window's CW key does.)
  *
  * The decoder starts at once (the model loads in its worker) but listens only once the page has its
  * audio, which a click makes (RX, the mic, Play): it never makes the audio context itself. One made
@@ -63,37 +63,24 @@
     "'": ".----.",
   };
 
-  const panel = $("cwTool"), btn = $("cwToolBtn"), head = $("cwHead");
-  if (!panel || !btn) return;
+  const panel = $("cwTool"), head = $("cwHead");
+  if (!panel) return;
   let open = false;
   // Tile mode (§3.18): the panel is the Modem window's CW pane. Its visibility belongs to RadioLayout
   // and the window's mode keys; `open` only means "the decoder runs". Outside a tile it is the old
   // floating panel.
   const inTile = !!panel.closest(".grid-stack-item, #tileParking");
   const WIN = "sstv";                              // the Modem window's tile id (kept from the SSTV panel)
-  const Lay = () => window.RadioLayout || null;
   const Dig = () => window.DigitalPanel || null;
 
   // ---- show / hide ----
   function setOpen(v) {
     open = !!v;
     if (inTile) panel.hidden = false; else panel.hidden = !open;
-    btn.classList.toggle("active", open);
     const db = $("cwDecodeBtn");
     if (db) { db.setAttribute("aria-pressed", open ? "true" : "false"); db.classList.toggle("on", open); }
     if (open) startDecoder(); else stopDecoder();
   }
-  // the scope's CW button: CW brought into view first (a hidden or collapsed window shown, persisted,
-  // make-room; then its CW mode), and the decoder started if it isn't running; with CW already in view
-  // it toggles the decoder. While this page sends an SSTV picture the window stays on it.
-  btn.addEventListener("click", () => {
-    const L = Lay(), D = Dig();
-    if (!inTile || !L || typeof L.visible !== "function") { setOpen(!open); return; }
-    if (L.visible(WIN) && (!D || D.mode() === "cw")) { setOpen(!open); return; }
-    if (L.showTile(WIN) === false) return;
-    if (D && D.show("cw") === false) return;
-    if (!open) setOpen(true);
-  });
   if ($("cwDecodeBtn")) $("cwDecodeBtn").addEventListener("click", () => setOpen(!open));
   // the window left the grid: stop the decoder (collapsed, it keeps listening like the window's other modes)
   document.addEventListener("tr:tile", (e) => {

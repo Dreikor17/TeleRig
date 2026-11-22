@@ -15,12 +15,12 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   NR / DNR, AN / DNF, MN, NAR, COMP, VOX, MON). With two bands the operating one takes the room.
 - **The meter is in the VFO panel**, along its bottom; the Meter panel is gone (a saved layout gives its
   rows to the panels right above it). On receive it is the S-meter, its scale above the bar, S9+ in red; on
-  transmit the TX meter picked with its keys (Po unless the radio has none), on its own scale under the
-  bar, with the values the radio's CI-V reference gives (Po %, SWR 1.5 / 2 / 3 with amber and red, ALC
-  in its zone, COMP dB, Vd V, Id A); a Yaesu shows the raw reading (its CAT reference has no scale). A mark
-  on the bar holds the peak for a second, then falls back; the reading stays put (it starts at the same
-  place whatever its length, so S9 doesn't move when +0 or +20 joins it). The TX meters are read only while transmitting (Vd and Id
-  always), so receiving reads the S-meter as fast as before.
+  transmit the TX meter picked with its keys under the bar (Po unless the radio has none), on its own scale
+  under the bar, marked with the values the radio's CI-V reference gives (Po %, SWR 1.5 / 2 / 3 with amber
+  and red, ALC's zone, COMP dB, Vd V, Id A); a Yaesu's scale is unmarked (its CAT reference has none). A
+  mark on the bar holds the peak for a second, then falls back. There is no number beside the bar: the
+  step keys stand there (below). The TX meters are read only while transmitting (Vd and Id always), so
+  receiving reads the S-meter as fast as before.
 - **Type a frequency**: click the VFO's digits (or Enter on them): MHz (14.074), the VFO's own grouping
   (7.074.50), .230 for the kHz on the MHz you are on, or a bare number, read as MHz where the radio receives
   there and as kHz or Hz otherwise (7074 is 7.074 MHz; 1296 on the IC-9700 is 1296 MHz); Enter tunes,
@@ -78,10 +78,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   CW is next shown. The decoder starts listening once the page has its audio (RX, or the sidetone's ▶);
   it never starts the audio itself, so a page that opens on CW doesn't leave the browser's audio paused
   (which would have made the mic send silence).
-- **Step keys under the scope, and nothing there tunes by scrolling.** The scope's bar has **−** and
-  **+** with the tuning step between them: a tap is one step, a held key keeps going (ten a second)
-  until you let go. On a phone they are thumb-sized. The step is the Controls panel's STEP (either picker
-  sets both) and is now remembered per radio on each device. The mouse wheel over the scope and a finger
+- **Step keys in the VFO panel, and nothing on the scope tunes by scrolling.** Right of the meter,
+  **−** and **+** with the tuning step between them: a tap is one step, a held key keeps going (ten a
+  second) until you let go. A phone has them in the same place. The step is the Controls panel's STEP
+  (either picker sets both) and is now remembered per radio on each device. A radio with no meters over
+  its link (the IC-728) shows the step keys alone there. The mouse wheel over the scope and a finger
   sliding along the waterfall no longer tune: scrolling the page past the scope used to retune the radio,
   and a slide was far too coarse to tune with on a phone. A tap or a click on a signal still tunes to
   it, a mouse drag still pans, and the wheel still tunes over a VFO digit.
@@ -146,6 +147,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   more). The scope shows the audio; the Spots panel's CALLING view tunes to the calling frequencies.
 - **Phone: the account button's icon is centred.** On a phone the account button is the icon alone,
   the same square as the connection toggle beside it; the icon sat in its corner.
+- **No CW key on the scope.** The scope's bar keeps BAND PLAN and the band plan's legend; the Modem
+  window's own CW key shows CW (and its decoder starts, as it does whenever CW comes into view).
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

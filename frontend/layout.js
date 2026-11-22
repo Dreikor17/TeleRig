@@ -767,7 +767,7 @@
   }
   setInterval(() => { if (intent[dev] && intent[dev].items.some((i) => i.collapsed)) refreshSummaries(); }, 1000);
   document.addEventListener("tr:tab", () => refreshSummaries());
-  document.addEventListener("click", (e) => { if (e.target.closest("#audioBtn,#cwDecodeBtn,#cwToolBtn")) setTimeout(refreshSummaries, 0); });
+  document.addEventListener("click", (e) => { if (e.target.closest("#audioBtn,#cwDecodeBtn")) setTimeout(refreshSummaries, 0); });
 
   // ---- collapse (§3.11; any mode, persisted — F5) ----
   function ownsTx() {

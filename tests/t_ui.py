@@ -385,10 +385,12 @@ def level_meters_colour_by_the_scale(ctx):
 
 
 @test("unit")
-def meter_reading_holds_its_place(ctx):
-    """The meter's reading (in the VFO tile) starts at the same place whatever its length: left-aligned in a
-    box as wide as its longest text (S9+60 on receive, COMP 25.5 dB on transmit), so "S9" does not move when
-    "+0" or "+20" joins it (it was right-aligned, and the S value moved back and forth across S9)."""
+def vfo_meter_with_the_step_keys(ctx):
+    """The VFO's meter (the operator, 11-22): no number beside the bar (the S reading, and on transmit the TX
+    meter's, is gone: the bar and its scales say it); the step keys (- the step +) stand on its right, beside
+    the whole meter, and the TX meter keys under the bar on its left, wrapping where the meter is narrow. A
+    phone the same as the desktop: no other rule lays the meter out. A radio with no meters over its link
+    (IC-728) hides the meter and keeps the step keys."""
     rules = _css_rules((FRONT / "style.css").read_text(encoding="utf-8"))
 
     def decl(selector):
@@ -397,14 +399,22 @@ def meter_reading_holds_its_place(ctx):
             if m == "" and selector in [x.strip() for x in sel.split(",")]:
                 out.update(d)
         return out
-    v = decl(".meter-val")
-    eq(v.get("text-align"), "left", ".meter-val is left-aligned")
-    ch = lambda d: float(d.get("min-width", "0ch").rstrip("ch") or 0) if d.get("min-width", "").endswith("ch") else 0.0
-    check(ch(v) >= len("S9+60") + 1, f".meter-val min-width holds S9+60 with room: {v.get('min-width')}")
-    check(ch(decl(".meter.tx .meter-val")) >= len("COMP 25.5 dB"), "on transmit it holds COMP 25.5 dB")
+    eq(decl(".meter").get("grid-template-areas"), '"scale step" "bar step" "txs step" "keys step"',
+       ".meter: the step keys in a column of their own on the right, beside the whole meter")
+    eq(decl(".meter-step").get("grid-area"), "step", ".meter-step in it")
+    k = decl(".meter-sel")
+    eq([k.get("grid-area"), k.get("justify-content"), k.get("flex-wrap")], ["keys", "flex-start", "wrap"],
+       ".meter-sel: the TX meter keys under the bar, from its left, wrapping")
+    eq(decl(".meter.no-meter>:not(.meter-step)").get("display"), "none", "no meters: everything but the step keys hidden")
     for m, sel, d in rules:
-        if "meter-val" in sel:
-            check(d.get("text-align", "left") == "left", f"{m} {sel}: no rule right-aligns the reading again")
+        check("meter-val" not in sel and "meter-read" not in sel, f"{m} {sel}: no rule for the old reading")
+        if m and any(x.strip() == ".meter" or x.strip().endswith(" .meter") for x in sel.split(",")):
+            check(not any(p.startswith("grid-template") for p in d), f"{m} {sel}: a phone lays the meter out as the desktop")
+    html = (FRONT / "index.html").read_text(encoding="utf-8")
+    check('id="meterVal"' not in html and "meter-read" not in html and "meter-val" not in html, "index.html: no reading beside the bar")
+    app = re.sub(r"//[^\n]*", "", (FRONT / "app.js").read_text(encoding="utf-8"))
+    check("meterVal" not in app and "meterText" not in app, "app.js writes no reading")
+    check('setActive(".m-btn[data-meter]"' in app, "app.js lights the TX meter keys only (the step keys are .m-btn too)")
 
 
 @test("smoke")

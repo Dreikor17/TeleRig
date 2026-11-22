@@ -13,9 +13,8 @@
  *      preview alone is not
  *  W5. CwPanel.summary(): the latest text heard, the decoder on / off, this page's CW on the air;
  *      CwPanel.busy(): only this page's own CW message on the air
- *  W6. the scope's CW button: the window shown and on CW, the decoder started (a running one keeps its
- *      chat); with CW in view it toggles the decoder; while SSTV sends a picture nothing changes. The
- *      window collapsed: the decoder keeps listening; the window removed: it stops
+ *  W6. the window collapsed: the decoder keeps listening; another panel removed: no matter; the window
+ *      removed: it stops. (The scope's CW key is gone, 2026-11-22: the Modem window's CW key shows CW, W9.)
  *  W7. CW decodes by default: CW coming into view (tr:modem) turns Decode on, another mode doesn't; Decode
  *      off stays off until CW next comes into view; a running decoder keeps its chat. The decoder never
  *      makes the page's audio (an audio context made before a click stays paused, and the mic would send
@@ -46,7 +45,7 @@ function check(cond, msg) { checks++; if (!cond) { failures++; console.log("FAIL
 function eq(a, b, msg) { const ja = JSON.stringify(a), jb = JSON.stringify(b); check(ja === jb, msg + ": got " + ja + ", want " + jb); }
 
 const SR = 3200, HOP = 48;                                   // == cwtool.js SR / the worker's hop
-const CW_IDS = { button: ["cwToolBtn", "cwDecodeBtn", "cwClear", "cwPlay", "cwTx", "cwQCq", "cwQDe", "cwQ73"],
+const CW_IDS = { button: ["cwDecodeBtn", "cwClear", "cwPlay", "cwTx", "cwQCq", "cwQDe", "cwQ73"],
                  div: ["cwHead", "cwOut", "cwStatus", "cwTxHint", "cwTxRow", "cwToneVal"],
                  input: ["cwSend", "cwWpmSet", "cwToneSet", "cwCall"] };
 
@@ -231,33 +230,10 @@ function modemPage(opts) {
     e.ctx.TR.isTxOwner = () => true;
     eq([P.busy(), P.summary()], [true, "CW on the air"], "W5 this page's CW message on the air: busy (the window stays on CW)");
   }
-  // W6: the scope's CW button and the window (stand-ins for RadioLayout and DigitalPanel)
+  // W6: the window collapsed, another panel removed, the window removed
   {
     const e = await page();                                  // page() turned the decoder on
-    const calls = [];
-    let vis = false, mode = "ft8", lock = false;
-    e.ctx.RadioLayout = { visible: (id) => (calls.push(["visible", id]), vis), showTile: (id) => (calls.push(["showTile", id]), vis = true) };
-    e.ctx.DigitalPanel = { mode: () => mode, show: (m) => { calls.push(["show", m]); if (lock) return false; mode = m; return true; } };
-    const scopeBtn = e.doc.getElementById("cwToolBtn");
-    e.click(e.dec);
-    check(!e.decOn(), "W6 (Decode off to start with)");
-    e.click(scopeBtn);
-    eq(calls, [["visible", "sstv"], ["showTile", "sstv"], ["show", "cw"]], "W6 the scope's CW button: the window shown, on CW");
-    check(e.decOn() && scopeBtn.classList.contains("active"), "W6 ... and the decoder started, Decode lit");
-    calls.length = 0;
-    e.click(scopeBtn);
-    eq([calls, e.decOn()], [[["visible", "sstv"]], false], "W6 CW in view: the button toggles the decoder");
-    e.click(e.dec);
-    e.sec(); e.say("CQ");
-    mode = "rtty";
-    e.click(scopeBtn);
-    eq([mode, e.decOn(), e.bubbles()], ["cw", true, ["CQ"]], "W6 another mode shown, the decoder running: CW in view, its chat kept");
-    e.click(e.dec);
-    mode = "sstv"; lock = true;
-    e.click(scopeBtn);
-    eq([mode, e.decOn()], ["sstv", false], "W6 SSTV sending a picture: the window stays on it, no decoder started");
-    lock = false; mode = "cw";
-    e.click(e.dec);
+    check(e.decOn(), "W6 (the decoder on to start with)");
     e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: { id: "sstv", visible: true, collapsed: true } }));
     check(e.decOn(), "W6 the window collapsed: the decoder keeps listening");
     e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:tile", { detail: { id: "spots", visible: false } }));

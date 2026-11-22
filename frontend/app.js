@@ -416,30 +416,14 @@
   // its scale above the bar). On transmit it is the TX meter picked with the keys (state.meter, PO unless
   // the radio has none), 0..255, on its own scale under the bar from the radio's CI-V reference
   // (profile.meter_marks); a meter with no marks shows the radio's raw reading on an unmarked bar. A mark on the
-  // bar holds the highest reading for PEAK_HOLD_MS, then falls back at PEAK_FALL % of the bar a second; the
-  // reading itself stays where it is (nothing beside it comes and goes). Driven by full-state frames and by
-  // the fast 'meter' channel (which carries only meter / meter_val / smeter / smeter_s between them).
+  // bar holds the highest reading for PEAK_HOLD_MS, then falls back at PEAK_FALL % of the bar a second. No
+  // number beside the bar (the step keys are there, 2026-11-22): the bar and its scale say it. Driven by
+  // full-state frames and by the fast 'meter' channel (which carries only meter / meter_val / smeter /
+  // smeter_s between them).
   const METER_LABEL = { PO: "Po", SWR: "SWR", ALC: "ALC", COMP: "COMP", Vd: "Vd", Id: "Id" };
   const PEAK_HOLD_MS = 1000, PEAK_FALL = 40;
   const meterPeak = { pct: 0, at: 0, kind: "" };
   function meterMarks(key) { const mm = currentRadio && currentRadio.meter_marks; return (mm && mm[key]) || null; }
-  function meterValue(pts, raw) {               // the reference's points, joined by straight lines (the last one runs on)
-    if (raw <= pts[0][0]) return pts[0][1];
-    for (let i = 1; i < pts.length; i++) {
-      const a = pts[i - 1], b = pts[i];
-      if (raw <= b[0]) return a[1] + (b[1] - a[1]) * (raw - a[0]) / ((b[0] - a[0]) || 1);
-    }
-    const a = pts[pts.length - 2] || [0, 0], b = pts[pts.length - 1];
-    return b[1] + (b[1] - a[1]) * (raw - b[0]) / ((b[0] - a[0]) || 1);
-  }
-  function meterText(key, raw) {
-    const lab = METER_LABEL[key] || key, mk = meterMarks(key);
-    if (!mk || !Array.isArray(mk.pts) || mk.pts.length < 2) return lab + " " + raw;
-    const last = mk.pts[mk.pts.length - 1];
-    if (key === "SWR") return lab + " " + (raw > last[0] ? ">" + last[1].toFixed(1) : meterValue(mk.pts, raw).toFixed(1));
-    const v = meterValue(mk.pts, raw), n = mk.unit === "%" ? Math.round(v) : Math.round(v * 10) / 10;
-    return lab + " " + n + (mk.unit === "%" ? "%" : mk.unit ? " " + mk.unit : "");
-  }
   // the TX scale under the bar: the picked meter's name, its marks at their readings (0..255), the unit on the
   // last; ALC's zone as a red line; the bar's amber / red from the meter's warn / bad readings
   function renderTxScale() {
@@ -484,15 +468,13 @@
     const tx = !!s.ptt && !!s.meter && s.meter !== "S";
     const kind = tx ? s.meter : "S";
     const pct = tx ? Math.min(100, (s.meter_val || 0) / 255 * 100) : Math.min(100, (s.smeter || 0) / 240 * 100);
-    const text = tx ? meterText(kind, s.meter_val || 0) : (s.smeter_s || "S0");
     if (blk) {
       blk.classList.toggle("tx", tx);
       const scaleKey = (s.meter || "") + "|" + ((currentRadio && currentRadio.id) || "");
       if (blk.dataset.scale !== scaleKey) { blk.dataset.scale = scaleKey; renderTxScale(); }
     }
-    const mf = $("meterFill"), mv = $("meterVal"), pk = $("meterPeak");
+    const mf = $("meterFill"), pk = $("meterPeak");
     if (mf) mf.style.width = pct + "%";
-    if (mv) mv.textContent = text;
     // the peak mark: the highest reading holds, then falls back; it starts over when the meter shown changes
     const now = Date.now();
     if (meterPeak.kind !== kind) { meterPeak.kind = kind; meterPeak.pct = pct; meterPeak.at = now; }
@@ -568,7 +550,7 @@
     // multi-meter (S live; TX meters wired for M3). The value also arrives on the fast
     // lightweight 'meter' channel between full-state frames — render via the shared helper.
     renderMeter();
-    setActive(".m-btn", b => b.dataset.meter === (s.meter || "S"));
+    setActive(".m-btn[data-meter]", b => b.dataset.meter === (s.meter || "S"));   // the TX meter keys, not the step keys beside them
 
     // RX toggles
     { const pb = $("preampBtn"); if (pb) {
@@ -1014,11 +996,11 @@
   }
 
   // ---- the tuning step ----
-  // One setting with two pickers: STEP in the Controls panel and the one between the step keys under the
-  // scope. The step picked is kept per radio on this device (telerig.step.<radio id>), so after a reload
+  // One setting with two pickers: STEP in the Controls panel and the one between the step keys beside the
+  // VFO's meter. The step picked is kept per radio on this device (telerig.step.<radio id>), so after a reload
   // the keys tune by it, not by the profile's default (the IC-9700's is its 25 kHz FM channel step).
   const STEP_KEY = "telerig.step.";
-  const stepSels = () => [$("step"), $("scopeStep")].filter(Boolean);
+  const stepSels = () => [$("step"), $("vfoStep")].filter(Boolean);
   function keptStep(p) {                              // the kept step, if it is still one of this radio's
     let v = 0;
     try { v = +localStorage.getItem(STEP_KEY + p.id); } catch (_) {}
@@ -1528,7 +1510,7 @@
   wrap.addEventListener("pointerup", scEnd);
   wrap.addEventListener("pointercancel", () => { scDown = false; flushTune(); });
 
-  // ---- the step keys in the scope's bar: - and +, one step of the frequency each (#stepDn, #stepUp) ----
+  // ---- the step keys beside the VFO's meter: - and +, one step of the frequency each (#stepDn, #stepUp) ----
   // A tap is one step, taken when the tap ENDS (its click), never when the finger lands: a finger that
   // lands on a key and then moves on tunes nothing. A key held HOLD_MS keeps stepping, REPEAT_MS apart,
   // until the pointer is lifted or cancelled, slides off the key, the key or the window loses the focus,
@@ -2109,9 +2091,10 @@
     { const mb = $("micBtn"); if (mb) mb.style.display = canPtt ? "" : "none"; }
     { const mid = $("micInDev"); if (mid && mid.closest(".sl")) mid.closest(".sl").style.display = canPtt ? "" : "none"; }
     { const mm = $("micMeter"); if (mm) mm.style.display = canPtt ? "" : "none"; }
-    // meter block (in the VFO tile): hidden when the rig exposes no meters over the control link (S-bar included)
+    // the meter (in the VFO tile): hidden when the rig exposes no meters over the control link (S-bar included);
+    // the step keys beside it stay (style.css .meter.no-meter: the IC-728 tunes with them too)
     { const mtr = $("meterBlock");
-      if (mtr) mtr.style.display = (Array.isArray(cap.meters) && cap.meters.length === 0) ? "none" : ""; }
+      if (mtr) mtr.classList.toggle("no-meter", Array.isArray(cap.meters) && cap.meters.length === 0); }
     // control-panel tabs: hide the ones the rig can't drive + the Settings tab when it has no menu
     const tabOn = { rx: capHas("tab_rx", true), tx: capHas("tab_tx", true),
                     dsp: capHas("tab_dsp", true), setup: !!(p.menu && p.menu.length) };

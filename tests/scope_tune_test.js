@@ -9,7 +9,7 @@
  *      prevented); a finger or a pen moving across it sends nothing
  *  S2. what still tunes there: a finger tap, a pen tap and a mouse click go to the frequency under them
  *      (a long finger press does not); a mouse drag pans, in whole steps
- *  S3. the step keys: a tap is one step, taken at its click (nothing when the finger lands, so a touch
+ *  S3. the step keys (beside the VFO's meter): a tap is one step, taken at its click (nothing when the finger lands, so a touch
  *      that turns into a scroll tunes nothing); + up, - down; Enter / Space (a click with no pointer)
  *      too; a second finger and the right mouse button do nothing
  *  S4. a held key: nothing for 400 ms, then a step every 100 ms until the pointer is lifted; the click
@@ -17,7 +17,7 @@
  *      (a wobble doesn't), the key loses the focus or the page is hidden, and after 30 s at most
  *  S5. who and when: a viewer's keys do nothing; nothing while panels are being arranged, and a hold
  *      stops when arranging begins
- *  S6. the step: both pickers (Controls, the scope's bar) list the radio's steps and show the same one;
+ *  S6. the step: both pickers (Controls, the VFO's) list the radio's steps and show the same one;
  *      changing either sets both and the keys' step; it is kept per radio on this device and comes back
  *      after a reload; a kept value that isn't one of the radio's steps gives its default; another radio
  *      has its own
@@ -61,10 +61,10 @@ async function page(opts) {
   const ov = e.el("canvas", { id: "overlay" }, e.wrap);
   ov.getBoundingClientRect = () => ({ left: 0, top: 0, width: W, height: 300 });
   e.stepSel = e.el("select", { id: "step" });               // the Controls panel's STEP
-  const bar = e.el("span", { id: "scopeStepCtl", "data-gate": "operate" });
-  e.dn = e.el("button", { id: "stepDn", type: "button" }, bar);
-  e.scopeSel = e.el("select", { id: "scopeStep" }, bar);
-  e.up = e.el("button", { id: "stepUp", type: "button" }, bar);
+  const keys = e.el("div", { id: "vfoStepCtl", class: "meter-step", "data-gate": "operate" });   // in the VFO's meter
+  e.dn = e.el("button", { id: "stepDn", type: "button", class: "m-btn step-key" }, keys);
+  e.vfoSel = e.el("select", { id: "vfoStep", class: "step-sel" }, keys);
+  e.up = e.el("button", { id: "stepUp", type: "button", class: "m-btn step-key" }, keys);
   e.load("tr.js");
   e.load("app.js");
   const ws = sockets[sockets.length - 1];
@@ -248,31 +248,31 @@ async function page(opts) {
   {
     const store = {};
     const e = await page({ storage: store });
-    eq([e.opts(e.stepSel), e.opts(e.scopeSel)], [["10 Hz", "100 Hz", "1 kHz"], ["10 Hz", "100 Hz", "1 kHz"]], "S6 both pickers list the radio's steps");
-    eq([e.stepSel.value, e.scopeSel.value], ["100", "100"], "S6 ... and show its default");
-    e.pick(e.scopeSel, 1000);
-    eq([e.stepSel.value, e.scopeSel.value, e.ctx.localStorage.getItem("telerig.step.rig_a")], ["1000", "1000", "1000"],
-       "S6 the scope's picker sets both, and the step is kept for this radio");
+    eq([e.opts(e.stepSel), e.opts(e.vfoSel)], [["10 Hz", "100 Hz", "1 kHz"], ["10 Hz", "100 Hz", "1 kHz"]], "S6 both pickers list the radio's steps");
+    eq([e.stepSel.value, e.vfoSel.value], ["100", "100"], "S6 ... and show its default");
+    e.pick(e.vfoSel, 1000);
+    eq([e.stepSel.value, e.vfoSel.value, e.ctx.localStorage.getItem("telerig.step.rig_a")], ["1000", "1000", "1000"],
+       "S6 the VFO's picker sets both, and the step is kept for this radio");
     e.tap(e.up, { pointerType: "touch" });
     eq(e.tunes(), [1000], "S6 the keys step by it");
     e.pick(e.stepSel, 10);
     e.tap(e.dn);
-    eq([e.scopeSel.value, e.tunes()], ["10", [1000, -10]], "S6 the Controls picker sets both too");
+    eq([e.vfoSel.value, e.tunes()], ["10", [1000, -10]], "S6 the Controls picker sets both too");
     // the server switches to another radio: its own steps and default; then its own kept step
     e.radio("rig_b");
     for (let i = 0; i < 4; i++) await e.flush();
-    eq([e.opts(e.scopeSel), e.stepSel.value, e.scopeSel.value], [["1 kHz", "25 kHz"], "1000", "1000"], "S6 another radio: its steps, its default");
-    e.pick(e.scopeSel, 25000);
+    eq([e.opts(e.vfoSel), e.stepSel.value, e.vfoSel.value], [["1 kHz", "25 kHz"], "1000", "1000"], "S6 another radio: its steps, its default");
+    e.pick(e.vfoSel, 25000);
     eq([e.ctx.localStorage.getItem("telerig.step.rig_b"), e.ctx.localStorage.getItem("telerig.step.rig_a")], ["25000", "10"], "S6 ... kept apart from the first radio's");
     // a reload on this device
     const store2 = { "telerig.step.rig_a": "10", "telerig.step.rig_b": "25000" };
     const f = await page({ storage: store2 });
     f.tap(f.up, { pointerType: "touch" });
-    eq([f.stepSel.value, f.scopeSel.value, f.tunes()], ["10", "10", [10]], "S6 after a reload: the kept step, in both pickers and under the keys");
+    eq([f.stepSel.value, f.vfoSel.value, f.tunes()], ["10", "10", [10]], "S6 after a reload: the kept step, in both pickers and under the keys");
     const g = await page({ storage: { "telerig.step.rig_a": "12345" } });
-    eq([g.stepSel.value, g.scopeSel.value], ["100", "100"], "S6 a kept value that isn't one of the radio's steps: its default");
+    eq([g.stepSel.value, g.vfoSel.value], ["100", "100"], "S6 a kept value that isn't one of the radio's steps: its default");
     const h = await page({ storage: { "telerig.step.rig_a": "<b>" } });
-    eq(h.scopeSel.value, "100", "S6 a kept value that isn't a number: its default");
+    eq(h.vfoSel.value, "100", "S6 a kept value that isn't a number: its default");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

@@ -18,10 +18,11 @@
  *      and closes it; Esc cancels; a frequency the radio can't receive is refused, the entry stays; the
  *      other band's row still selects that band; a viewer can't type
  *  T5. the Controls panel's frequency box reads the same way (7074 is 7.074 MHz; 144.2 on HF is refused)
- *  T6. the meter: S on receive; on transmit the picked TX meter with the CI-V reference's values (Po 50%,
- *      SWR 1.5 / >3.0, ALC as a share of its zone, COMP dB, Vd V, Id A), its scale under the bar, the bar's
- *      amber / red from its marks; a Yaesu's raw reading; the peak a mark on the bar that holds, then falls
- *      back, with nothing beside the reading that comes and goes; a radio without meters hides the block
+ *  T6. the meter, its bar alone (no number beside it: the step keys are there): S on receive (0..240); on
+ *      transmit the picked TX meter on the 0..255 bar, its scale under the bar from the CI-V reference (Po
+ *      %, SWR 1.5 / 2 / 3, ALC's zone, COMP dB, Vd V, Id A), the bar's amber / red from its marks; a Yaesu's
+ *      unmarked scale; the peak a mark on the bar that holds, then falls back; a radio without meters hides
+ *      the meter and keeps the step keys beside it
  *  T7. a reload: the page opens its socket before /api/radios answers, so a state frame can come first.
  *      Drawn then, the VFO shows no width (not the filter_bw an Icom's width is read from: a Yaesu showed
  *      2.4 kHz whatever its WIDTH), and once the profiles are in it is drawn again with the radio's own:
@@ -103,8 +104,10 @@ async function page(opts) {
   e.el("div", { class: "meter-fill", id: "meterFill" }, e.el("div", { class: "meter-bar" }, track));
   e.el("i", { class: "meter-peak", id: "meterPeak" }, track);
   e.el("div", { class: "meter-tx-scale", id: "meterTxScale" }, meter);
-  const read = e.el("div", { class: "meter-read" }, meter);
-  e.el("b", { class: "meter-val", id: "meterVal" }, read);
+  const steps = e.el("div", { class: "meter-step", id: "vfoStepCtl", "data-gate": "operate" }, meter);
+  e.el("button", { class: "m-btn step-key", id: "stepDn", type: "button" }, steps);
+  e.el("select", { class: "step-sel", id: "vfoStep" }, steps);
+  e.el("button", { class: "m-btn step-key", id: "stepUp", type: "button" }, steps);
   const sel = e.el("div", { class: "meter-sel", id: "meterSel" }, meter);
   for (const k of ["PO", "SWR", "ALC", "COMP", "Vd", "Id"]) e.el("button", { class: "m-btn", "data-act": "meter", "data-meter": k }, sel);
   e.el("input", { id: "freqEntry", class: "freq-entry" });
@@ -248,12 +251,12 @@ async function main() {
     e.state({});
     for (let i = 0; i < 4; i++) await e.flush();
     const meter = (o) => e.frame(Object.assign({ type: "meter", meter: "PO", meter_val: 0, smeter: 0, smeter_s: "S0" }, o));
-    const blk = e.$("meterBlock"), fill = () => e.$("meterFill").style.width, val = () => e.text("meterVal");
+    const blk = e.$("meterBlock"), fill = () => e.$("meterFill").style.width;
+    const scale = () => e.$("meterTxScale").querySelectorAll("span").map((x) => x.textContent);
     meter({ smeter: 120, smeter_s: "S9" });
     meter({ smeter: 93, smeter_s: "S7" });
-    eq([fill(), val(), blk.classList.contains("tx")], ["38.75%", "S7", false], "T6 receive: the S-meter (0..240), its reading");
-    eq([e.$("meterPeak").hidden, e.$("meterPeak").style.left, e.$("meterBlock").querySelectorAll(".meter-read > *").length],
-       [false, "50%", 1], "T6 ... the peak a mark on the bar, held; the reading alone in its corner");
+    eq([fill(), blk.classList.contains("tx")], ["38.75%", false], "T6 receive: the S-meter (0..240)");
+    eq([e.$("meterPeak").hidden, e.$("meterPeak").style.left], [false, "50%"], "T6 ... the peak a mark on the bar, held");
     e.clock.advance(900);
     meter({ smeter: 80, smeter_s: "S6" });
     eq(e.$("meterPeak").style.left, "50%", "T6 ... held for a second");
@@ -262,31 +265,37 @@ async function main() {
     eq(e.$("meterPeak").style.left, "38%", "T6 ... then falling back (40 % of the bar a second), not jumping");
     e.clock.advance(400);
     meter({ smeter: 80, smeter_s: "S6" });
-    eq([e.$("meterPeak").hidden, val()], [true, "S6"], "T6 ... until the reading catches it");
+    eq(e.$("meterPeak").hidden, true, "T6 ... until the reading catches it");
     eq(e.$("meterSel").querySelectorAll(".m-btn.active").map((b) => b.dataset.meter), ["PO"], "T6 the TX meter keys: Po picked");
-    const tx = async (m, v) => { e.state({ ptt: true, meter: m, meter_val: v }); for (let i = 0; i < 2; i++) await e.flush(); return val(); };
-    eq(await tx("PO", 143), "Po 50%", "T6 transmit: Po from the CI-V reference");
-    eq([fill(), blk.classList.contains("tx")], ["56.07843137254902%", true], "T6 ... on the 0..255 bar");
+    eq(e.$("vfoStepCtl").querySelectorAll(".m-btn.active").length, 0, "T6 ... the step keys beside them are not meter keys");
+    const tx = async (m, v) => { e.state({ ptt: true, meter: m, meter_val: v }); for (let i = 0; i < 2; i++) await e.flush(); return fill(); };
+    eq([await tx("PO", 143), blk.classList.contains("tx")], ["56.07843137254902%", true], "T6 transmit: Po on the 0..255 bar");
     eq(e.$("meterTxScale").querySelectorAll("span").map((x) => [x.textContent, x.style.left]),
-       [["Po", "0%"], ["50", "56.07843137254902%"], ["100%", "83.52941176470588%"]], "T6 ... its scale under the bar");
-    eq([await tx("SWR", 48), await tx("SWR", 100), await tx("SWR", 200)], ["SWR 1.5", "SWR 2.5", "SWR >3.0"], "T6 SWR");
+       [["Po", "0%"], ["50", "56.07843137254902%"], ["100%", "83.52941176470588%"]], "T6 ... its scale under the bar, from the CI-V reference");
+    eq([await tx("SWR", 48), scale()], ["18.823529411764707%", ["SWR", "1.5", "2", "3"]], "T6 SWR: its scale");
     eq([blk.style.getPropertyValue("--m-warn"), blk.style.getPropertyValue("--m-bad")], ["18.823529411764707%", "31.372549019607842%"],
        "T6 ... amber from 1.5, red from 2.0");
-    eq(e.$("meterTxScale").querySelectorAll("span").map((x) => x.textContent), ["SWR", "1.5", "2", "3"], "T6 ... its scale");
-    eq(await tx("ALC", 60), "ALC 50%", "T6 ALC: a share of its zone");
+    eq(await tx("ALC", 60), "23.52941176470588%", "T6 ALC");
     const zone = e.$("meterTxScale").querySelector(".zone");
-    check(zone && zone.style.width === "47.05882352941176%", "T6 ... the zone marked: " + (zone && zone.style.width));
-    eq([await tx("COMP", 130), await tx("Vd", 13), await tx("Id", 146)], ["COMP 15 dB", "Vd 10 V", "Id 15 A"], "T6 COMP, Vd, Id");
+    check(zone && zone.style.width === "47.05882352941176%", "T6 ... its zone marked: " + (zone && zone.style.width));
+    await tx("COMP", 130);
+    eq(scale(), ["COMP", "15", "30 dB"], "T6 COMP: its scale in dB");
+    await tx("Vd", 13);
+    eq(scale(), ["Vd", "16 V"], "T6 Vd: its scale in V (10 V too close to the start to label)");
+    await tx("Id", 146);
+    eq(scale(), ["Id", "10", "15", "25 A"], "T6 Id: its scale in A");
     e.state({ ptt: false, meter: "PO" });
     for (let i = 0; i < 2; i++) await e.flush();
-    eq([blk.classList.contains("tx"), val()], [false, "S0"], "T6 back on receive: the S-meter");
+    eq([blk.classList.contains("tx"), fill()], [false, "0%"], "T6 back on receive: the S-meter");
     e.state({ radio: "ft991a", ptt: true, meter: "PO", meter_val: 143 });
     for (let i = 0; i < 4; i++) await e.flush();
-    eq([val(), e.$("meterTxScale").querySelectorAll("span").map((x) => x.textContent)], ["Po 143", ["Po"]],
-       "T6 a Yaesu (no calibration in its CAT reference): the raw reading on an unmarked scale");
+    eq([fill(), scale()], ["56.07843137254902%", ["Po"]],
+       "T6 a Yaesu (no calibration in its CAT reference): the bar on an unmarked scale");
+    check(!blk.classList.contains("no-meter"), "T6 ... a radio with meters shows them");
     e.state({ radio: "ic728", ptt: false, meter: "S" });
     for (let i = 0; i < 4; i++) await e.flush();
-    eq(blk.style.display, "none", "T6 a radio with no meters: no meter");
+    eq([blk.classList.contains("no-meter"), blk.style.display === "none"], [true, false],
+       "T6 a radio with no meters: the meter hidden (style.css .meter.no-meter), the block and its step keys still there");
   }
   // T7: a reload, a state frame before the profiles
   for (const [tag, status] of [["the hello names the FT-991A", { connected: true, radio: "ft991a" }],

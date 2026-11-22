@@ -21,7 +21,7 @@ from harness import check, eq, test
 REPO = Path(__file__).resolve().parent.parent
 FRONT = REPO / "frontend"
 REMOTE_IDS = ("remoteBtn", "remoteModal", "remoteClose", "remoteBody")
-B4_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint"   # cwClose: the CW panel is a Modem mode; scopeHint: the step keys took its place
+B4_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint,cwToolBtn,meterVal"   # cwClose: the CW panel is a Modem mode; scopeHint: the step keys took its place; cwToolBtn, meterVal: the scope's CW key and the meter's reading (t_layout_ui.py)
 
 
 def _read(name: str) -> str:

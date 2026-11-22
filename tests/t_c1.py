@@ -310,7 +310,7 @@ def scope_never_tunes_by_scrolling_and_step_keys_in_node_vm(ctx):
     """Tuning from the Scope window (tests/scope_tune_test.js, the real tr.js + app.js in a Node vm): nothing
     that scrolls tunes on the scope (no wheel, no finger or pen moving across it: scrolling the page over
     the scope used to retune the radio); a tap or a click still goes to the frequency under it and a mouse
-    drag still pans; the step keys in the scope's bar step the frequency (a tap one step at its click, a
+    drag still pans; the step keys beside the VFO's meter step the frequency (a tap one step at its click, a
     held key every 100 ms until it is let go, cancelled, slid off, hidden, or 30 s are up); operators only,
     not while arranging; the step is one setting with two pickers, kept per radio. Static: the scope has no
     wheel listener and pans for the mouse only; the step keys queue the frequency's tune and send nothing
@@ -330,10 +330,15 @@ def scope_never_tunes_by_scrolling_and_step_keys_in_node_vm(ctx):
           "the step keys queue the frequency's tune delta and send nothing themselves")
     check('stepKey($("stepDn"), -1);' in js and 'stepKey($("stepUp"), 1);' in js, "- steps down, + up")
     html = (FRONT / "index.html").read_text(encoding="utf-8")
-    m = re.search(r'<span class="sc-step" id="scopeStepCtl" data-gate="operate"[^>]*>(.*?)</span>', html, re.S)
+    m = re.search(r'<div class="meter-step" id="vfoStepCtl" data-gate="operate"[^>]*>(.*?)</div>', html, re.S)
     check(m, "index.html: the step keys, operators only (data-gate)")
     ids = re.findall(r'<(button|select)\b[^>]*\bid="(\w+)"', m.group(1) if m else "")
-    eq(ids, [("button", "stepDn"), ("select", "scopeStep"), ("button", "stepUp")], "... -, the step, +")
+    eq(ids, [("button", "stepDn"), ("select", "vfoStep"), ("button", "stepUp")], "... -, the step, +")
+    at = [html.find(x) for x in ('<div class="meter" id="meterBlock">', 'id="vfoStepCtl"', 'id="meterSel"')]
+    check(-1 < at[0] < at[1] < at[2], f"... in the VFO's meter, before its TX meter keys: {at}")
+    scope_bar = html.split('<div class="scope-ctl"', 1)[1].split("</div>", 1)[0] if '<div class="scope-ctl"' in html else ""
+    check(scope_bar and "stepDn" not in scope_bar and 'id="cwToolBtn"' not in html and 'id="scopeStepCtl"' not in html,
+          "the scope's bar has no step keys and no CW key (the Modem window's CW key shows CW)")
     for bid in ("stepDn", "stepUp"):
         tag = re.search(r'<button\b[^>]*\bid="' + bid + r'"[^>]*>', html).group(0)
         check('type="button"' in tag and "aria-label=" in tag and "data-act" not in tag and "data-tx" not in tag,
@@ -343,12 +348,11 @@ def scope_never_tunes_by_scrolling_and_step_keys_in_node_vm(ctx):
           "the waterfall's hint: a mouse clicks or drags, a finger taps")
     css = re.sub(r"/\*.*?\*/", "", (FRONT / "style.css").read_text(encoding="utf-8"), flags=re.S)
     check("#scopeWrap{touch-action:pan-y}" in css, "style.css: a swipe up or down over the scope scrolls the page")
-    k = re.search(r"\.sc-step-key\{([^}]*)\}", css)
+    k = re.search(r"\.meter-step \.step-key\{([^}]*)\}", css)
     check(k and "touch-action:none" in k.group(1) and "user-select:none" in k.group(1) and "-webkit-touch-callout:none" in k.group(1),
           f"style.css: a held step key doesn't scroll the page, select its label or open the long-press menu: {k and k.group(1)}")
     check("@media (hover:none){.sth-mouse{display:none}.sth-touch{display:inline}}" in css, "style.css: the finger's hint on a touch screen")
-    phone = css.split("@media (max-width:680px){", 1)[1]
-    check(re.search(r"\.sc-step \.sc-step-key\{[^}]*min-height:44px", phone), "style.css: thumb-sized step keys on a phone")
+    check(".sc-step" not in css, "style.css: no rules left for the scope's old step keys")
 
 
 @test("unit")

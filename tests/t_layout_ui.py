@@ -37,7 +37,7 @@ EXO2_SHA256 = {                                   # Google Fonts exo2 v26, latin
 TILE_IDS = ["vfo", "ptt", "audio", "scope", "controls", "recorder", "spots", "sstv"]
 # the per-step id allow-list of tests/check_ids.py (§3.3 step 10): since B4 the Remote dialog's ids are
 # gone as well (AR-56); the CW panel's close button went with the CW panel (CW is a mode of the Modem window)
-B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint"   # scopeHint: the bar's hint gave way to the step keys
+B3_ALLOW_MISSING = "remoteBtn,remoteModal,remoteClose,remoteBody,rxDev,micDev,cwClose,scopeHint,cwHint,cwToolBtn,meterVal"   # scopeHint: the bar's hint gave way to the step keys; cwToolBtn: the scope's CW key (the Modem window's shows CW); meterVal: the meter's reading (the step keys stand there)
 # The page Phase 1 started from: v0.2.25. The audit used to read `dev`, which was that page until the
 # v0.3.0 release moved dev to v0.3.0 itself; pinned so the Phase 1 audit keeps its meaning.
 PHASE1_BASE_REF = "1d6ea32"
@@ -196,7 +196,7 @@ def index_tiles_parking_and_script_order(ctx):
         check(cw_pane in _ancestors(t, _by_id(t, i)), f"#{i} in the Modem window's CW pane")
     eq(t.nodes[_by_id(t, "cwDecodeBtn")][1].get("aria-pressed"), "false", "#cwDecodeBtn aria-pressed")
     check(t.nodes[_by_id(t, "meterBlock")][1].get("class") == "meter", "#meterBlock is the .meter")
-    for i, attr in (("meterSel", "data-gate"), ("scopeOnlyCtl", "data-gate"), ("pttBtn", "data-tx"),
+    for i, attr in (("meterSel", "data-gate"), ("vfoStepCtl", "data-gate"), ("scopeOnlyCtl", "data-gate"), ("pttBtn", "data-tx"),
                     ("atasTune", "data-tx"), ("micBtn", "data-tx"), ("micMeter", "data-tx"), ("cwTx", "data-tx")):
         check(attr in t.nodes[_by_id(t, i)][1], f"#{i} keeps {attr}")
     check("hidden" not in t.nodes[_by_id(t, "arrangeBtn")][1], "#arrangeBtn is bound (no hidden)")
