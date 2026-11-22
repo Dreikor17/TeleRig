@@ -581,6 +581,48 @@
       return e ? e[1] : 0;
     },
     label(hz) { return hz >= 1000 ? +(hz / 1000).toFixed(2) + " kHz" : Math.round(hz) + " Hz"; },
+    // A Yaesu's data filter in DATA-USB / DATA-LSB, in audio Hz (the FT-991A / FT-891 place it by SET menu,
+    // read into the state: backend profiles.py data_menus): DATA MODE PSK (data_mode 0) centers it on the
+    // PSK TONE (psk_tone), OTHERS (1) on OTHER SHIFT (data_shift, whose default 0 is the carrier: a 3 kHz
+    // filter then passes only 0-1.5 kHz), its WIDTH split on either side; OTHERS also moves the dial by
+    // OTHER DISP (data_disp). {lo, hi, center, width, others, disp}, lo no lower than 0; null when this is
+    // no Yaesu in a data mode, or the radio hasn't answered those menus (or its WIDTH) yet.
+    data(radio, s) {
+      s = s || {};
+      if (!radio || radio.protocol !== "yaesu" || !/^DATA-(USB|LSB)$/.test(s.mode_name || "")) return null;
+      const others = s.data_mode === 1, c = others ? s.data_shift : s.data_mode === 0 ? s.psk_tone : undefined;
+      const w = this.hz(radio, s);
+      if (typeof c !== "number" || !isFinite(c) || !w) return null;
+      const disp = others && typeof s.data_disp === "number" ? s.data_disp : 0;
+      return { lo: Math.max(0, c - w / 2), hi: c + w / 2, center: c, width: w, others, disp };
+    },
+    // The data filter against what a mode needs (need = [lo, hi] audio Hz): null when it passes that and
+    // the dial reads the carrier (or nothing is known); else {band: data(), cut, off, cmds}: cut = it misses
+    // part of `need`, off = OTHER DISP moves the dial off the carrier (TeleRig tunes by the carrier), cmds =
+    // the least that mends it, by the menu numbers radio.data_menus names (menu_write, as the Setup tab
+    // writes them): the WIDTH to 3 kHz (NAR off) where that alone passes `need`, else the center to 1500 Hz
+    // too (OTHER SHIFT, or the PSK TONE: 0-3 kHz passes every mode); OTHER DISP to 0 when it is off.
+    dataFix(radio, s, need) {
+      const d = this.data(radio, s), M = (radio && radio.data_menus) || {};
+      if (!d || !Array.isArray(need)) return null;
+      const cut = d.lo > need[0] || d.hi < need[1], off = d.disp !== 0;
+      if (!cut && !off) return null;
+      const nar = (s.narrow || 0) > 0, narrowish = nar || d.width !== 3000;
+      const at3k = (c) => Math.max(0, c - 1500) <= need[0] && c + 1500 >= need[1];   // this center, 3 kHz wide
+      let center = false, widen = false;
+      if (cut) {
+        if (narrowish && at3k(d.center)) widen = true;
+        else { center = d.center !== 1500; widen = narrowish; }
+      }
+      const cmds = [];
+      if (center && d.others && M.shift) cmds.push({ action: "menu_write", num: M.shift, value: 1500 });
+      else if (center && !d.others && M.tone) cmds.push({ action: "menu_write", num: M.tone, value: "1500 Hz" });
+      if (off && M.disp) cmds.push({ action: "menu_write", num: M.disp, value: 0 });
+      if (widen && nar) cmds.push({ action: "narrow", on: false });
+      const code = this.shCode(s.mode_name, false, 3000);
+      if (widen && code >= 0) cmds.push({ action: "width", code });
+      return { band: d, cut, off, cmds };
+    },
   };
 
   global.fmtHz = function (hz) {

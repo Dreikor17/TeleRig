@@ -601,6 +601,13 @@
         <span>RX is off: nothing is decoded.</span>
         <button type="button" class="key sm" id="dmRxOn" title="Turn on receive audio (the Audio panel's RX key)">RX on</button>
       </div>
+      <!-- a Yaesu's data filter (DATA-USB / DATA-LSB, placed by SET menu) cutting what the shown mode needs, or its
+           dial off the carrier: this says so, and its key centers the filter on 1500 Hz, 3 kHz wide (digital.js
+           renderFil, waterfall.js Passband.dataFix) -->
+      <div class="dm-rx dm-fil" id="dmFil" hidden>
+        <span id="dmFilText"></span>
+        <button type="button" class="key sm" id="dmFilFix"></button>
+      </div>
       <div id="dmPaneCw" role="tabpanel" aria-labelledby="dmCw">
         <!-- the CW decoder / coder (cwtool.js), shown by the mode keys: no hidden attribute on #cwTool (AR-27) -->
         <div class="tool-panel" id="cwTool">

@@ -147,7 +147,11 @@ class YaesuRadio:
         # ...and the IF NOTCH WIDTH item (the manual notch's width: _note_notch_width)
         nw = getattr(self.profile, "notch_width_menu", 0)
         notch = (menu_engine.yaesu_read_cmd(self._menu_index[nw]),) if nw in self._menu_index else ()
-        self._panel_cmds = self._SETTINGS + ex + rpt + notch
+        # ...and the data filter's place (DATA MODE, PSK TONE, OTHER DISP, OTHER SHIFT: _note_data_menu),
+        # so the Modem window can say when DATA-USB / DATA-LSB cuts what a mode needs
+        data = tuple(menu_engine.yaesu_read_cmd(self._menu_index[n])
+                     for n in (getattr(self.profile, "data_menus", None) or {}).values() if n in self._menu_index)
+        self._panel_cmds = self._SETTINGS + ex + rpt + notch + data
         # AF (the radio's own speaker, in the room with the radio) starts at 0 on every connect, before
         # the panel is read back (as in radio.py; the page asks before turning it up)
         self._send("AG0000;")
@@ -280,6 +284,7 @@ class YaesuRadio:
                     if vs.isdigit() and int(vs) != self.state.get(key):
                         self.state[key] = int(vs)
                         self._emit_state()
+            self._note_data_menu(m)
             self._handle_ex_reply(m)     # SET-menu reply -> separate menu channel
             return
         changed = True
@@ -964,6 +969,33 @@ class YaesuRadio:
         if getattr(self.profile, "cw_send", "") == "line" and item.num in (33, 60):
             return False
         return True
+
+    # profile.data_menus key -> state key: where the data filter sits (waterfall.js Passband.data)
+    _DATA_STATE = {"mode": "data_mode", "tone": "psk_tone", "disp": "data_disp", "shift": "data_shift"}
+
+    def _note_data_menu(self, m: str) -> None:
+        """A data-filter menu answered (profile.data_menus): DATA MODE as its index (0 PSK, 1 OTHERS),
+        PSK TONE in Hz, OTHER DISP / OTHER SHIFT in signed Hz, into the state; a state frame when one
+        changed. `m` is an EX reply without its ';'."""
+        for k, num in (getattr(self.profile, "data_menus", None) or {}).items():
+            it, key = self._menu_index.get(num), self._DATA_STATE.get(k)
+            if it is None or key is None:
+                continue
+            val = menu_engine.yaesu_decode(it, m)
+            if val is None:
+                continue                                 # not this item's reply
+            v = None
+            if k == "mode":
+                v = it.options.index(val) if val in it.options else None
+            elif k == "tone":
+                hz = str(val).split()[0] if str(val).split() else ""
+                v = int(hz) if hz.isdigit() else None    # "1500 Hz" -> 1500
+            elif isinstance(val, int) and not isinstance(val, bool):
+                v = val                                  # OTHER DISP / SHIFT: signed Hz
+            if v is not None and self.state.get(key) != v:
+                self.state[key] = v
+                self._emit_state()
+            return
 
     def _handle_ex_reply(self, m: str) -> None:
         w = self._ex_width

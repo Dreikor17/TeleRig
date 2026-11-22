@@ -11,7 +11,13 @@
  *     own side of the marker; nothing is labelled on a sweep or on the audio scope; no band, no label
  *     when the width is not known.
  *  C. app.js gives the scope that width on every state frame (a Yaesu's WIDTH, not the never-updated
- *     filter_bw; an Icom's filter_bw), and the WIDTH readout and -/+ keys read the same table.
+ *     filter_bw; an Icom's filter_bw), and the WIDTH readout and -/+ keys read the same table; the Modem
+ *     window's data-filter key (tr:datafix) is mended by app.js from its own state (Passband.dataFix):
+ *     an operator's with the menu permission, never on air, never a need that is no [lo, hi].
+ *  D. a Yaesu's data filter (Passband.data / dataFix): DATA MODE PSK centers it on the PSK TONE, OTHERS
+ *     on OTHER SHIFT (0 Hz, the carrier: 3 kHz passes only 0-1.5 kHz), its WIDTH either side; what it
+ *     cuts of SSTV, FT8 and RTTY, and the least that mends it (the WIDTH alone where that does it, else
+ *     the center to 1500 Hz as well; OTHER DISP to 0), by the radio's own menu numbers.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -157,18 +163,73 @@ function staticView(radio, st, theme) {
   eq(s.sc.meta.still, undefined, "B a sweep ends the band-plan view");
 }
 
+// ---- D. a Yaesu's data filter (FT-991A 062-065, FT-891 08-01..08-04): where it sits, what it cuts, the fix ----
+{
+  const R = { protocol: "yaesu", data_menus: { mode: 62, tone: 63, disp: 64, shift: 65 } };
+  const st = (o) => Object.assign({ mode_name: "DATA-USB", narrow: 0, width: 17, data_mode: 0, psk_tone: 1000, data_disp: 0, data_shift: 0 }, o);
+  const band = (o) => { const d = Passband.data(R, st(o)); return d && [d.lo, d.hi, d.center, d.width, d.others, d.disp]; };
+  eq(band({}), [0, 2500, 1000, 3000, false, 0], "D factory PSK: centered on the PSK TONE (1000 Hz), 3 kHz wide: 0-2.5 kHz");
+  eq(band({ data_mode: 1 }), [0, 1500, 0, 3000, true, 0],
+     "D OTHERS at the factory OTHER SHIFT (0 Hz, the carrier): 0-1.5 kHz (the 14.230 MHz recording's filter)");
+  eq(band({ data_mode: 1, data_shift: 1500 }), [0, 3000, 1500, 3000, true, 0], "D OTHERS, OTHER SHIFT +1500: 0-3 kHz");
+  eq(band({ psk_tone: 2000, width: 12 }), [1400, 2600, 2000, 1200, false, 0], "D PSK 2000 Hz at 1.2 kHz: 1.4-2.6 kHz");
+  eq(band({ mode_name: "DATA-LSB", data_mode: 1, data_shift: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, true, 1500],
+     "D DATA-LSB the same; OTHERS carries OTHER DISP");
+  eq(band({ psk_tone: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, false, 0], "D PSK: OTHER DISP not counted (it is the OTHERS dial)");
+  eq(band({ width: 0 }), [750, 1250, 1000, 500, false, 0], "D the DATA WIDTH default (00 = 500 Hz): 0.75-1.25 kHz");
+  eq([Passband.data(R, st({ mode_name: "USB" })), Passband.data(R, st({ mode_name: "RTTY-USB" })), Passband.data(R, st({ mode_name: "DATA-FM" })),
+      Passband.data({ protocol: "civ" }, st({})), Passband.data(R, st({ data_mode: undefined })), Passband.data(R, st({ psk_tone: undefined })),
+      Passband.data(R, st({ data_mode: 1, data_shift: undefined })), Passband.data(R, st({ width: 3 })), Passband.data(null, st({})),
+      Passband.data(R, null)],
+     [null, null, null, null, null, null, null, null, null, null],
+     "D null: voice, RTTY, DATA-FM, an Icom, a menu not answered yet, a WIDTH code not known, no profile, no state");
+  // the fix, against what each Modem mode needs (digital.js NEED)
+  const SSTV = [1050, 2350], FT8 = [300, 2500], RTTY = [2050, 2370];
+  const fix = (o, need, r) => Passband.dataFix(r || R, st(o), need);
+  eq([fix({}, SSTV), fix({}, FT8), fix({}, RTTY)], [null, null, null], "D the factory filter (PSK 1000 Hz, 3 kHz) passes SSTV, FT8 and RTTY");
+  const f = fix({ data_mode: 1 }, SSTV);
+  eq([f.cut, f.off, f.cmds, f.band.hi], [true, false, [{ action: "menu_write", num: 65, value: 1500 }], 1500],
+     "D OTHERS at 0 Hz cuts SSTV: OTHER SHIFT to +1500 (the band it found with it)");
+  eq([fix({ data_mode: 1 }, RTTY).cmds, fix({ data_mode: 1 }, FT8).cmds], [[{ action: "menu_write", num: 65, value: 1500 }],
+     [{ action: "menu_write", num: 65, value: 1500 }]], "D ... RTTY and FT8 too");
+  eq([fix({ data_mode: 1, data_shift: 1500 }, SSTV), fix({ data_mode: 1, data_shift: 1500 }, FT8), fix({ data_mode: 1, data_shift: 900 }, SSTV)],
+     [null, null, null], "D OTHERS at +1500 passes; at +900 (0-2.4 kHz) SSTV still passes");
+  eq(fix({ width: 0 }, SSTV).cmds, [{ action: "width", code: 17 }], "D PSK 1000 Hz at 500 Hz: the WIDTH to 3 kHz (code 17)");
+  eq(fix({ psk_tone: 2000 }, FT8).cmds, [{ action: "menu_write", num: 63, value: "1500 Hz" }],
+     "D PSK 2000 Hz cuts FT8 below 0.5 kHz: the PSK TONE to 1500 Hz (its option's name, as the Setup tab writes it)");
+  const d = fix({ data_mode: 1, data_shift: 1500, data_disp: 1500 }, SSTV);
+  eq([d.cut, d.off, d.cmds], [false, true, [{ action: "menu_write", num: 64, value: 0 }]],
+     "D the filter right but the dial 1.5 kHz off the carrier (OTHER DISP): OTHER DISP to 0");
+  eq(fix({ data_mode: 1, data_disp: -300 }, SSTV).cmds, [{ action: "menu_write", num: 65, value: 1500 }, { action: "menu_write", num: 64, value: 0 }],
+     "D both: OTHER SHIFT, then OTHER DISP");
+  eq(fix({ narrow: 1, width: 0 }, SSTV).cmds, [{ action: "narrow", on: false }, { action: "width", code: 17 }],
+     "D NAR on (300 Hz) at PSK 1000 Hz: NAR off, then the WIDTH (a wide code needs NAR off); the tone stays");
+  eq(fix({ data_mode: 1, narrow: 1, width: 0 }, SSTV).cmds,
+     [{ action: "menu_write", num: 65, value: 1500 }, { action: "narrow", on: false }, { action: "width", code: 17 }],
+     "D NAR on at OTHERS 0 Hz: 3 kHz alone passes 0-1.5 kHz, so the shift as well");
+  eq(fix({ psk_tone: 1500, width: 12 }, SSTV).cmds, [{ action: "width", code: 17 }], "D centered at 1500 Hz but 1.2 kHz wide: the WIDTH only");
+  eq(fix({ mode_name: "DATA-LSB", data_mode: 1, width: 16 }, SSTV).cmds,
+     [{ action: "menu_write", num: 65, value: 1500 }, { action: "width", code: 17 }], "D DATA-LSB at 2.4 kHz: the shift and the WIDTH");
+  eq(fix({ data_mode: 1 }, SSTV, { protocol: "yaesu", data_menus: { mode: 801, tone: 802, disp: 803, shift: 804 } }).cmds,
+     [{ action: "menu_write", num: 804, value: 1500 }], "D the FT-891's own numbers (08-04 OTHER SHIFT)");
+  const bare = fix({ data_mode: 1 }, SSTV, { protocol: "yaesu" });
+  eq([bare.cut, bare.cmds], [true, []], "D a profile with no menu numbers: the cut said, nothing to send");
+  eq([fix({ mode_name: "USB", data_mode: 1 }, SSTV), fix({ data_mode: 1 }, null), fix({ data_mode: 1 }, undefined)], [null, null, null],
+     "D null: not a data mode, no need given");
+}
+
 // ---- C. app.js hands the scope the width ---------------------------------------------------------------
 const PROFILES = [
   { id: "yx", make: "Test", name: "Yaesu X", protocol: "yaesu", has_scope: false, default_step: 100,
     bands: [{ name: "20", lo: 14000000, hi: 14350000 }, { name: "2", lo: 144000000, hi: 148000000 }],
     modes: ["LSB", "USB", "CW-USB", "FM", "DATA-USB"], steps: [{ v: 100, label: "100 Hz" }],
-    capabilities: { narrow: true, ext_ops: true } },
+    capabilities: { narrow: true, ext_ops: true }, data_menus: { mode: 62, tone: 63, disp: 64, shift: 65 } },
   { id: "ix", make: "Test", name: "Icom X", protocol: "civ", has_scope: true, default_step: 100,
     bands: [{ name: "20", lo: 14000000, hi: 14350000 }], modes: ["LSB", "USB", "CW"], steps: [{ v: 100, label: "100 Hz" }],
     capabilities: { data_mode: true } },
 ];
 function jsonResponse(status, body) { return { ok: status >= 200 && status < 300, status, json: async () => body }; }
-async function appEnv() {
+async function appEnv(perms) {
   const sockets = [];
   function FakeWS() { this.readyState = 1; this.sent = []; this.send = (d) => this.sent.push(JSON.parse(d)); this.close = () => {}; sockets.push(this); }
   const fetch = (url) => Promise.resolve(String(url).split("?")[0] === "/api/radios" ? jsonResponse(200, { radios: PROFILES })
@@ -182,7 +243,7 @@ async function appEnv() {
   e.load("app.js");
   const ws = sockets[sockets.length - 1];
   e.frame = (f) => ws.onmessage({ data: JSON.stringify(f) });
-  e.frame({ type: "hello", v: 1, conn: 3, user: "ME", role: "operator", perms: ["view", "listen", "operate"],
+  e.frame({ type: "hello", v: 1, conn: 3, user: "ME", role: "operator", perms: perms || ["view", "listen", "operate"],
             status: { connected: true, radio: "yx" }, tx: { owner: null }, hb_interval: 2 });
   for (let i = 0; i < 6; i++) await e.flush();
   e.sent = ws.sent;
@@ -214,6 +275,45 @@ async function appEnv() {
               width: 0, main: { freq: 14030000 }, sub: { freq: 0 }, active_band: "main" });
     for (let i = 0; i < 4; i++) await e.flush();
     eq(e.bw(), 500, "C an Icom (the server switched to it): filter_bw, as before (CW FIL2 500 Hz)");
+  }
+  {
+    // the Modem window's data-filter key (digital.js: tr:datafix {need, label}): app.js mends it from its own state
+    const e = await appEnv(["view", "listen", "operate", "menu"]);
+    const ask = (detail) => e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:datafix", { detail }));
+    const SSTV = [1050, 2350], acts = () => e.sent.filter((f) => ["menu_write", "width", "narrow"].includes(f.action));
+    const toasts = () => e.doc.getElementById("toasts").textContent;
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
+    e.sent.length = 0;
+    ask({ need: SSTV, label: "Center it at 1.5 kHz" });
+    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }], "C tr:datafix: app.js sends what Passband.dataFix finds (OTHER SHIFT +1500)");
+    check(toasts().includes("Center it at 1.5 kHz: sent to the radio."), "C ... said in the key's words: " + toasts());
+    e.state({ mode_name: "DATA-USB", width: 0, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
+    e.sent.length = 0;
+    ask({ need: SSTV, label: 7 });
+    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }, { action: "width", code: 17 }], "C ... 500 Hz wide too: the shift, then the WIDTH");
+    check(toasts().includes("The data filter: sent to the radio."), "C ... a label that is no text: plain words");
+    // nothing sent: a need that is no [lo, hi] (the filter cut), the filter right, the radio on air
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
+    e.sent.length = 0;
+    for (const need of [undefined, "1050-2350", [1050], [1050, 2350, 0], [1050, NaN], ["1050", "2350"], [1050, Infinity]]) ask({ need });
+    ask(null);
+    eq(acts(), [], "C a need that is no [lo, hi] of numbers: nothing sent, though the filter cuts SSTV");
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 1500 });
+    ask({ need: SSTV });
+    eq(acts(), [], "C nothing to mend (OTHER SHIFT +1500): nothing sent");
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0, ptt: true });
+    ask({ need: SSTV });
+    eq(acts(), [], "C the radio on air: nothing sent");
+    e.state({ mode_name: "USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
+    ask({ need: SSTV });
+    eq(acts(), [], "C voice USB: nothing sent (its own filter)");
+  }
+  {
+    const e = await appEnv();                               // operate, no menu permission
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
+    e.sent.length = 0;
+    e.doc.dispatchEvent(new e.ctx.CustomEvent("tr:datafix", { detail: { need: [1050, 2350] } }));
+    eq(e.sent.filter((f) => f.action === "menu_write" || f.action === "width"), [], "C no menu permission: nothing sent");
   }
   console.log(failures ? failures + " of " + checks + " checks FAILED" : "ALL PASS (" + checks + " checks)");
   process.exit(failures ? 1 : 0);

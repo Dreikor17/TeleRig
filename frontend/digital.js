@@ -72,6 +72,7 @@
       panes[m].hidden = !on;
     }
     renderRx();
+    renderFil();
     announce();
   }
 
@@ -84,6 +85,66 @@
     const b = $("audioBtn");
     if (b && !rxOn()) b.click();
     renderRx();
+  });
+
+  // ---- the radio's data filter: a Yaesu in DATA-USB / DATA-LSB centers it by SET menu (waterfall.js
+  // Passband.data), and with DATA MODE OTHERS the factory OTHER SHIFT (0 Hz) puts it on the carrier: a 3 kHz
+  // filter then passes 0-1.5 kHz, and SSTV's header and picture, RTTY's tones and FT8 above that are cut
+  // before TeleRig hears them (a 14.230 MHz picture, its syncs plain on the scope, never decoded). While a
+  // mode is shown whose tones it cuts, or the dial reads off the carrier (OTHER DISP), the window says so
+  // under its keys, with a key that mends it (the WIDTH to 3 kHz, the center to 1500 Hz, the dial on the
+  // carrier: the least that does it). An operator's key (operate + menu), never a viewer's, and not while
+  // this page sends. The key asks app.js (tr:datafix {need, label}), which sends to the radio what
+  // Passband.dataFix finds from its own state: this window itself never sends to the radio. ----
+  const NEED = { rtty: [2050, 2370, "RTTY needs 2125 and 2295 Hz"], ft8: [300, 2500, "FT8 needs 0.3 to 2.5 kHz"],
+                 sstv: [1050, 2350, "SSTV needs 1.1 to 2.3 kHz"] };
+  const filBar = $("dmFil"), filText = $("dmFilText"), filKey = $("dmFilFix");
+  const kHz = (hz) => String(+(Math.max(0, hz) / 1000).toFixed(2));
+  const can = (p) => { try { return !!(window.TR && TR.can(p)); } catch (_) { return false; } };
+  function radioNow() {                                    // the connected radio's state and profile, or null
+    const C = window.RadioControl;
+    let st = null, rs = [];
+    try { st = C && C.state(); rs = (C && typeof C.radios === "function" && C.radios()) || []; } catch (_) { return null; }
+    if (!st || !st.connected) return null;
+    const p = rs.find((r) => r.id === st.radio) || null;
+    return p ? { st, p } : null;
+  }
+  function menuName(p, num) {                              // "065 OTHER SHIFT (SSB)", "08-04 OTHER SHIFT"
+    const it = (p.menu || []).find((m) => m.num === num);
+    const n = it && it.ex_width === 4 ? String(Math.floor(num / 100)).padStart(2, "0") + "-" + String(num % 100).padStart(2, "0")
+      : String(num).padStart(3, "0");
+    return n + (it ? " " + it.name : "");
+  }
+  let fil = null;                                          // what the bar shows: {cmds, label, need}
+  function renderFil() {
+    if (!filBar) return;
+    const r = radioNow(), need = NEED[cur], P = window.Passband;
+    const f = r && need && P && typeof P.dataFix === "function" ? P.dataFix(r.p, r.st, need) : null;
+    filBar.hidden = !f;
+    if (!f) { fil = null; return; }
+    const b = f.band, M = r.p.data_menus || {};
+    const why = b.others ? menuName(r.p, M.shift) + " " + (b.center > 0 ? "+" : "") + b.center + " Hz"
+      : menuName(r.p, M.tone) + " " + b.center + " Hz";
+    let t = "";
+    if (f.cut) t = "The radio's data filter passes " + kHz(b.lo) + "–" + kHz(b.hi) + " kHz (" + why + ", " + P.label(b.width) + " wide): " + need[2] + ".";
+    if (f.off) t += (t ? " " : "") + "Its dial reads " + kHz(Math.abs(b.disp)) + " kHz off the carrier (" + menuName(r.p, M.disp) + "), so tuning lands that far off.";
+    if (filText && filText.textContent !== t) filText.textContent = t;
+    const centers = f.cmds.some((c) => c.action === "menu_write" && (c.num === M.shift || c.num === M.tone));
+    const widens = f.cmds.some((c) => c.action === "width");
+    const label = centers ? "Center it at 1.5 kHz" + (widens ? ", 3 kHz wide" : "") : widens ? "Widen it to 3 kHz" : "Dial on the carrier";
+    fil = { cmds: f.cmds, label, need: [need[0], need[1]] };
+    if (!filKey) return;
+    if (filKey.textContent !== label) filKey.textContent = label;
+    const val = (v) => (typeof v !== "number" ? v : (v > 0 ? "+" : "") + v + " Hz");
+    const sets = f.cmds.map((c) => c.action === "menu_write" ? menuName(r.p, c.num) + " to " + val(c.value)
+      : c.action === "width" ? "the WIDTH to 3 kHz" : "NAR off");
+    filKey.title = "Sets " + sets.join(", ") + " on the radio";
+    filKey.hidden = !f.cmds.length || !can("operate") || !can("menu") || !!sending();
+  }
+  if (filKey) filKey.addEventListener("click", () => {
+    const f = fil;
+    if (!f || !f.cmds.length || !can("operate") || !can("menu") || sending()) return;
+    try { document.dispatchEvent(new CustomEvent("tr:datafix", { detail: { need: f.need, label: f.label } })); } catch (_) {}
   });
 
   function show(m) {

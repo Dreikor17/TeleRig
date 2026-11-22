@@ -39,6 +39,13 @@
  *      reads as a callsign; tr:call when it changes
  *  D11. Copy (CW, RTTY, FT8): the mode's text to the clipboard, by the Clipboard API where the page has it
  *      and through a hidden text box where it has not; said when done, when refused, when there is nothing
+ *  D12. a Yaesu's data filter (DATA-USB on DATA MODE OTHERS at the factory OTHER SHIFT, 0 Hz: 0-1.5 kHz, a
+ *      14.230 MHz SSTV picture never decoded): while SSTV, FT8 or RTTY is shown and it cuts their tones, or
+ *      the dial reads off the carrier (OTHER DISP), the window says so under its keys, naming the radio's
+ *      menu (FT-991A 065, FT-891 08-04); its key (an operator's: operate + menu, not while this page sends)
+ *      asks app.js to mend it (tr:datafix, the mode's need: app.js sends the least that does it, from its own
+ *      state, tests/passband_test.js C), the window itself sending nothing to the radio; gone once the radio
+ *      answers; none in CW, voice, unknown menus, no radio
  *  T7. FT8 marks the messages that name the operator's callsign (a whole word, inside <>, around a /), in
  *      the list and in its headings; they show under "CQ only"; a changed callsign marks the list again;
  *      Ft8Panel.text(): the list as it shows
@@ -96,6 +103,16 @@ function page(opts) {
   e.ctx.RadioAudio = { on: () => e.on, tapPcm: (fn) => { e.taps.push(fn); return () => {}; } };
   e.st = { connected: true, mode_name: "USB" };
   e.ctx.RadioControl = { state: () => e.st };
+  if (opts.fil) {                                            // D12: the data filter's bar, Passband (waterfall.js), the radios
+    e.filBar = e.el("div", { id: "dmFil", hidden: true }, tile);
+    e.filText = e.el("span", { id: "dmFilText" }, e.filBar);
+    e.filKey = e.el("button", { id: "dmFilFix", type: "button" }, e.filBar);
+    e.load("waterfall.js");
+    e.radios = []; e.fixes = []; e.sent = [];
+    e.ctx.RadioControl.radios = () => e.radios.slice();
+    e.ctx.RadioControl.send = (o) => e.sent.push(o);          // never called: the window asks app.js (tr:datafix)
+    e.doc.addEventListener("tr:datafix", (ev) => e.fixes.push(ev.detail));
+  }
   e.workers = [];
   if (opts.worker !== false) {
     e.ctx.Worker = function (url) { this.url = url; this.posted = []; e.workers.push(this); };
@@ -637,6 +654,92 @@ for (const [late, what] of [[3.5, "3.5 s late"], [-2.8, "2.8 s early"]]) {
     delete e.ctx.Ft8Panel.text;
     e.click(e.copyKeys.ft8);
     eq(e.toasts, [["Nothing to copy yet.", "info"]], "D11 a mode with no text to give: nothing to copy");
+  }
+
+  // ---- D12: a Yaesu's data filter cutting what the shown mode needs (the 14.230 MHz SSTV picture, never decoded) ----
+  {
+    const FT991A = { id: "ft991a", protocol: "yaesu", data_menus: { mode: 62, tone: 63, disp: 64, shift: 65 },
+                     menu: [{ num: 62, name: "DATA MODE", ex_width: 3 }, { num: 63, name: "PSK TONE", ex_width: 3 },
+                            { num: 64, name: "OTHER DISP (SSB)", ex_width: 3 }, { num: 65, name: "OTHER SHIFT (SSB)", ex_width: 3 }] };
+    const FT891 = { id: "ft891", protocol: "yaesu", data_menus: { mode: 801, tone: 802, disp: 803, shift: 804 },
+                    menu: [{ num: 804, name: "OTHER SHIFT", ex_width: 4 }] };
+    const data = (o) => Object.assign({ connected: true, radio: "ft991a", mode_name: "DATA-USB", narrow: 0, width: 17,
+                                        data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 }, o);
+    const e = page({ stubs: true, fil: true });
+    e.perms.add("menu");
+    e.radios = [FT991A, FT891];
+    const bar = () => [e.filBar.hidden, e.filText.textContent, e.filKey.textContent, e.filKey.hidden];
+    e.st = data();
+    e.click(e.keys.cw);
+    eq(e.filBar.hidden, true, "D12 CW shown: no bar (CW is not a data mode's tones)");
+    e.click(e.keys.sstv);
+    eq(bar(), [false, "The radio's data filter passes 0–1.5 kHz (065 OTHER SHIFT (SSB) 0 Hz, 3 kHz wide): SSTV needs 1.1 to 2.3 kHz.",
+               "Center it at 1.5 kHz", false], "D12 SSTV shown, DATA-USB on OTHERS at 0 Hz: the cut said, with its menu, and the key");
+    eq(e.filKey.title, "Sets 065 OTHER SHIFT (SSB) to +1500 Hz on the radio", "D12 ... the key says what it sets");
+    e.click(e.filKey);
+    eq([e.fixes, e.sent, e.toasts], [[{ need: [1050, 2350], label: "Center it at 1.5 kHz" }], [], []],
+       "D12 its key asks app.js to mend it (tr:datafix: SSTV's need, the key's words); the window sends nothing to the radio itself");
+    e.st = data({ data_shift: 1500 });                       // the radio's confirm-read
+    e.clock.advance(1000);
+    eq(e.filBar.hidden, true, "D12 the radio answers +1500: the bar goes within a second");
+    e.st = data();
+    e.click(e.keys.ft8);
+    eq(bar().slice(0, 2), [false, "The radio's data filter passes 0–1.5 kHz (065 OTHER SHIFT (SSB) 0 Hz, 3 kHz wide): FT8 needs 0.3 to 2.5 kHz."],
+       "D12 FT8 shown: the same filter cuts FT8");
+    e.click(e.keys.rtty);
+    eq(bar().slice(0, 2), [false, "The radio's data filter passes 0–1.5 kHz (065 OTHER SHIFT (SSB) 0 Hz, 3 kHz wide): RTTY needs 2125 and 2295 Hz."],
+       "D12 RTTY shown: and RTTY");
+    e.click(e.keys.sstv);
+    for (const [o, why] of [[{ mode_name: "USB" }, "voice USB (its own filter)"], [{ connected: false }, "no radio connected"],
+                            [{ radio: "ic9700" }, "a radio with no profile here"], [{ data_mode: 0 }, "PSK at 1000 Hz, 3 kHz: 0-2.5 kHz"],
+                            [{ data_mode: undefined }, "the menus not answered yet"]]) {
+      e.st = data(o);
+      e.clock.advance(1000);
+      eq(e.filBar.hidden, true, "D12 no bar: " + why);
+    }
+    e.st = data({ data_mode: 0, width: 0 });                 // PSK 1000 Hz at the DATA default, 500 Hz
+    e.clock.advance(1000);
+    eq([bar(), e.filKey.title], [[false, "The radio's data filter passes 0.75–1.25 kHz (063 PSK TONE 1000 Hz, 500 Hz wide): SSTV needs 1.1 to 2.3 kHz.",
+        "Widen it to 3 kHz", false], "Sets the WIDTH to 3 kHz on the radio"], "D12 500 Hz wide: widened only (3 kHz at 1000 Hz passes SSTV)");
+    e.st = data({ width: 0 });                               // OTHERS 0 Hz at 500 Hz
+    e.clock.advance(1000);
+    e.fixes.length = 0;
+    e.click(e.filKey);
+    eq([e.filKey.textContent, e.filKey.title, e.fixes], ["Center it at 1.5 kHz, 3 kHz wide", "Sets 065 OTHER SHIFT (SSB) to +1500 Hz, the WIDTH to 3 kHz on the radio",
+        [{ need: [1050, 2350], label: "Center it at 1.5 kHz, 3 kHz wide" }]], "D12 OTHERS 0 Hz at 500 Hz: centered and widened, in that order");
+    e.st = data({ data_shift: 1500, data_disp: 1500 });
+    e.clock.advance(1000);
+    eq([bar(), e.filKey.title], [[false, "Its dial reads 1.5 kHz off the carrier (064 OTHER DISP (SSB)), so tuning lands that far off.", "Dial on the carrier", false],
+        "Sets 064 OTHER DISP (SSB) to 0 Hz on the radio"], "D12 the filter right, the dial off the carrier (OTHER DISP +1500): said, and mended");
+    e.st = data({ radio: "ft891" });
+    e.clock.advance(1000);
+    eq([bar()[1], e.filKey.title], ["The radio's data filter passes 0–1.5 kHz (08-04 OTHER SHIFT 0 Hz, 3 kHz wide): SSTV needs 1.1 to 2.3 kHz.",
+        "Sets 08-04 OTHER SHIFT to +1500 Hz on the radio"], "D12 the FT-891: its own menu numbers (08-04)");
+    // who may mend it: operate and menu, not while this page sends
+    e.st = data();
+    e.perms.delete("menu");
+    e.clock.advance(1000);
+    e.fixes.length = 0;
+    e.click(e.filKey);
+    eq([e.filBar.hidden, e.filKey.hidden, e.fixes], [false, true, []], "D12 no menu permission: the cut said, no key (a click asks nothing)");
+    e.perms.add("menu"); e.perms.delete("operate");
+    e.clock.advance(1000);
+    eq([e.filBar.hidden, e.filKey.hidden], [false, true], "D12 ... nor without operate (a viewer)");
+    e.perms.add("operate");
+    e.sending = true;                                        // SSTV sends a picture
+    e.clock.advance(1000);
+    e.click(e.filKey);
+    eq([e.filBar.hidden, e.filKey.hidden, e.fixes, e.sent], [false, true, [], []], "D12 while this page sends: no key");
+    e.sending = false;
+    e.clock.advance(1000);
+    eq(e.filKey.hidden, false, "D12 ... and back once it has sent");
+  }
+  {
+    const e = page({ stubs: true });                          // no bar on the page (an older page), no Passband: nothing breaks
+    e.st = { connected: true, radio: "ft991a", mode_name: "DATA-USB", width: 17, data_mode: 1, data_shift: 0 };
+    e.click(e.keys.sstv);
+    e.clock.advance(1000);
+    eq(shown(e), ["sstv"], "D12 a page without the bar: the window as before");
   }
   console.log(failures ? `\n${failures} of ${checks} checks FAILED` : `\nALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

@@ -2670,6 +2670,21 @@
     txBegin: () => genTxBegin(), txPush: (pcm) => genTxPush(pcm), txEnd: () => genTxEnd(), txActive: () => genTx };
   // control channel for overlay tools (CW TX): send a WS command + read live state
   window.RadioControl = { send: (o) => send(o), state: () => state, radios: () => radios.slice() };
+  // The Modem window's data-filter key (digital.js renderFil): a Yaesu's DATA-USB / DATA-LSB filter that cuts
+  // what the shown mode needs ({need: [lo, hi] Hz, label: the key's words}) is mended here, from this page's
+  // own state and profile: what waterfall.js Passband.dataFix finds (the data filter's menus, NAR, WIDTH,
+  // nothing else), so the Modem window itself sends nothing to the radio. An operator's (operate + menu),
+  // and never while the radio transmits.
+  document.addEventListener("tr:datafix", (e) => {
+    const d = (e && e.detail) || {}, need = d.need;
+    if (!Array.isArray(need) || need.length !== 2 || !need.every((v) => typeof v === "number" && isFinite(v))) return;
+    if (!TR.can("operate") || !TR.can("menu") || state.ptt || !window.Passband) return;
+    const fix = Passband.dataFix(currentRadio, state, need);
+    if (!fix || !fix.cmds.length) return;
+    let sent = 0;
+    for (const c of fix.cmds) if (send(c)) sent++;
+    if (sent) TR.toast((typeof d.label === "string" && d.label ? d.label : "The data filter") + ": sent to the radio.", "ok");
+  });
   function playAudio(buf) {
     if (!audioOn || !audioCtx) return;
     const rate = new DataView(buf).getUint16(2, true) || 16000;

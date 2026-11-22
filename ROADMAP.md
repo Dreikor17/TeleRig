@@ -257,6 +257,13 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   way". A start joined so must show a sync on 8 of its first 12 lines (4 after a header), so a pulse train,
   CW keying, voice or noise never shows as a picture. Choosing a mode still starts at the next sync, as
   before.
+- **The Modem window says when a Yaesu's data filter cuts the mode, and centers it.** In DATA‑USB the
+  FT‑991A and FT‑891 center their filter by menu, and with DATA MODE on OTHERS the factory OTHER SHIFT
+  (0 Hz) leaves a 3 kHz filter passing only 0–1.5 kHz: a strong 14.230 MHz SSTV picture never decoded,
+  its header and picture tones cut before TeleRig heard them. TeleRig now reads DATA MODE, PSK TONE,
+  OTHER DISP and OTHER SHIFT, and while SSTV, FT8 or RTTY is shown and the filter cuts its tones (or the
+  dial reads off the carrier), the window says so, naming the menu, with a key that mends it: the width
+  to 3 kHz where that alone does it, else the center to 1.5 kHz as well.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

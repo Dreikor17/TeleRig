@@ -204,6 +204,15 @@ class RadioProfile:
     # 116, FT-891 12-04). Read on connect and with the panel; the DSP tab's WIDE / NAR keys write it only
     # once the radio has answered it as NARROW or WIDE (state mnotch_w_ok). 0 = none.
     notch_width_menu: int = 0
+    # Yaesu data filter: the SET-menu items that place a DATA-USB / DATA-LSB filter, {"mode", "tone",
+    # "disp", "shift"} -> menu number (FT-991A 062-065, FT-891 08-01..08-04). DATA MODE PSK centers the
+    # filter on the PSK TONE (1000 Hz by default); OTHERS centers it on OTHER SHIFT, whose default 0 Hz
+    # is the carrier: a 3 kHz filter then passes only 0-1.5 kHz of audio, cutting SSTV's picture, its
+    # header and FT8 above 1.5 kHz. OTHER DISP moves the dial (OTHERS). Read on connect and with the
+    # panel round-robin into state data_mode (0 PSK / 1 OTHERS), psk_tone, data_disp, data_shift (Hz);
+    # the Modem window says when the filter cuts what a mode needs, and offers to center it
+    # (waterfall.js Passband.dataFix). {} = none. See docs/ADDING-A-RADIO.md.
+    data_menus: dict = field(default_factory=dict)
     make: str = "Icom"            # manufacturer, shown before the model in the picker
     protocol: str = "civ"         # "civ" (Icom CI-V) | "yaesu" (Yaesu CAT)
     # Old/limited CI-V rigs (IC-728, ~1990) speak ONLY the classic command set 0x00-0x0E:
@@ -295,6 +304,7 @@ class RadioProfile:
             "meter_marks": self.meter_marks,
             "has_cw_tx": bool(self.cw_send),
             "cw_sides": self.cw_sides, "cw_pitch_hz": self.cw_pitch_hz,
+            "data_menus": self.data_menus,
             "transports": asdict(self.transports) if self.transports else None,
             "capabilities": asdict(self.capabilities) if self.capabilities else None,
             "menu": [asdict(m) for m in self.menu],
@@ -487,6 +497,8 @@ FT991A = RadioProfile(
     rpt_offset_menus=((80, 28_000_000, 29_700_000), (81, 50_000_000, 54_000_000),
                       (82, 144_000_000, 148_000_000), (83, 420_000_000, 450_000_000)),
     notch_width_menu=116,           # 116 IF NOTCH WIDTH: 0 NARROW / 1 WIDE (CAT reference p8)
+    # 062 DATA MODE (PSK / OTHERS), 063 PSK TONE, 064 OTHER DISP, 065 OTHER SHIFT: the data filter's place
+    data_menus={"mode": 62, "tone": 63, "disp": 64, "shift": 65},
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],
@@ -552,6 +564,8 @@ FT891 = RadioProfile(
     # 09-04 / 09-05 RPT SHIFT 28 / 50 MHz (kHz): the offset a + or - shift (OS) uses there
     rpt_offset_menus=((904, 28_000_000, 29_700_000), (905, 50_000_000, 54_000_000)),
     notch_width_menu=1204,          # 12-04 IF NOTCH WIDTH: 0 NARROW / 1 WIDE (CAT reference p8)
+    # 08-01 DATA MODE (PSK / OTHERS), 08-02 PSK TONE, 08-03 OTHER DISP, 08-04 OTHER SHIFT
+    data_menus={"mode": 801, "tone": 802, "disp": 803, "shift": 804},
     default_freq=14_074_000,
     steps=[(10, "10 Hz"), (100, "100 Hz"), (1000, "1 kHz"), (2500, "2.5 kHz"),
            (5000, "5 kHz"), (10000, "10 kHz"), (25000, "25 kHz")],

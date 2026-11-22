@@ -203,6 +203,15 @@ this list whenever a radio turns up something new.
   its CW width to 2.4 kHz; an Icom's SSB FIL1 is 3.0 kHz and FIL2 2.4 kHz. A pick sets the width it needs
   each time (`spots.js` `FILTER`: SSB 2.4 kHz, CW 500 Hz, data 3 kHz, SSTV 3 kHz), so check the new radio's
   filter table against it.
+- **A data mode's filter can sit away from the voice band.** In DATA‑USB / DATA‑LSB the FT‑991A and
+  FT‑891 center their filter by SET menu: DATA MODE PSK on the PSK TONE (1000 Hz by default), OTHERS on
+  OTHER SHIFT, whose default 0 Hz is the carrier, so a 3 kHz filter passes only 0–1.5 kHz of audio. A
+  strong 14.230 MHz SSTV picture never decoded so (2026‑11‑22): its 1200 Hz syncs came through, its
+  1900 Hz header and its picture (1.5–2.3 kHz) did not, and the recording held nothing above 1.6 kHz.
+  TeleRig now reads the four menus (`data_menus`, with OTHER DISP, which moves the dial), and the Modem
+  window says when the filter cuts what SSTV, FT8 or RTTY needs, with a key that centers it on 1500 Hz,
+  3 kHz wide (`waterfall.js` `Passband.dataFix`). On a new radio, find where each data mode's filter
+  sits in audio, not only how wide it is.
 
 ## The profile is the declarative source of truth
 
@@ -232,6 +241,12 @@ renders/gates itself from it:
   only once the radio has answered it as NARROW or WIDE (`state["mnotch_w_ok"]`): a radio whose menu is
   numbered otherwise (a later firmware) answers another item there, and then the keys stay hidden and
   nothing is written (`backend/notch_width_test.py`).
+- **Where a data mode's filter sits** (a Yaesu): name the SET-menu items that place it in `data_menus`,
+  `{"mode", "tone", "disp", "shift"}` → menu number (FT‑991A `062`–`065` DATA MODE, PSK TONE, OTHER DISP,
+  OTHER SHIFT; FT‑891 `08-01`–`08-04`). The handler reads them on connect and with the panel round-robin
+  into `state["data_mode"]` (0 PSK / 1 OTHERS), `psk_tone`, `data_disp` and `data_shift` (Hz), and the
+  Modem window checks DATA‑USB / DATA‑LSB against what SSTV, FT8 and RTTY need (`waterfall.js`
+  `Passband.data` / `dataFix`; `backend/yaesu_data_filter_test.py`). `{}` = none: no line, no key.
 - **`menu`** — a declarative `MenuItem` list driving the data‑driven **Setup tab**.
 
 When `transports`/`capabilities` are omitted they are **synthesized from the flat `has_*`
