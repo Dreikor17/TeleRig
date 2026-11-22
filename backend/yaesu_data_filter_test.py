@@ -3,7 +3,8 @@ run: python -m backend.yaesu_data_filter_test
 
 In DATA-USB / DATA-LSB the FT-991A and FT-891 center their filter by SET menu, not on the voice band:
 DATA MODE PSK on the PSK TONE, OTHERS on OTHER SHIFT (whose default 0 Hz is the carrier, so a 3 kHz
-filter passes only 0-1.5 kHz of audio); OTHER DISP moves the dial. The Modem window (digital.js, with
+filter passes only 0-1.5 kHz of audio); OTHER SHIFT is the carrier point, so OTHERS' dial reads the
+carrier only with OTHER DISP equal to it. The Modem window (digital.js, with
 waterfall.js Passband.dataFix, tests/passband_test.js and tests/digital_test.js) says when that cuts
 what a mode needs. This checks the backend half:
 

@@ -208,10 +208,13 @@ this list whenever a radio turns up something new.
   OTHER SHIFT, whose default 0 Hz is the carrier, so a 3 kHz filter passes only 0–1.5 kHz of audio. A
   strong 14.230 MHz SSTV picture never decoded so (2026‑11‑22): its 1200 Hz syncs came through, its
   1900 Hz header and its picture (1.5–2.3 kHz) did not, and the recording held nothing above 1.6 kHz.
-  TeleRig now reads the four menus (`data_menus`, with OTHER DISP, which moves the dial), and the Modem
-  window says when the filter cuts what SSTV, FT8 or RTTY needs, with a key that centers it on 1500 Hz,
-  3 kHz wide (`waterfall.js` `Passband.dataFix`). On a new radio, find where each data mode's filter
-  sits in audio, not only how wide it is.
+  OTHER SHIFT is the carrier point, not only the filter's: set to +1500 alone, it opened 0–3 kHz but put
+  the dial 1.5 kHz above the carrier, and the same picture showed 1500 Hz high (sync at 2.7 kHz). The
+  dial reads the carrier only with OTHER DISP equal to OTHER SHIFT; the digital-mode setup is both at
+  1500. TeleRig now reads the four menus (`data_menus`), and the Modem window says when the filter cuts
+  what SSTV, FT8 or RTTY needs, or the dial is off the carrier, with a key that mends it
+  (`waterfall.js` `Passband.dataFix`). On a new radio, find where each data mode's filter sits in audio,
+  and what each menu that moves it does to the dial.
 
 ## The profile is the declarative source of truth
 
@@ -245,8 +248,9 @@ renders/gates itself from it:
   `{"mode", "tone", "disp", "shift"}` → menu number (FT‑991A `062`–`065` DATA MODE, PSK TONE, OTHER DISP,
   OTHER SHIFT; FT‑891 `08-01`–`08-04`). The handler reads them on connect and with the panel round-robin
   into `state["data_mode"]` (0 PSK / 1 OTHERS), `psk_tone`, `data_disp` and `data_shift` (Hz), and the
-  Modem window checks DATA‑USB / DATA‑LSB against what SSTV, FT8 and RTTY need (`waterfall.js`
-  `Passband.data` / `dataFix`; `backend/yaesu_data_filter_test.py`). `{}` = none: no line, no key.
+  Modem window checks DATA‑USB / DATA‑LSB against what SSTV, FT8 and RTTY need, and OTHERS' dial
+  against the carrier (OTHER DISP must equal OTHER SHIFT) (`waterfall.js` `Passband.data` / `dataFix`;
+  `backend/yaesu_data_filter_test.py`). `{}` = none: no line, no key.
 - **`menu`** — a declarative `MenuItem` list driving the data‑driven **Setup tab**.
 
 When `transports`/`capabilities` are omitted they are **synthesized from the flat `has_*`

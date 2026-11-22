@@ -261,9 +261,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   FT‑991A and FT‑891 center their filter by menu, and with DATA MODE on OTHERS the factory OTHER SHIFT
   (0 Hz) leaves a 3 kHz filter passing only 0–1.5 kHz: a strong 14.230 MHz SSTV picture never decoded,
   its header and picture tones cut before TeleRig heard them. TeleRig now reads DATA MODE, PSK TONE,
-  OTHER DISP and OTHER SHIFT, and while SSTV, FT8 or RTTY is shown and the filter cuts its tones (or the
-  dial reads off the carrier), the window says so, naming the menu, with a key that mends it: the width
-  to 3 kHz where that alone does it, else the center to 1.5 kHz as well.
+  OTHER DISP and OTHER SHIFT, and while SSTV, FT8 or RTTY is shown and the filter cuts its tones, or the
+  dial reads off the carrier, the window says so, naming the menu, with a key that mends it: the width
+  to 3 kHz where that alone does it, else the center to 1.5 kHz as well. OTHER SHIFT is the carrier
+  point, so it moves the dial too: the key sets OTHER DISP to match it (both 1500, the digital-mode
+  setup), and a radio left with SHIFT +1500 and DISP 0 (the picture 1.5 kHz high) is told to.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

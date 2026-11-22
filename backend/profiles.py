@@ -208,7 +208,9 @@ class RadioProfile:
     # "disp", "shift"} -> menu number (FT-991A 062-065, FT-891 08-01..08-04). DATA MODE PSK centers the
     # filter on the PSK TONE (1000 Hz by default); OTHERS centers it on OTHER SHIFT, whose default 0 Hz
     # is the carrier: a 3 kHz filter then passes only 0-1.5 kHz of audio, cutting SSTV's picture, its
-    # header and FT8 above 1.5 kHz. OTHER DISP moves the dial (OTHERS). Read on connect and with the
+    # header and FT8 above 1.5 kHz. OTHER SHIFT is the carrier point, so it moves the dial too: OTHERS'
+    # dial reads the carrier only with OTHER DISP equal to it (the digital-mode setup: both 1500; SHIFT
+    # +1500 with DISP 0 put a picture's tones 1500 Hz high). Read on connect and with the
     # panel round-robin into state data_mode (0 PSK / 1 OTHERS), psk_tone, data_disp, data_shift (Hz);
     # the Modem window says when the filter cuts what a mode needs, and offers to center it
     # (waterfall.js Passband.dataFix). {} = none. See docs/ADDING-A-RADIO.md.

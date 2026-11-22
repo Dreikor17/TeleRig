@@ -15,9 +15,10 @@
  *     window's data-filter key (tr:datafix) is mended by app.js from its own state (Passband.dataFix):
  *     an operator's with the menu permission, never on air, never a need that is no [lo, hi].
  *  D. a Yaesu's data filter (Passband.data / dataFix): DATA MODE PSK centers it on the PSK TONE, OTHERS
- *     on OTHER SHIFT (0 Hz, the carrier: 3 kHz passes only 0-1.5 kHz), its WIDTH either side; what it
- *     cuts of SSTV, FT8 and RTTY, and the least that mends it (the WIDTH alone where that does it, else
- *     the center to 1500 Hz as well; OTHER DISP to 0), by the radio's own menu numbers.
+ *     on OTHER SHIFT (0 Hz, the carrier: 3 kHz passes only 0-1.5 kHz), its WIDTH either side; OTHER SHIFT
+ *     is the carrier point, so OTHERS' dial reads SHIFT less OTHER DISP off the carrier; what it cuts of
+ *     SSTV, FT8 and RTTY, and the least that mends it (the WIDTH alone where that does it, else the center
+ *     to 1500 Hz as well; OTHER DISP to OTHER SHIFT), by the radio's own menu numbers.
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -167,51 +168,59 @@ function staticView(radio, st, theme) {
 {
   const R = { protocol: "yaesu", data_menus: { mode: 62, tone: 63, disp: 64, shift: 65 } };
   const st = (o) => Object.assign({ mode_name: "DATA-USB", narrow: 0, width: 17, data_mode: 0, psk_tone: 1000, data_disp: 0, data_shift: 0 }, o);
-  const band = (o) => { const d = Passband.data(R, st(o)); return d && [d.lo, d.hi, d.center, d.width, d.others, d.disp]; };
-  eq(band({}), [0, 2500, 1000, 3000, false, 0], "D factory PSK: centered on the PSK TONE (1000 Hz), 3 kHz wide: 0-2.5 kHz");
-  eq(band({ data_mode: 1 }), [0, 1500, 0, 3000, true, 0],
-     "D OTHERS at the factory OTHER SHIFT (0 Hz, the carrier): 0-1.5 kHz (the 14.230 MHz recording's filter)");
-  eq(band({ data_mode: 1, data_shift: 1500 }), [0, 3000, 1500, 3000, true, 0], "D OTHERS, OTHER SHIFT +1500: 0-3 kHz");
-  eq(band({ psk_tone: 2000, width: 12 }), [1400, 2600, 2000, 1200, false, 0], "D PSK 2000 Hz at 1.2 kHz: 1.4-2.6 kHz");
-  eq(band({ mode_name: "DATA-LSB", data_mode: 1, data_shift: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, true, 1500],
-     "D DATA-LSB the same; OTHERS carries OTHER DISP");
-  eq(band({ psk_tone: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, false, 0], "D PSK: OTHER DISP not counted (it is the OTHERS dial)");
-  eq(band({ width: 0 }), [750, 1250, 1000, 500, false, 0], "D the DATA WIDTH default (00 = 500 Hz): 0.75-1.25 kHz");
+  const band = (o) => { const d = Passband.data(R, st(o)); return d && [d.lo, d.hi, d.center, d.width, d.others, d.disp, d.dialOff]; };
+  eq(band({}), [0, 2500, 1000, 3000, false, 0, 0], "D factory PSK: centered on the PSK TONE (1000 Hz), 3 kHz wide: 0-2.5 kHz, the dial on the carrier");
+  eq(band({ data_mode: 1 }), [0, 1500, 0, 3000, true, 0, 0],
+     "D OTHERS at the factory OTHER SHIFT (0 Hz, the carrier point on the carrier): 0-1.5 kHz (the 14.230 MHz recording's filter)");
+  eq(band({ data_mode: 1, data_shift: 1500 }), [0, 3000, 1500, 3000, true, 0, 1500],
+     "D OTHERS, OTHER SHIFT +1500 with OTHER DISP 0: 0-3 kHz, but the dial 1.5 kHz above the carrier (the picture's tones seen 1500 Hz high)");
+  eq(band({ data_mode: 1, data_shift: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, true, 1500, 0],
+     "D OTHERS, SHIFT and DISP both +1500 (the digital-mode guides): 0-3 kHz, the dial on the carrier");
+  eq(band({ psk_tone: 2000, width: 12 }), [1400, 2600, 2000, 1200, false, 0, 0], "D PSK 2000 Hz at 1.2 kHz: 1.4-2.6 kHz");
+  eq(band({ mode_name: "DATA-LSB", data_mode: 1, data_shift: 1500, data_disp: -300 }), [0, 3000, 1500, 3000, true, -300, 1800],
+     "D DATA-LSB the same; the dial off by SHIFT less DISP");
+  eq(band({ psk_tone: 1500, data_disp: 1500 }), [0, 3000, 1500, 3000, false, 0, 0], "D PSK: OTHER DISP not counted (OTHERS' dial)");
+  eq(band({ width: 0 }), [750, 1250, 1000, 500, false, 0, 0], "D the DATA WIDTH default (00 = 500 Hz): 0.75-1.25 kHz");
   eq([Passband.data(R, st({ mode_name: "USB" })), Passband.data(R, st({ mode_name: "RTTY-USB" })), Passband.data(R, st({ mode_name: "DATA-FM" })),
       Passband.data({ protocol: "civ" }, st({})), Passband.data(R, st({ data_mode: undefined })), Passband.data(R, st({ psk_tone: undefined })),
-      Passband.data(R, st({ data_mode: 1, data_shift: undefined })), Passband.data(R, st({ width: 3 })), Passband.data(null, st({})),
-      Passband.data(R, null)],
-     [null, null, null, null, null, null, null, null, null, null],
-     "D null: voice, RTTY, DATA-FM, an Icom, a menu not answered yet, a WIDTH code not known, no profile, no state");
+      Passband.data(R, st({ data_mode: 1, data_shift: undefined })), Passband.data(R, st({ data_mode: 1, data_disp: undefined })),
+      Passband.data(R, st({ width: 3 })), Passband.data(null, st({})), Passband.data(R, null)],
+     [null, null, null, null, null, null, null, null, null, null, null],
+     "D null: voice, RTTY, DATA-FM, an Icom, a menu not answered yet (OTHERS' DISP too), a WIDTH code not known, no profile, no state");
   // the fix, against what each Modem mode needs (digital.js NEED)
   const SSTV = [1050, 2350], FT8 = [300, 2500], RTTY = [2050, 2370];
   const fix = (o, need, r) => Passband.dataFix(r || R, st(o), need);
+  const SHIFT = { action: "menu_write", num: 65, value: 1500 }, DISP = { action: "menu_write", num: 64, value: 1500 };
   eq([fix({}, SSTV), fix({}, FT8), fix({}, RTTY)], [null, null, null], "D the factory filter (PSK 1000 Hz, 3 kHz) passes SSTV, FT8 and RTTY");
   const f = fix({ data_mode: 1 }, SSTV);
-  eq([f.cut, f.off, f.cmds, f.band.hi], [true, false, [{ action: "menu_write", num: 65, value: 1500 }], 1500],
-     "D OTHERS at 0 Hz cuts SSTV: OTHER SHIFT to +1500 (the band it found with it)");
-  eq([fix({ data_mode: 1 }, RTTY).cmds, fix({ data_mode: 1 }, FT8).cmds], [[{ action: "menu_write", num: 65, value: 1500 }],
-     [{ action: "menu_write", num: 65, value: 1500 }]], "D ... RTTY and FT8 too");
-  eq([fix({ data_mode: 1, data_shift: 1500 }, SSTV), fix({ data_mode: 1, data_shift: 1500 }, FT8), fix({ data_mode: 1, data_shift: 900 }, SSTV)],
-     [null, null, null], "D OTHERS at +1500 passes; at +900 (0-2.4 kHz) SSTV still passes");
+  eq([f.cut, f.off, f.cmds, f.band.hi], [true, false, [SHIFT, DISP], 1500],
+     "D OTHERS at 0 Hz cuts SSTV: OTHER SHIFT to +1500, and OTHER DISP with it (the dial stays on the carrier)");
+  eq([fix({ data_mode: 1 }, RTTY).cmds, fix({ data_mode: 1 }, FT8).cmds], [[SHIFT, DISP], [SHIFT, DISP]], "D ... RTTY and FT8 too");
+  const o = fix({ data_mode: 1, data_shift: 1500 }, SSTV);
+  eq([o.cut, o.off, o.cmds], [false, true, [DISP]],
+     "D SHIFT +1500 with DISP 0 (what the first fix left): the filter right, the dial 1.5 kHz off: OTHER DISP to +1500");
+  eq(fix({ data_mode: 1, data_shift: 1500, data_disp: -300 }, SSTV).cmds, [DISP], "D ... DISP anything else: the same");
+  eq([fix({ data_mode: 1, data_shift: 1500, data_disp: 1500 }, SSTV), fix({ data_mode: 1, data_shift: 1500, data_disp: 1500 }, FT8),
+      fix({ data_mode: 1, data_shift: 900, data_disp: 900 }, SSTV)],
+     [null, null, null], "D SHIFT = DISP = +1500 passes; +900 / +900 (0-2.4 kHz) SSTV still passes");
+  eq([fix({ data_mode: 1, data_shift: 1500, data_disp: 1490 }, SSTV), fix({ data_mode: 1, data_shift: 1500, data_disp: 1550 }, FT8)], [null, null],
+     "D OTHER DISP set by its slider within 50 Hz of OTHER SHIFT (1490, 1550): the dial counts as on the carrier");
+  eq(fix({ data_mode: 1, data_shift: 1500, data_disp: 1440 }, SSTV).cmds, [DISP], "D ... 60 Hz off: OTHER DISP to +1500");
+  eq(fix({ data_mode: 1, data_disp: 30 }, SSTV).cmds, [SHIFT, DISP], "D a new OTHER SHIFT takes OTHER DISP with it, near or not");
+  eq(fix({ data_mode: 1, data_disp: -300 }, SSTV).cmds, [SHIFT, DISP], "D cut and off: the shift, then the display to match");
+  eq(fix({ data_mode: 1, data_disp: 1500 }, SSTV).cmds, [SHIFT], "D cut, DISP already +1500: the shift alone (then equal)");
   eq(fix({ width: 0 }, SSTV).cmds, [{ action: "width", code: 17 }], "D PSK 1000 Hz at 500 Hz: the WIDTH to 3 kHz (code 17)");
   eq(fix({ psk_tone: 2000 }, FT8).cmds, [{ action: "menu_write", num: 63, value: "1500 Hz" }],
      "D PSK 2000 Hz cuts FT8 below 0.5 kHz: the PSK TONE to 1500 Hz (its option's name, as the Setup tab writes it)");
-  const d = fix({ data_mode: 1, data_shift: 1500, data_disp: 1500 }, SSTV);
-  eq([d.cut, d.off, d.cmds], [false, true, [{ action: "menu_write", num: 64, value: 0 }]],
-     "D the filter right but the dial 1.5 kHz off the carrier (OTHER DISP): OTHER DISP to 0");
-  eq(fix({ data_mode: 1, data_disp: -300 }, SSTV).cmds, [{ action: "menu_write", num: 65, value: 1500 }, { action: "menu_write", num: 64, value: 0 }],
-     "D both: OTHER SHIFT, then OTHER DISP");
   eq(fix({ narrow: 1, width: 0 }, SSTV).cmds, [{ action: "narrow", on: false }, { action: "width", code: 17 }],
      "D NAR on (300 Hz) at PSK 1000 Hz: NAR off, then the WIDTH (a wide code needs NAR off); the tone stays");
-  eq(fix({ data_mode: 1, narrow: 1, width: 0 }, SSTV).cmds,
-     [{ action: "menu_write", num: 65, value: 1500 }, { action: "narrow", on: false }, { action: "width", code: 17 }],
-     "D NAR on at OTHERS 0 Hz: 3 kHz alone passes 0-1.5 kHz, so the shift as well");
+  eq(fix({ data_mode: 1, narrow: 1, width: 0 }, SSTV).cmds, [SHIFT, DISP, { action: "narrow", on: false }, { action: "width", code: 17 }],
+     "D NAR on at OTHERS 0 Hz: 3 kHz alone passes 0-1.5 kHz, so the shift (and the display) as well");
   eq(fix({ psk_tone: 1500, width: 12 }, SSTV).cmds, [{ action: "width", code: 17 }], "D centered at 1500 Hz but 1.2 kHz wide: the WIDTH only");
-  eq(fix({ mode_name: "DATA-LSB", data_mode: 1, width: 16 }, SSTV).cmds,
-     [{ action: "menu_write", num: 65, value: 1500 }, { action: "width", code: 17 }], "D DATA-LSB at 2.4 kHz: the shift and the WIDTH");
+  eq(fix({ mode_name: "DATA-LSB", data_mode: 1, width: 16 }, SSTV).cmds, [SHIFT, DISP, { action: "width", code: 17 }],
+     "D DATA-LSB at 2.4 kHz: the shift, the display and the WIDTH");
   eq(fix({ data_mode: 1 }, SSTV, { protocol: "yaesu", data_menus: { mode: 801, tone: 802, disp: 803, shift: 804 } }).cmds,
-     [{ action: "menu_write", num: 804, value: 1500 }], "D the FT-891's own numbers (08-04 OTHER SHIFT)");
+     [{ action: "menu_write", num: 804, value: 1500 }, { action: "menu_write", num: 803, value: 1500 }], "D the FT-891's own numbers (08-04, 08-03)");
   const bare = fix({ data_mode: 1 }, SSTV, { protocol: "yaesu" });
   eq([bare.cut, bare.cmds], [true, []], "D a profile with no menu numbers: the cut said, nothing to send");
   eq([fix({ mode_name: "USB", data_mode: 1 }, SSTV), fix({ data_mode: 1 }, null), fix({ data_mode: 1 }, undefined)], [null, null, null],
@@ -285,12 +294,14 @@ async function appEnv(perms) {
     e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
     e.sent.length = 0;
     ask({ need: SSTV, label: "Center it at 1.5 kHz" });
-    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }], "C tr:datafix: app.js sends what Passband.dataFix finds (OTHER SHIFT +1500)");
+    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }, { action: "menu_write", num: 64, value: 1500 }],
+       "C tr:datafix: app.js sends what Passband.dataFix finds (OTHER SHIFT +1500, OTHER DISP +1500)");
     check(toasts().includes("Center it at 1.5 kHz: sent to the radio."), "C ... said in the key's words: " + toasts());
     e.state({ mode_name: "DATA-USB", width: 0, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
     e.sent.length = 0;
     ask({ need: SSTV, label: 7 });
-    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }, { action: "width", code: 17 }], "C ... 500 Hz wide too: the shift, then the WIDTH");
+    eq(acts(), [{ action: "menu_write", num: 65, value: 1500 }, { action: "menu_write", num: 64, value: 1500 }, { action: "width", code: 17 }],
+       "C ... 500 Hz wide too: the shift, the display, then the WIDTH");
     check(toasts().includes("The data filter: sent to the radio."), "C ... a label that is no text: plain words");
     // nothing sent: a need that is no [lo, hi] (the filter cut), the filter right, the radio on air
     e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 });
@@ -298,9 +309,9 @@ async function appEnv(perms) {
     for (const need of [undefined, "1050-2350", [1050], [1050, 2350, 0], [1050, NaN], ["1050", "2350"], [1050, Infinity]]) ask({ need });
     ask(null);
     eq(acts(), [], "C a need that is no [lo, hi] of numbers: nothing sent, though the filter cuts SSTV");
-    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 1500 });
+    e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 1500, data_shift: 1500 });
     ask({ need: SSTV });
-    eq(acts(), [], "C nothing to mend (OTHER SHIFT +1500): nothing sent");
+    eq(acts(), [], "C nothing to mend (OTHER SHIFT and OTHER DISP +1500): nothing sent");
     e.state({ mode_name: "DATA-USB", width: 17, data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0, ptt: true });
     ask({ need: SSTV });
     eq(acts(), [], "C the radio on air: nothing sent");

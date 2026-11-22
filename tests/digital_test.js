@@ -41,8 +41,9 @@
  *      and through a hidden text box where it has not; said when done, when refused, when there is nothing
  *  D12. a Yaesu's data filter (DATA-USB on DATA MODE OTHERS at the factory OTHER SHIFT, 0 Hz: 0-1.5 kHz, a
  *      14.230 MHz SSTV picture never decoded): while SSTV, FT8 or RTTY is shown and it cuts their tones, or
- *      the dial reads off the carrier (OTHER DISP), the window says so under its keys, naming the radio's
- *      menu (FT-991A 065, FT-891 08-04); its key (an operator's: operate + menu, not while this page sends)
+ *      the dial reads off the carrier (OTHER SHIFT is the carrier point: OTHER DISP unequal to it, as SHIFT
+ *      +1500 with DISP 0 left the picture's tones 1500 Hz high), the window says so under its keys, naming
+ *      the radio's menus (FT-991A 065 / 064, FT-891 08-04 / 08-03); its key (an operator's: operate + menu, not while this page sends)
  *      asks app.js to mend it (tr:datafix, the mode's need: app.js sends the least that does it, from its own
  *      state, tests/passband_test.js C), the window itself sending nothing to the radio; gone once the radio
  *      answers; none in CW, voice, unknown menus, no radio
@@ -662,7 +663,7 @@ for (const [late, what] of [[3.5, "3.5 s late"], [-2.8, "2.8 s early"]]) {
                      menu: [{ num: 62, name: "DATA MODE", ex_width: 3 }, { num: 63, name: "PSK TONE", ex_width: 3 },
                             { num: 64, name: "OTHER DISP (SSB)", ex_width: 3 }, { num: 65, name: "OTHER SHIFT (SSB)", ex_width: 3 }] };
     const FT891 = { id: "ft891", protocol: "yaesu", data_menus: { mode: 801, tone: 802, disp: 803, shift: 804 },
-                    menu: [{ num: 804, name: "OTHER SHIFT", ex_width: 4 }] };
+                    menu: [{ num: 803, name: "OTHER DISP", ex_width: 4 }, { num: 804, name: "OTHER SHIFT", ex_width: 4 }] };
     const data = (o) => Object.assign({ connected: true, radio: "ft991a", mode_name: "DATA-USB", narrow: 0, width: 17,
                                         data_mode: 1, psk_tone: 1000, data_disp: 0, data_shift: 0 }, o);
     const e = page({ stubs: true, fil: true });
@@ -675,13 +676,19 @@ for (const [late, what] of [[3.5, "3.5 s late"], [-2.8, "2.8 s early"]]) {
     e.click(e.keys.sstv);
     eq(bar(), [false, "The radio's data filter passes 0–1.5 kHz (065 OTHER SHIFT (SSB) 0 Hz, 3 kHz wide): SSTV needs 1.1 to 2.3 kHz.",
                "Center it at 1.5 kHz", false], "D12 SSTV shown, DATA-USB on OTHERS at 0 Hz: the cut said, with its menu, and the key");
-    eq(e.filKey.title, "Sets 065 OTHER SHIFT (SSB) to +1500 Hz on the radio", "D12 ... the key says what it sets");
+    eq(e.filKey.title, "Sets 065 OTHER SHIFT (SSB) to +1500 Hz, 064 OTHER DISP (SSB) to +1500 Hz on the radio",
+       "D12 ... the key says what it sets: the carrier point, and the display with it (the dial stays on the carrier)");
     e.click(e.filKey);
     eq([e.fixes, e.sent, e.toasts], [[{ need: [1050, 2350], label: "Center it at 1.5 kHz" }], [], []],
        "D12 its key asks app.js to mend it (tr:datafix: SSTV's need, the key's words); the window sends nothing to the radio itself");
-    e.st = data({ data_shift: 1500 });                       // the radio's confirm-read
+    e.st = data({ data_shift: 1500 });                       // the radio has answered OTHER SHIFT only (what the first fix left)
     e.clock.advance(1000);
-    eq(e.filBar.hidden, true, "D12 the radio answers +1500: the bar goes within a second");
+    eq([bar(), e.filKey.title], [[false, "Its dial reads 1.5 kHz off the carrier (065 OTHER SHIFT (SSB) +1500 Hz, 064 OTHER DISP (SSB) 0 Hz), so tuning lands that far off.",
+        "Dial on the carrier", false], "Sets 064 OTHER DISP (SSB) to +1500 Hz on the radio"],
+       "D12 SHIFT +1500 with DISP 0: the filter right but the dial 1.5 kHz off (the picture's tones 1500 Hz high), said, and mended");
+    e.st = data({ data_shift: 1500, data_disp: 1500 });      // and OTHER DISP
+    e.clock.advance(1000);
+    eq(e.filBar.hidden, true, "D12 the radio answers both +1500: the bar goes within a second");
     e.st = data();
     e.click(e.keys.ft8);
     eq(bar().slice(0, 2), [false, "The radio's data filter passes 0–1.5 kHz (065 OTHER SHIFT (SSB) 0 Hz, 3 kHz wide): FT8 needs 0.3 to 2.5 kHz."],
@@ -705,16 +712,17 @@ for (const [late, what] of [[3.5, "3.5 s late"], [-2.8, "2.8 s early"]]) {
     e.clock.advance(1000);
     e.fixes.length = 0;
     e.click(e.filKey);
-    eq([e.filKey.textContent, e.filKey.title, e.fixes], ["Center it at 1.5 kHz, 3 kHz wide", "Sets 065 OTHER SHIFT (SSB) to +1500 Hz, the WIDTH to 3 kHz on the radio",
+    eq([e.filKey.textContent, e.filKey.title, e.fixes], ["Center it at 1.5 kHz, 3 kHz wide",
+        "Sets 065 OTHER SHIFT (SSB) to +1500 Hz, 064 OTHER DISP (SSB) to +1500 Hz, the WIDTH to 3 kHz on the radio",
         [{ need: [1050, 2350], label: "Center it at 1.5 kHz, 3 kHz wide" }]], "D12 OTHERS 0 Hz at 500 Hz: centered and widened, in that order");
-    e.st = data({ data_shift: 1500, data_disp: 1500 });
+    e.st = data({ data_shift: 1500, data_disp: -300 });
     e.clock.advance(1000);
-    eq([bar(), e.filKey.title], [[false, "Its dial reads 1.5 kHz off the carrier (064 OTHER DISP (SSB)), so tuning lands that far off.", "Dial on the carrier", false],
-        "Sets 064 OTHER DISP (SSB) to 0 Hz on the radio"], "D12 the filter right, the dial off the carrier (OTHER DISP +1500): said, and mended");
+    eq([bar()[1], e.filKey.title], ["Its dial reads 1.8 kHz off the carrier (065 OTHER SHIFT (SSB) +1500 Hz, 064 OTHER DISP (SSB) -300 Hz), so tuning lands that far off.",
+        "Sets 064 OTHER DISP (SSB) to +1500 Hz on the radio"], "D12 the dial off by SHIFT less DISP: OTHER DISP to OTHER SHIFT");
     e.st = data({ radio: "ft891" });
     e.clock.advance(1000);
     eq([bar()[1], e.filKey.title], ["The radio's data filter passes 0–1.5 kHz (08-04 OTHER SHIFT 0 Hz, 3 kHz wide): SSTV needs 1.1 to 2.3 kHz.",
-        "Sets 08-04 OTHER SHIFT to +1500 Hz on the radio"], "D12 the FT-891: its own menu numbers (08-04)");
+        "Sets 08-04 OTHER SHIFT to +1500 Hz, 08-03 OTHER DISP to +1500 Hz on the radio"], "D12 the FT-891: its own menu numbers (08-04, 08-03)");
     // who may mend it: operate and menu, not while this page sends
     e.st = data();
     e.perms.delete("menu");

@@ -90,12 +90,13 @@
   // ---- the radio's data filter: a Yaesu in DATA-USB / DATA-LSB centers it by SET menu (waterfall.js
   // Passband.data), and with DATA MODE OTHERS the factory OTHER SHIFT (0 Hz) puts it on the carrier: a 3 kHz
   // filter then passes 0-1.5 kHz, and SSTV's header and picture, RTTY's tones and FT8 above that are cut
-  // before TeleRig hears them (a 14.230 MHz picture, its syncs plain on the scope, never decoded). While a
-  // mode is shown whose tones it cuts, or the dial reads off the carrier (OTHER DISP), the window says so
-  // under its keys, with a key that mends it (the WIDTH to 3 kHz, the center to 1500 Hz, the dial on the
-  // carrier: the least that does it). An operator's key (operate + menu), never a viewer's, and not while
-  // this page sends. The key asks app.js (tr:datafix {need, label}), which sends to the radio what
-  // Passband.dataFix finds from its own state: this window itself never sends to the radio. ----
+  // before TeleRig hears them (a 14.230 MHz picture, its syncs plain on the scope, never decoded). OTHER
+  // SHIFT is the carrier point, so it moves the dial too: the dial reads the carrier only while OTHER DISP
+  // equals it. While a mode is shown whose tones the filter cuts, or the dial reads off the carrier, the
+  // window says so under its keys, with a key that mends it (the WIDTH to 3 kHz, the center to 1500 Hz,
+  // OTHER DISP to OTHER SHIFT: the least that does it). An operator's key (operate + menu), never a
+  // viewer's, and not while this page sends. The key asks app.js (tr:datafix {need, label}), which sends to
+  // the radio what Passband.dataFix finds from its own state: this window itself never sends to the radio. ----
   const NEED = { rtty: [2050, 2370, "RTTY needs 2125 and 2295 Hz"], ft8: [300, 2500, "FT8 needs 0.3 to 2.5 kHz"],
                  sstv: [1050, 2350, "SSTV needs 1.1 to 2.3 kHz"] };
   const filBar = $("dmFil"), filText = $("dmFilText"), filKey = $("dmFilFix");
@@ -123,11 +124,12 @@
     filBar.hidden = !f;
     if (!f) { fil = null; return; }
     const b = f.band, M = r.p.data_menus || {};
-    const why = b.others ? menuName(r.p, M.shift) + " " + (b.center > 0 ? "+" : "") + b.center + " Hz"
-      : menuName(r.p, M.tone) + " " + b.center + " Hz";
+    const hz = (v) => (typeof v !== "number" ? v : (v > 0 ? "+" : "") + v + " Hz");     // +1500 Hz, 0 Hz; "1500 Hz" as it is
+    const why = b.others ? menuName(r.p, M.shift) + " " + hz(b.center) : menuName(r.p, M.tone) + " " + b.center + " Hz";
     let t = "";
     if (f.cut) t = "The radio's data filter passes " + kHz(b.lo) + "–" + kHz(b.hi) + " kHz (" + why + ", " + P.label(b.width) + " wide): " + need[2] + ".";
-    if (f.off) t += (t ? " " : "") + "Its dial reads " + kHz(Math.abs(b.disp)) + " kHz off the carrier (" + menuName(r.p, M.disp) + "), so tuning lands that far off.";
+    if (f.off) t += (t ? " " : "") + "Its dial reads " + kHz(Math.abs(b.dialOff)) + " kHz off the carrier (" + menuName(r.p, M.shift) + " " +
+      hz(b.center) + ", " + menuName(r.p, M.disp) + " " + hz(b.disp) + "), so tuning lands that far off.";
     if (filText && filText.textContent !== t) filText.textContent = t;
     const centers = f.cmds.some((c) => c.action === "menu_write" && (c.num === M.shift || c.num === M.tone));
     const widens = f.cmds.some((c) => c.action === "width");
@@ -135,8 +137,7 @@
     fil = { cmds: f.cmds, label, need: [need[0], need[1]] };
     if (!filKey) return;
     if (filKey.textContent !== label) filKey.textContent = label;
-    const val = (v) => (typeof v !== "number" ? v : (v > 0 ? "+" : "") + v + " Hz");
-    const sets = f.cmds.map((c) => c.action === "menu_write" ? menuName(r.p, c.num) + " to " + val(c.value)
+    const sets = f.cmds.map((c) => c.action === "menu_write" ? menuName(r.p, c.num) + " to " + hz(c.value)
       : c.action === "width" ? "the WIDTH to 3 kHz" : "NAR off");
     filKey.title = "Sets " + sets.join(", ") + " on the radio";
     filKey.hidden = !f.cmds.length || !can("operate") || !can("menu") || !!sending();
