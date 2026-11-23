@@ -276,5 +276,85 @@ function cat(...parts) {
      "V6 interference over lines 1-6 of a real picture: still a picture (4 good syncs in the first 12)");
 }
 
+// ---- V8: a picture found in the recording (SSTV.find / SSTV.draw) ----
+{
+  const { find, draw } = ctx.SSTV;
+  const record = (pcm) => { const d = new Decoder(FS, {}); for (let i = 0; i < pcm.length; i += 320) d.feed(pcm.subarray(i, i + 320)); return d.recording(); };
+  const late = (id, from, o) => {                         // the picture from a third into line `from` (no header), and a tail
+    const m = byId(id), img = pic(m.width, m.height), segs = picture(m, img), per = segs.length / m.lines;
+    return { m, img, pcm: audio(segs.slice(Math.round(from * per + per / 3)), Object.assign({ lead: 2, tail: 6 }, o)) };
+  };
+  // the mean error of the rows found against the picture, the rows taken `shift` lines down
+  const err = (p, m, img, shift) => {
+    let s = 0, n = 0;
+    for (let y = p.first; y < p.first + p.rows; y++) {
+      const yy = y + (shift || 0) * m.rowsPerLine;
+      if (yy < 0 || yy >= m.height) continue;
+      for (let x = 0; x < m.width; x += 2) { const w = img(x, yy); for (let c = 0; c < 3; c++) { s += Math.abs(p.rgba[(y * m.width + x) * 4 + c] - w[c]); n++; } }
+    }
+    return n ? s / n : 999;
+  };
+  const inPlace = (p, m, img) => { const e0 = err(p, m, img); return [-2, -1, 1, 2].every((s) => err(p, m, img, s) > e0); };
+  // caught late (its header and first lines missed): named, its rows where they belong, down to the last line
+  for (const [id, from] of [["m1", 100], ["s1", 100], ["r36", 96], ["pd120", 99], ["r72", 96]]) {
+    const { m, img, pcm } = late(id, from), rec = record(pcm), fit = find(rec);
+    const p = fit && draw(rec, fit);
+    const first = from + (m.syncAt > 0 ? 0 : 1);          // Scottie's sync is mid-line: line `from` still has it
+    eq(fit && [fit.mode.id, fit.anchor, fit.ended, p.first, p.first + p.rows], [id, "end", true, first * m.rowsPerLine, m.height],
+       `V8 ${m.name} caught at line ${from}: named, lines ${first + 1} to the last`);
+    const e = p ? err(p, m, img) : 999;
+    check(e < (m.color === "GBR" ? 4 : 8), `V8 ... matching the picture (mean error ${e.toFixed(1)})`);
+  }
+  // in static the live decoder never starts on: found, every line in its place
+  {
+    const { m, img, pcm } = late("r36", 60, { noise: 0.4 });
+    eq(decode(pcm).starts.length, 0, "V8 Robot 36 in heavy static, caught late: the live decoder can't start on it");
+    const rec = record(pcm), fit = find(rec), p = fit && draw(rec, fit);
+    eq(fit && [fit.mode.id, fit.anchor, p.first, p.first + p.rows], ["r36", "end", 61, 240], "V8 ... the recording has it, lines 62 to 240");
+    check(p && inPlace(p, m, img), "V8 ... each row in its place (a row up or down matches worse)");
+  }
+  {
+    const m = byId("m1"), img = pic(m.width, m.height), pcm = audio([...vis(m.vis), ...picture(m, img)], { lead: 2, tail: 6, noise: 0.45 });
+    eq(decode(pcm).starts.length, 0, "V8 Martin M1 in heavy static, header and all: the live decoder can't start on it");
+    const rec = record(pcm), fit = find(rec), p = fit && draw(rec, fit);
+    check(fit && fit.mode.id === "m1" && p.first <= 8 && p.first + p.rows === 256 && inPlace(p, m, img),
+          `V8 ... the recording has it, its rows in place (${fit && fit.anchor}, rows ${p && p.first} to ${p && p.first + p.rows - 1})`);
+  }
+  {
+    const { m, img, pcm } = late("m2", 50, { fsTx: FS * 1.002, noise: 0.3 }), rec = record(pcm), fit = find(rec), p = fit && draw(rec, fit);
+    check(fit && fit.mode.id === "m2" && Math.abs(fit.P / (m.lineMs * 16) - 1.002) < 0.0003 && p.first === 51 && inPlace(p, m, img),
+          `V8 Martin M2 from a sender 0.2 % fast, in static: its line measured (${fit && (fit.P / (m.lineMs * 16)).toFixed(5)}), no slant, rows in place`);
+  }
+  {
+    const { m, img, pcm } = late("s1", 80, { offset: 120 }), rec = record(pcm), fit = find(rec), p = fit && draw(rec, fit);
+    const e = p ? err(p, m, img) : 999;
+    check(fit && Math.abs(fit.offsetHz - 120) <= 10 && e < 4, `V8 Scottie S1 120 Hz high: the tuning from its syncs (${fit && fit.offsetHz} Hz), taken off (mean error ${e.toFixed(1)})`);
+  }
+  {
+    const m = byId("r36"), segs = picture(m, pic(m.width, m.height)), per = segs.length / m.height;
+    const rec = record(audio([...vis(m.vis), ...segs.slice(0, 30 * per)], { tail: 2.5 })), fit = find(rec), p = fit && draw(rec, fit);
+    eq(fit && [fit.anchor, p.first, p.rows], ["header", 0, 30], "V8 a Robot 36 header and 30 lines: the header puts them at the top");
+    const kept = record(audio([...vis(m.vis), ...segs.slice(0, 130 * per)], { tail: 2.5 }));
+    const mine = find(kept), known = mine && find(kept, { first: kept.from + Math.round(mine.a + mine.k0 * mine.P) });   // where the live decoder read it
+    eq(known && [mine.anchor, known.anchor, known.k0, known.kFrom, known.kTo], ["header", "header", mine.k0, mine.k0, mine.k0 + 129],
+       "V8 ... and 130 lines: so does opts.first (where the live decoder read the header)");
+  }
+  {
+    const { pcm } = late("m1", 100), rec = record(pcm);
+    eq(find(rec, { want: "s1" }), null, "V8 a chosen mode that isn't the picture's: nothing");
+    const fit = find(rec);
+    eq(find(rec, { skip: [[fit.from, fit.to]] }), null, "V8 a picture already decoded (skip): left out");
+  }
+  // nothing there: noise, voice-band noise, CW-like keying, a pulse train no mode has
+  eq(find(record(noise(120, 0.3))), null, "V8 120 s of noise: no picture");
+  eq(find(record(noise(60, 0.3, 500))), null, "V8 60 s of voice-band noise: no picture");
+  const cw = [];
+  for (let k = 0; k < 400; k++) cw.push(tone(k % 3 ? 60 : 180, 1200), tone(60, 1700));
+  eq(find(record(audio(cw, { noise: 0.05 }))), null, "V8 CW-like keying at 1200 Hz: no picture");
+  const train = [];
+  for (let k = 0; k < 120; k++) train.push(tone(9, 1200), tone(591, 1500));
+  eq(find(record(audio(train))), null, "V8 a pulse train no mode has: no picture");
+}
+
 console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
 process.exit(failures ? 1 : 0);

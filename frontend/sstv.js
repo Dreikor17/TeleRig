@@ -107,11 +107,59 @@
     return h;
   }
   const clamp8 = (v) => (v < 0 ? 0 : v > 255 ? 255 : v);
+  // One line of a picture from its tones: the rows it makes (RGBA). `t`: { mean(a, b) the mean tone over the
+  // samples [a, b), ms(t) ms -> samples, offset (Hz, the tuning), cr / cb (Robot 36's colour pair, kept) }.
+  // The live decoder and a picture found in the recording draw the same way.
+  function pixels(t, start, ch, w) {
+    const out = new Float32Array(w), a = start + t.ms(ch.t), step = t.ms(ch.d) / w;
+    for (let x = 0; x < w; x++) {
+      const f = t.mean(a + x * step, a + (x + 1) * step) - t.offset;
+      out[x] = clamp8(((f - 1500) / 800) * 255);
+    }
+    return out;
+  }
+  function lineRows(m, t, start) {
+    const w = m.width, C = {};
+    for (const ch of m.chans) C[ch.k] = ch.k === "S" ? t.mean(start + t.ms(ch.t), start + t.ms(ch.t + ch.d)) - t.offset
+      : pixels(t, start, ch, ch.k === "C" ? w >> 1 : w);
+    const rgba = () => new Uint8ClampedArray(w * 4);
+    const ycc = (row, Y, cr, cb, x, crx) => {
+      const y = Y[x], r = cr[crx] - 128, b = cb[crx] - 128;
+      row[x * 4] = y + 1.402 * r; row[x * 4 + 1] = y - 0.344136 * b - 0.714136 * r; row[x * 4 + 2] = y + 1.772 * b; row[x * 4 + 3] = 255;
+    };
+    if (m.color === "GBR") {
+      const row = rgba();
+      for (let x = 0; x < w; x++) { row[x * 4] = C.R[x]; row[x * 4 + 1] = C.G[x]; row[x * 4 + 2] = C.B[x]; row[x * 4 + 3] = 255; }
+      return [row];
+    }
+    if (m.color === "YCC") {
+      const row = rgba();
+      for (let x = 0; x < w; x++) ycc(row, C.Y, C.Cr, C.Cb, x, x);
+      return [row];
+    }
+    if (m.color === "R36") {                             // chroma every other line: R-Y after 1500 Hz, B-Y after 2300 Hz
+      const half = C.C;
+      if (C.S < 1900) t.cr = half; else t.cb = half;
+      const row = rgba();
+      for (let x = 0; x < w; x++) ycc(row, C.Y, t.cr, t.cb, x, Math.min(half.length - 1, x >> 1));
+      return [row];
+    }
+    const a = rgba(), b = rgba();                        // PD: two rows share one chroma
+    for (let x = 0; x < w; x++) { ycc(a, C.Y0, C.Cr, C.Cb, x, x); ycc(b, C.Y1, C.Cr, C.Cb, x, x); }
+    return [a, b];
+  }
+  // The recording: every tone the decoder measured (Int16 Hz a sample), the last TAPE_S seconds: the longest
+  // mode, PD-290, is 289 s. find() looks back through it (see there).
+  const TAPE_S = 300;
 
   class Decoder {
-    constructor(fs, cb) {
+    // opts.tapeS: seconds of recording kept (0: none)
+    constructor(fs, cb, opts) {
       this.fs = fs;
       this.hooks = cb || {};
+      const tapeS = opts && opts.tapeS >= 0 ? opts.tapeS : TAPE_S;
+      this.tapeCap = Math.ceil(fs * tapeS);
+      this.tape = this.tapeCap > 0 ? new Int16Array(this.tapeCap) : null;
       this.taps = lowpass(31, 900, fs);
       this.iq = new Float32Array(this.taps.length * 2);   // the mixer's I/Q history (a ring)
       this.iqPos = 0;
@@ -156,6 +204,7 @@
       this.work();
     }
     push(f) {
+      if (this.tape) this.tape[(this.base + this.n) % this.tapeCap] = f + 0.5;   // rounded (f is 900 .. 2700)
       if (this.n === this.cap) this.shift();
       const i = this.n;
       this.f[i] = f;
@@ -174,6 +223,14 @@
       }
     }
     end() { return this.base + this.n; }               // absolute index one past the newest sample
+    // the recording from absolute sample `from` (or as far back as it goes) to now: { f (Int16 Hz, oldest
+    // first), from (the absolute index of f[0]), fs }
+    recording(from) {
+      const end = this.end(), a = this.tape ? Math.max(from || 0, end - this.tapeCap, 0) : end, n = end - a;
+      const f = new Int16Array(n), i0 = a % (this.tapeCap || 1), first = Math.min(n, this.tapeCap - i0);
+      if (n > 0) { f.set(this.tape.subarray(i0, i0 + first)); if (first < n) f.set(this.tape.subarray(0, n - first), first); }
+      return { f, from: a, fs: this.fs };
+    }
     mean(a, b) {                                        // mean frequency over absolute [a, b)
       a = Math.max(Math.round(a) - this.base, 0); b = Math.min(Math.round(b) - this.base, this.n);
       return b > a ? (this.P[b] - this.P[a]) / (b - a) : NaN;
@@ -295,7 +352,7 @@
       if (this.trial) this.emit("onFalse", { mode: this.m, lines: this.line });    // a new header replaces a start on trial
       this.m = m; this.offset = off; this.state = "rx"; this.pulses = []; this.inPulse = false;
       this.line = 0; this.rows = 0; this.missed = 0;
-      this.anchor = firstSync; this.period = this.ms(m.lineMs); this.firstLine = true;
+      this.anchor = firstSync; this.period = this.ms(m.lineMs); this.firstLine = true; this.picFrom = Math.round(firstSync);
       this.cr = new Float32Array(m.width).fill(128); this.cb = new Float32Array(m.width).fill(128);
       // re-count the sync-ish samples with this picture's offset
       for (let i = 0; i < this.n; i++) this.S[i + 1] = this.S[i] + (this.f[i] - off < 1350 ? 1 : 0);
@@ -311,7 +368,7 @@
     confirm() {                                         // a picture after all: it starts now, with the rows held back
       const t = this.trial;
       this.trial = null;
-      this.emit("onStart", { mode: this.m, offsetHz: t.offsetHz, joined: t.joined });
+      this.emit("onStart", { mode: this.m, offsetHz: t.offsetHz, joined: t.joined, from: this.picFrom });
       for (const r of t.rows) this.emit("onRow", r);
     }
     drop() {                                            // not a picture: forget it; the search goes on from where it was
@@ -350,58 +407,306 @@
       if (this.line >= m.lines) this.finish("done");
       return true;
     }
-    pixels(start, ch, w) {
-      const out = new Float32Array(w), a = start + this.ms(ch.t), step = this.ms(ch.d) / w;
-      for (let x = 0; x < w; x++) {
-        const f = this.mean(a + x * step, a + (x + 1) * step) - this.offset;
-        out[x] = clamp8(((f - 1500) / 800) * 255);
-      }
-      return out;
-    }
-    draw(start) {
-      const m = this.m, w = m.width, C = {};
-      for (const ch of m.chans) C[ch.k] = ch.k === "S" ? this.mean(start + this.ms(ch.t), start + this.ms(ch.t + ch.d)) - this.offset
-        : this.pixels(start, ch, ch.k === "C" ? w >> 1 : w);
-      const rgba = () => new Uint8ClampedArray(w * 4);
-      const ycc = (row, Y, cr, cb, x, crx) => {
-        const y = Y[x], r = cr[crx] - 128, b = cb[crx] - 128;
-        row[x * 4] = y + 1.402 * r; row[x * 4 + 1] = y - 0.344136 * b - 0.714136 * r; row[x * 4 + 2] = y + 1.772 * b; row[x * 4 + 3] = 255;
-      };
-      if (m.color === "GBR") {
-        const row = rgba();
-        for (let x = 0; x < w; x++) { row[x * 4] = C.R[x]; row[x * 4 + 1] = C.G[x]; row[x * 4 + 2] = C.B[x]; row[x * 4 + 3] = 255; }
-        this.row(row);
-      } else if (m.color === "YCC") {
-        const row = rgba();
-        for (let x = 0; x < w; x++) ycc(row, C.Y, C.Cr, C.Cb, x, x);
-        this.row(row);
-      } else if (m.color === "R36") {                    // chroma every other line: R-Y after 1500 Hz, B-Y after 2300 Hz
-        const half = C.C;
-        if (C.S < 1900) this.cr = half; else this.cb = half;
-        const row = rgba();
-        for (let x = 0; x < w; x++) ycc(row, C.Y, this.cr, this.cb, x, Math.min(half.length - 1, x >> 1));
-        this.row(row);
-      } else {                                           // PD: two rows share one chroma
-        const a = rgba(), b = rgba();
-        for (let x = 0; x < w; x++) { ycc(a, C.Y0, C.Cr, C.Cb, x, x); ycc(b, C.Y1, C.Cr, C.Cb, x, x); }
-        this.row(a); this.row(b);
-      }
-    }
+    draw(start) { for (const r of lineRows(this.m, this, start)) this.row(r); }
     row(rgba) {
       const r = { y: this.rows++, rgba };
       if (this.trial) this.trial.rows.push(r); else this.emit("onRow", r);
     }
     finish(reason) {
       if (this.trial) { this.drop(); return; }          // never shown, so it never ends either
-      const m = this.m, rows = this.rows;
+      const m = this.m, rows = this.rows, from = this.picFrom;
       this.reset();
       this.nextCheck = this.end();
-      this.emit("onEnd", { mode: m, rows, reason });
+      // from / to: the picture's first line sync and now, absolute samples (where it lies in the recording)
+      this.emit("onEnd", { mode: m, rows, reason, from, to: this.end() });
     }
     emit(name, arg) { try { if (typeof this.hooks[name] === "function") this.hooks[name](arg); } catch (_) {} }
   }
 
-  window.SSTV = { MODES, Decoder, byVis: (v) => BY_VIS.get(v) || null, byId: (id) => BY_ID.get(id) || null };
+  // ---- a picture found in the recording, however weak (SSTV.find, SSTV.render) ----
+  // The live decoder needs clean syncs to start (a header, or four pulses in a row) and gives a picture up
+  // after LOST_LINES lines with none. Looking back through the recording, a picture is found by the rhythm
+  // of all its syncs at once, so a sync lost in the static on most lines still counts on the others:
+  //   1. the mean tone per BIN_MS; per sync length, each place's contrast: the tone AROUND_MS either side
+  //      less the tone inside (a sync is a dip: 1200 Hz between the porch and the picture, both 1500 and up)
+  //   2. per mode, the CAND strongest dips of each line-long stretch
+  //   3. the line grid most of them sit on (to TOL_MS): TRIES pairs of strong dips a whole number of lines
+  //      apart, at a period within SLANT of the mode's (the sender's clock), then least squares on its dips
+  //   4. the picture: the run of lines with a dip on the grid, never GAP lines without; at most a picture
+  //      long. It must hold FIND_MIN syncs, on FIND_DENSITY of its lines; the modes are scored syncs x
+  //      share (a mode at half the line, Robot 36 for a Robot 72, holds the same syncs on half its lines)
+  //   5. the sync's own place: the tone folded over those lines at the grid's period, the lowest sync-long
+  //      stretch (a dark stripe in the picture lines up as well as the syncs do, but it is 1500 Hz and up).
+  //      The tuning: the commonest tone inside the syncs, less 1200 (within FIND_OFFSET). A line next to
+  //      the run whose sync still reads below EDGE_HZ joins it.
+  //   6. where the lines go: after the picture's header, where its first line says the header ends (or
+  //      opts.first: where the live decoder read it); else, if the picture ended inside the recording, its
+  //      last line is the picture's last (a picture caught late); else its first line is the top (as when
+  //      the live decoder joins one under way).
+  // find(rec = Decoder.recording(), opts) -> the best picture, or null. opts: want ("auto" or a mode id),
+  // skip ([[from, to], ...] absolute samples already decoded: no dip there counts), first (above).
+  const BIN_MS = 0.25, AROUND_MS = 1, CAND = 3, CAND_MIN = 100, SLANT = 0.003, TOL_MS = 1, TRIES = 400, GAP = 24;
+  const FIND_MIN = 16, FIND_DENSITY = 0.3, FIND_OFFSET = 250, EDGE_HZ = 1450, END_IN = 8, ISO = 4, ISO_MIN = 4, DEPTH_HZ = 200;
+  function findPicture(rec, opts) {
+    opts = opts || {};
+    const f = rec.f, fs = rec.fs, n = f.length, Q = Math.max(1, Math.round((fs * BIN_MS) / 1000)), nb = Math.floor(n / Q);
+    const toBins = (ms) => (ms * fs) / 1000 / Q, msS = (ms) => (ms * fs) / 1000;
+    if (nb < toBins(3000)) return null;                   // under 3 s: nothing to find
+    const B = new Float64Array(nb + 1);                   // prefix sums of the mean tone per bin
+    for (let j = 0, i = 0; j < nb; j++) { let s = 0; for (let k = 0; k < Q; k++) s += f[i++]; B[j + 1] = B[j] + s / Q; }
+    const skip = (opts.skip || []).map((r) => [(r[0] - rec.from) / Q, (r[1] - rec.from) / Q]).filter((r) => r[1] > 0 && r[0] < nb);
+    const skipped = (j) => skip.some((r) => j >= r[0] && j < r[1]);
+    const sMean = (x0, x1) => {                           // the mean tone over samples [x0, x1)
+      x0 = Math.max(0, Math.round(x0)); x1 = Math.min(n, Math.round(x1));
+      if (x1 <= x0) return NaN;
+      let s = 0;
+      for (let i = x0; i < x1; i++) s += f[i];
+      return s / (x1 - x0);
+    };
+    const E = Math.max(1, Math.round(toBins(AROUND_MS))), tol = toBins(TOL_MS), peaks = new Map();
+    let dq = null;
+    // 1. the dips of one sync length: each place's contrast (the lower side of it, less the tone inside: a
+    // sync has the porch after it and the picture or a porch before, a long 1200 Hz tone has neither), kept
+    // where it is the deepest within R either side and at least CAND_MIN. In order: { j (bins), v (Hz) }.
+    function peaksOf(L) {
+      let p = peaks.get(L);
+      if (p) return p;
+      const c = new Float32Array(nb), R = Math.max(L, Math.round(toBins(2))), pj = [], pv = [];
+      for (let j = E; j + L + E <= nb; j++) {
+        const before = (B[j] - B[j - E]) / E, after = (B[j + L + E] - B[j + L]) / E;
+        c[j] = Math.min(before, after) - (B[j + L] - B[j]) / L;
+      }
+      dq = dq || new Int32Array(nb);
+      let h = 0, t = 0, next = 0;
+      for (let j = 0; j < nb; j++) {                      // the deepest within [j - R, j + R]: a sliding maximum
+        for (const hi = Math.min(nb - 1, j + R); next <= hi; next++) { while (t > h && c[dq[t - 1]] <= c[next]) t--; dq[t++] = next; }
+        while (dq[h] < j - R) h++;
+        if (dq[h] === j && c[j] >= CAND_MIN && !skipped(j)) { pj.push(j); pv.push(c[j]); }
+      }
+      p = { j: pj, v: pv };
+      peaks.set(L, p);
+      return p;
+    }
+    // 2. the CAND deepest dips of each line-long stretch, in order (bins); tops: the deepest of each stretch
+    function dips(P0, L) {
+      const p = peaksOf(L), at = [], tops = [], sel = [];
+      let w = -1;
+      const flush = () => {
+        if (!sel.length) return;
+        let top = sel[0];
+        for (const x of sel) if (p.v[x] > p.v[top]) top = x;
+        sel.sort((x, y) => x - y);
+        for (const x of sel) { if (x === top) tops.push(at.length); at.push(p.j[x]); }
+        sel.length = 0;
+      };
+      for (let i = 0; i < p.j.length; i++) {
+        const wi = Math.floor(p.j[i] / P0);
+        if (wi !== w) { flush(); w = wi; }
+        if (sel.length < CAND) { sel.push(i); continue; }
+        let lo = 0;
+        for (let q = 1; q < sel.length; q++) if (p.v[sel[q]] < p.v[sel[lo]]) lo = q;
+        if (p.v[i] > p.v[sel[lo]]) sel[lo] = i;
+      }
+      flush();
+      return { at, tops };
+    }
+    function count(at, a, P) {                            // lines of the grid a + k P with a dip within tol
+      let k = 0, last = NaN;
+      for (let i = 0; i < at.length; i++) { const r = (at[i] - a) / P, kk = Math.round(r); if (kk !== last && Math.abs(r - kk) * P <= tol) { k++; last = kk; } }
+      return k;
+    }
+    function onGrid(at, a, P) {                           // those lines (k) and their dips (the nearest one)
+      const ks = [], ts = [];
+      let last = NaN, lastD = 0;
+      for (let i = 0; i < at.length; i++) {
+        const r = (at[i] - a) / P, k = Math.round(r), d = Math.abs(r - k) * P;
+        if (d > tol) continue;
+        if (k === last) { if (d < lastD) { ts[ts.length - 1] = at[i]; lastD = d; } continue; }
+        ks.push(k); ts.push(at[i]); last = k; lastD = d;
+      }
+      return { ks, ts };
+    }
+    function lsq(ks, ts) {                                // t = a + P k, least squares
+      const N = ks.length;
+      let mk = 0, mt = 0, kk = 0, kt = 0;
+      for (let i = 0; i < N; i++) { mk += ks[i]; mt += ts[i]; }
+      mk /= N; mt /= N;
+      for (let i = 0; i < N; i++) { const d = ks[i] - mk; kk += d * d; kt += d * (ts[i] - mt); }
+      return kk > 0 ? { a: mt - (kt / kk) * mk, P: kt / kk } : null;
+    }
+    function longest(ks, lines) {                         // 4. the run of lines with syncs: [k1, k2, syncs]
+      let best = null, i0 = 0;
+      for (let i = 1; i <= ks.length; i++) {
+        if (i < ks.length && ks[i] - ks[i - 1] <= GAP) continue;
+        let lo = i0, w = null;                            // longer than a picture: the picture-long stretch holding the most
+        for (let hi = i0; hi < i; hi++) {
+          while (ks[hi] - ks[lo] >= lines) lo++;
+          if (!w || hi - lo + 1 > w[2]) w = [ks[lo], ks[hi], hi - lo + 1];
+        }
+        if (w && (!best || w[2] > best[2])) best = w;
+        i0 = i;
+      }
+      return best;
+    }
+    function fitMode(m) {
+      const why = (r) => { if (opts.why) opts.why.push(m.id + ": " + r); return null; };   // opts.why: why each mode isn't the picture
+      const L = Math.max(1, Math.round(toBins(m.syncMs))), P0 = toBins(m.lineMs);
+      const { at, tops } = dips(P0, L);
+      if (tops.length < FIND_MIN) return why("dips " + tops.length);
+      let seed = (m.vis * 2654435761) >>> 0;              // 3. the same audio, the same answer
+      const rand = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
+      let g = null;
+      for (let it = 0; it < TRIES; it++) {
+        const i = Math.floor(rand() * tops.length), room = Math.min(150, tops.length - 1 - i);
+        if (room < 2) continue;
+        const ta = at[tops[i]], tb = at[tops[i + 2 + Math.floor(rand() * (room - 1))]], k = Math.round((tb - ta) / P0);
+        if (k < 1 || Math.abs((tb - ta) / k / P0 - 1) > SLANT) continue;
+        const s = count(at, ta, (tb - ta) / k);
+        if (!g || s > g.s) g = { a: ta, P: (tb - ta) / k, s };
+      }
+      if (!g || g.s < FIND_MIN) return why("grid " + (g ? g.s : 0));
+      let a = g.a, P = g.P;
+      const refine = () => {
+        for (let r = 0; r < 3; r++) {
+          const { ks, ts } = onGrid(at, a, P);
+          const ft = ks.length >= 3 ? lsq(ks, ts) : null;
+          if (!ft || Math.abs(ft.P / P0 - 1) > SLANT * 1.5) return;
+          a = ft.a; P = ft.P;
+        }
+      };
+      refine();
+      let span = longest(onGrid(at, a, P).ks, m.lines);
+      if (!span) return why("run");
+      // 5. the sync's own place: the lowest sync-long stretch of the line, folded over the run's lines
+      const nP = Math.max(L + 1, Math.round(P)), H = nP >> 1, prof = new Float64Array(nP);
+      let folded = 0;
+      for (let k = span[0]; k <= span[1]; k++) {
+        const s0 = Math.round(a + k * P) - H;
+        if (s0 < 0 || s0 + nP > nb) continue;
+        for (let d = 0; d < nP; d++) prof[d] += B[s0 + d + 1] - B[s0 + d];
+        folded++;
+      }
+      if (!folded) return null;
+      let win = 0, low = Infinity, lowAt = H;
+      for (let d = 0; d < L; d++) win += prof[d % nP];
+      for (let d = 0; d < nP; d++) { if (win < low) { low = win; lowAt = d; } win += prof[(d + L) % nP] - prof[d]; }
+      let ks = onGrid(at, a, P).ks;
+      if (Math.abs(lowAt - H) > tol) {                    // the grid sat on something else: move it to the syncs
+        a += lowAt - H;
+        refine();
+        const k2s = onGrid(at, a, P).ks, again = longest(k2s, m.lines);
+        if (again && again[2] >= span[2] / 2) { span = again; ks = k2s; }
+      }
+      // every other line's "sync" a different tone: the line is twice this long (a Robot 36 grid on a Robot 72)
+      let ev = 0, ne = 0, od = 0, no = 0;
+      for (let k = span[0]; k <= span[1]; k++) {
+        const s = Math.round(a + k * P);
+        if (s < 0 || s + L > nb) continue;
+        const v = (B[s + L] - B[s]) / L;
+        if (k & 1) { od += v; no++; } else { ev += v; ne++; }
+      }
+      if (ne && no && Math.abs(ev / ne - od / no) > 150) return why("every other line " + Math.round(ev / ne - od / no));
+      // the syncs well below the rest of the line (noise has dips that line up too, but shallow ones)
+      let all = 0;
+      for (let d = 0; d < nP; d++) all += prof[d];
+      const depth = all / nP / folded - low / L / folded;
+      if (!(depth >= DEPTH_HZ)) return why("syncs " + Math.round(depth) + " Hz below the line");
+      // the tuning: the median of the syncs' own tone (the middle of each; in static one sample's tone is
+      // anything, a sync's mean still tells), less 1200
+      const Ls = L * Q, tones = [];
+      for (let k = span[0]; k <= span[1]; k++) { const s = (a + k * P) * Q, v = sMean(s + 0.2 * Ls, s + 0.8 * Ls); if (v === v) tones.push(v); }
+      tones.sort((x, y) => x - y);
+      const off = tones[tones.length >> 1] - 1200;
+      if (!(Math.abs(off) <= FIND_OFFSET)) return why("offset " + Math.round(off));
+      // the lines the grid holds in the recording (whole lines)
+      const syncAt = toBins(m.syncAt), kMin = Math.ceil((syncAt - a) / P), kMax = Math.floor((nb - toBins(m.lineMs) + syncAt - a) / P);
+      const reads = (k, hz) => k >= kMin && k <= kMax && sMean((a + k * P) * Q + 0.2 * Ls, (a + k * P) * Q + 0.8 * Ls) - off < hz;
+      // the run's ends: dips that line up by chance (noise after the picture) are no syncs of it. A cluster
+      // of fewer than ISO_MIN dips at an end, more than ISO lines from the rest, is dropped; then the end
+      // comes in to the last line whose sync reads as one (below EDGE_HZ), unless none of END_IN does (a
+      // picture deep in the static: its ends as the dips have them); then out over lines that read clearly
+      // (below EDGE_HZ - 100: noise rarely does)
+      const run = ks.filter((k) => k >= span[0] && k <= span[1]);
+      let i1 = 0, i2 = run.length - 1;
+      for (;;) {
+        let j = i2;
+        while (j > i1 && run[j] - run[j - 1] <= ISO) j--;
+        if (j > i1 && i2 - j + 1 < ISO_MIN) i2 = j - 1; else break;
+      }
+      for (;;) {
+        let j = i1;
+        while (j < i2 && run[j + 1] - run[j] <= ISO) j++;
+        if (j < i2 && j - i1 + 1 < ISO_MIN) i1 = j + 1; else break;
+      }
+      const trim = (k, dir, stop) => { for (let i = 0; i < END_IN && k - dir * i !== stop; i++) if (reads(k - dir * i, EDGE_HZ)) return k - dir * i; return k; };
+      let k1 = run[i1], k2 = run[i2];
+      k2 = trim(k2, 1, k1); k1 = trim(k1, -1, k2);
+      while (k2 - k1 + 1 < m.lines && reads(k2 + 1, EDGE_HZ - 100)) k2++;
+      while (k2 - k1 + 1 < m.lines && reads(k1 - 1, EDGE_HZ - 100)) k1--;
+      const on = new Set(ks);
+      let syncs = 0;
+      for (let k = k1; k <= k2; k++) if (on.has(k) || reads(k, EDGE_HZ)) syncs++;
+      const density = syncs / (k2 - k1 + 1);
+      if (syncs < FIND_MIN || density < FIND_DENSITY) return why("syncs " + syncs + " share " + density.toFixed(2));
+      return { m, a, P, k1, k2, kMin, kMax, off, L, syncs, density, score: syncs * density };
+    }
+    let best = null;
+    const want = opts.want && opts.want !== "auto" ? BY_ID.get(opts.want) : null;
+    for (const m of want ? [want] : MODES) { const r = fitMode(m); if (r && (!best || r.score > best.score)) best = r; }
+    if (!best) return null;
+    // 6. where its lines go
+    const { m, a, P, k1, k2, kMin, kMax, off } = best, ended = k2 + 3 <= kMax;
+    const header = (k) => {                               // the header before line k: how clear (or -Infinity)
+      const end = (a + k * P) * Q - msS(m.first + m.syncAt), at = (x, y) => sMean(end + msS(x), end + msS(y)) - off;
+      if (end - msS(910) < 0) return -Infinity;
+      const lead = at(-570, -330), start = at(-295, -275), stop = at(-25, -5);
+      let ones = 0, zeros = 0, n1 = 0, par = 0;
+      for (let b = 0; b < 8; b++) {
+        const bit = b < 7 ? (m.vis >> b) & 1 : par & 1;   // even parity
+        par += bit;
+        const v = at(-265 + 30 * b, -245 + 30 * b);
+        if (bit) { ones += v; n1++; } else zeros += v;
+      }
+      ones /= n1; zeros /= 8 - n1;
+      if (!(Math.abs(lead - 1900) < 150 && lead - start > 300 && lead - stop > 300 && zeros - ones > 80)) return -Infinity;
+      return Math.min(lead - start, lead - stop, 3 * (zeros - ones));
+    };
+    let k0 = null, anchor = "start";
+    if (opts.first != null) { k0 = Math.round(((opts.first - rec.from) / Q - a) / P); anchor = "header"; }
+    else {
+      let clear = -Infinity;
+      for (let k = k1 - 3; k <= Math.min(k1 + 3, k2); k++) { const h = header(k); if (h > clear) { clear = h; k0 = k; } }
+      if (k0 != null && clear > -Infinity) anchor = "header"; else k0 = null;
+    }
+    if (k0 == null) { k0 = ended ? k2 - (m.lines - 1) : k1; anchor = ended ? "end" : "start"; }
+    const kFrom = Math.max(anchor === "header" ? k0 : k1, k0, kMin), kTo = Math.min(k2, k0 + m.lines - 1, kMax);
+    if (kTo < kFrom) return null;
+    const at = (k) => rec.from + Math.round((a + k * P) * Q - msS(m.syncAt));
+    return { mode: m, offsetHz: Math.round(off), a: a * Q, P: P * Q, k0, kFrom, kTo, anchor, ended,
+             syncs: best.syncs, density: best.density, from: at(kFrom), to: at(kTo + 1) };
+  }
+  // draw(rec, fit) -> the picture (the whole frame, black where nothing was found): { w, h, rgba, first
+  // (its first row decoded), rows (how many) }
+  function drawFound(rec, fit) {
+    const m = fit.mode, f = rec.f, n = f.length, fs = rec.fs, w = m.width, h = m.height;
+    const t = { offset: fit.offsetHz, ms: (x) => (x * fs) / 1000, cr: new Float32Array(w).fill(128), cb: new Float32Array(w).fill(128),
+      mean(a, b) {
+        a = Math.max(Math.round(a), 0); b = Math.min(Math.round(b), n);
+        if (b <= a) return NaN;
+        let s = 0;
+        for (let i = a; i < b; i++) s += f[i];
+        return s / (b - a);
+      } };
+    const rgba = new Uint8ClampedArray(w * h * 4);
+    for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+    for (let k = fit.kFrom; k <= fit.kTo; k++) {
+      const rows = lineRows(m, t, fit.a + k * fit.P - t.ms(m.syncAt)), y = (k - fit.k0) * m.rowsPerLine;
+      rows.forEach((r, i) => rgba.set(r, (y + i) * w * 4));
+    }
+    return { w, h, rgba, first: (fit.kFrom - fit.k0) * m.rowsPerLine, rows: (fit.kTo - fit.kFrom + 1) * m.rowsPerLine };
+  }
+
+  window.SSTV = { MODES, Decoder, find: findPicture, draw: drawFound, TAPE_S, byVis: (v) => BY_VIS.get(v) || null, byId: (id) => BY_ID.get(id) || null };
 
   // ---- the panel ----
   if (typeof document === "undefined") return;           // the decoder alone (tests, a worker)
@@ -414,6 +719,9 @@
   const g2d = (canvas.getContext && canvas.getContext("2d")) || null;
   let dec = null, rate = 0, cur = null, rowsDone = 0, unknown = null, lastNote = "";
   const pics = [];                                        // the strip, newest first: {url, file, name, at, w, h, rows, part, el, open}
+  const known = [];                                       // the pictures kept with a span (this page's), PNG made or not yet
+  const seen = [];                                        // { gen, span } of every picture the live decoder ended
+  let gen = 0, lookedAt = 0;                              // gen: the decoder's timeline (a new decoder, a new one)
 
   // ---- the strip, kept by this browser: one record a picture, {file (its key), at (ms), name, w, h, rows, part, blob} ----
   // Everything waits for the store to open, in the order it was asked, and is dropped for good if it
@@ -489,11 +797,19 @@
       rowsDone = y + 1;
       if (y % 8 === 0) render();
     },
-    onEnd: ({ mode, rows, reason }) => {
+    onEnd: ({ mode, rows, reason, from, to }) => {
       const c = cur;
       cur = null;
+      // joined under way, or lost in the static: the recording may hold more of it, its lines in their places
+      const kept = spans();
+      seen.push({ gen, span: [from, to] });                // the searches while idle leave it out, kept or not
+      if (c && (c.joined || reason !== "done")) {
+        const r = fromRecording({ want: mode.id, skip: kept, first: c.joined ? null : from });
+        const had = reason === "lost" ? rows - LOST_LINES * mode.rowsPerLine : rows;   // a lost one drew LOST_LINES more
+        if (r && share([from, to], r.span) >= 0.5 && r.pic.rows >= had + (c.joined ? -4 : 8)) { showFound(r); return; }
+      }
       const whole = reason === "done", enough = whole || rows >= mode.height * KEEP_PART;
-      if (c && rows > 0 && enough) keep(c, rows);
+      if (c && rows > 0 && enough) keep(c, rows, [from, to]);
       lastNote = whole ? "Received " + mode.name + " (" + rows + " lines) at " + utc(c ? c.at : new Date(Date.now())) + "."
         : mode.name + " ended early: the signal went away at line " + rows + " of " + mode.height + "." +
           (enough ? "" : " Not kept: less than a quarter of it arrived.");
@@ -502,18 +818,74 @@
     },
     onUnknown: ({ vis }) => { if (!cur) { lastNote = "An SSTV picture in a mode TeleRig can't decode (VIS " + vis + ")."; render(); } },
   };
-  function keep(c, rows) {                                // the picture into the strip, newest first
+  // span: where the picture lies in the recording (absolute samples of this decoder: gen), so the searches
+  // leave it out and a better copy can take its place
+  function keep(c, rows, span) {                          // the picture into the strip, newest first
     const name = c.mode.name + (c.freqText ? " · " + c.freqText : "") + " · " + utc(c.at);
     const file = ["TeleRig_SSTV", safe(c.mode.name), c.freqText ? safe(c.freqText.split(" ")[0]) + "MHz" : "", stamp(c.at)]
       .filter(Boolean).join("_") + ".png";
     const p = { file, name, at: c.at, w: c.mode.width, h: c.mode.height, rows, part: rows < c.mode.height };
+    if (span) { p.span = span; p.gen = gen; known.push(p); }
     if (canvas.toBlob) canvas.toBlob((b) => {
-      if (!b) return;
+      if (!b || p.gone) return;
       p.url = URL.createObjectURL(b);
       add(p);
       store.put({ file: p.file, at: p.at.getTime(), name: p.name, w: p.w, h: p.h, rows: p.rows, part: p.part, blob: b });   // kept by this browser too
     }, "image/png");
   }
+  // ---- the recording: pictures found in the last minutes of audio (SSTV.find), however weak ----
+  // After a picture the live decoder joined under way or lost in the static, the recording is searched for
+  // it (above, onEnd): what came before the join and through the fades, each line in its place (one caught
+  // late ends on the picture's last line). While nothing is being received, every LOOK_S of audio, it is
+  // searched for a picture the live decoder never started (too weak for it): one that has ended is kept,
+  // one still under way is named. Look back (#sstvLook) searches it now. The pictures kept are left out.
+  const LOOK_S = 20;
+  const spans = () => known.filter((p) => p.gen === gen).map((p) => p.span);
+  const share = (a, b) => Math.max(0, Math.min(a[1], b[1]) - Math.max(a[0], b[0])) / Math.max(1, a[1] - a[0]);   // of a, in b
+  function fromRecording(opts) {                          // { fit, pic, span } or null
+    if (!dec) return null;
+    try {
+      const rec = dec.recording(), fit = findPicture(rec, opts);
+      return fit ? { fit, pic: drawFound(rec, fit), span: [fit.from, fit.to] } : null;
+    } catch (_) { return null; }
+  }
+  function paintFound(r) {                                // the picture found, on the canvas: { mode, at, freqText }
+    blank(r.pic.w, r.pic.h);
+    if (g2d && typeof ImageData === "function") g2d.putImageData(new ImageData(r.pic.rgba, r.pic.w, r.pic.h), 0, 0);
+    const st = radio(), at = new Date(Date.now() - ((dec.end() - r.fit.from) / rate) * 1000);
+    return { mode: r.fit.mode, at, freqText: (st.connected && st.freq ? (st.freq / 1e6).toFixed(3) + " MHz " + (st.mode_name || "") : "").trim() };
+  }
+  const linesText = (r) => (r.pic.rows >= r.pic.h ? "all " + r.pic.h + " lines" : "lines " + (r.pic.first + 1) + " to " + (r.pic.first + r.pic.rows) + " of " + r.pic.h);
+  function showFound(r) {                                 // ... and into the strip, the partial copies it covers giving way
+    const c = paintFound(r);
+    for (const p of known.slice()) if (p.gen === gen && share(p.span, r.span) >= 0.5 && p.rows <= r.pic.rows) forget(p);
+    keep(c, r.pic.rows, r.span);
+    lastNote = "Found " + c.mode.name + " in the recording: " + linesText(r) + " (" + utc(c.at) + ").";
+    try { TR.srLive(lastNote); } catch (_) {}
+    try { document.dispatchEvent(new CustomEvent("tr:digital", { detail: { mode: "sstv" } })); } catch (_) {}
+    render();
+  }
+  function look() {                                       // the search while nothing is being received
+    lookedAt = dec.end();
+    const r = fromRecording({ want, skip: spans().concat(seen.filter((x) => x.gen === gen).map((x) => x.span)) });
+    if (!r || r.pic.rows < r.pic.h * KEEP_PART) return;  // a quarter of it at least, as the live decoder keeps
+    if (r.fit.ended) { showFound(r); return; }
+    lastNote = r.fit.mode.name + " under way in the static: it is decoded from the recording when it ends.";
+    render();
+  }
+  const lookBtn = $("sstvLook");
+  if (lookBtn) lookBtn.addEventListener("click", () => {
+    if (cur) lastNote = "Receiving " + cur.mode.name + " now: look back once it ends.";
+    else if (!dec || dec.end() < rate * 3) lastNote = "Nothing recorded yet: the recording runs while RX audio is on, the last " + Math.round(TAPE_S / 60) + " minutes.";
+    else {
+      const kept = spans(), r = fromRecording({ want, skip: kept }), got = Math.round(Math.min(dec.end(), rate * TAPE_S) / rate);
+      if (!r) lastNote = "No " + (kept.length ? "other " : "") + "SSTV picture in the last " + Math.floor(got / 60) + ":" + pad(got % 60) + " of audio.";
+      else if (r.fit.ended) { showFound(r); return; }
+      else { const c = paintFound(r); lastNote = c.mode.name + " under way in the static, so far " + linesText(r) + ": it is kept when it ends."; }
+    }
+    try { TR.srLive(lastNote); } catch (_) {}
+    render();
+  });
   // the pictures this browser kept: under the ones received since the page opened, newest first
   store.all((recs) => {
     recs = recs.filter((r) => r.blob && typeof r.name === "string" && r.at > 0 && r.w > 0 && r.h > 0);
@@ -543,6 +915,9 @@
     while (pics.length > KEEP) forget(pics[pics.length - 1]);
   }
   function forget(p) {                                    // out of the strip and of the browser's store, its PNG freed (and out of the viewer)
+    p.gone = true;
+    const k = known.indexOf(p);
+    if (k >= 0) known.splice(k, 1);
     const i = pics.indexOf(p);
     if (i < 0) return;
     pics.splice(i, 1);
@@ -617,8 +992,9 @@
   }
   function feed(pcm, r) {
     if (!onGrid()) return;
-    if (!dec || r !== rate) { rate = r; dec = new Decoder(r, hooks); dec.setMode(want); }
+    if (!dec || r !== rate) { rate = r; dec = new Decoder(r, hooks); dec.setMode(want); gen++; lookedAt = 0; }
     dec.feed(pcm);
+    if (!cur && dec.end() - lookedAt >= LOOK_S * rate) look();   // (a start on trial isn't shown: no matter)
   }
   if (modeSel) modeSel.addEventListener("change", () => {
     want = modeSel.value === "auto" || BY_ID.has(modeSel.value) ? modeSel.value : "auto";

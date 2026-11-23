@@ -27,6 +27,11 @@
  *      limit, take a picture out of the store too, also one received and deleted while the store was
  *      still opening; a browser with no store, or one that refuses to open it, keeps them for the page's
  *      life; records that are not pictures are left out
+ *  Q12. the recording: a picture caught late goes into the strip as the recording has it (its lines in their
+ *      places, the last at the bottom), once; one too weak for the live decoder is named under way, then
+ *      found and kept when it ends, and not again; Look back (the strip's pictures left out): no other one,
+ *      under way, nothing recorded yet, none in noise; a picture under a quarter long is not kept by the
+ *      search either
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -94,6 +99,7 @@ function page(opts) {
   e.el("select", { id: "sstvMode" }, tile).appendChild(Object.assign(e.doc.createElement("option"), { value: "auto" }));
   e.doc.getElementById("sstvMode").value = "auto";
   e.el("button", { id: "sstvClear", type: "button" }, tile);
+  e.el("button", { id: "sstvLook", type: "button" }, tile);
   e.el("p", { id: "sstvStatus" }, tile);
   const canvas = e.el("canvas", { id: "sstvCanvas" }, tile);
   e.el("div", { id: "sstvGallery", role: "list" }, tile);
@@ -414,6 +420,51 @@ function noise(sec, rms) {
     eq([e.items().length, db.recs.size, e.status()], [1, 0, "Received Robot 36 (240 lines) at 18:30Z."], "Q11 the store can't be opened (" + fail + "): the picture is in the strip all the same");
     e.del(0);
     eq(e.items().length, 0, "Q11 ... and can be deleted");
+  }
+  // Q12: the recording (the last 5 minutes of audio): a picture caught late, one too weak to start, Look back
+  {
+    const late = (id, from, o) => {                       // a third into line `from`, no header
+      const m = e0.ctx.SSTV.byId(id), segs = E.picture(m, E.pic(m.width, m.height)), per = segs.length / m.lines;
+      return E.audio(segs.slice(Math.round(from * per + per / 3)), Object.assign({ lead: 1, tail: 3 }, o));
+    };
+    const e0 = page();
+    // caught late: the live decoder joins it under way (its rows from the top); at its end the recording puts
+    // every line it has in its place, the last at the bottom, in the strip instead
+    e0.feed(late("r36", 96));
+    eq([e0.status(), e0.alts()], ["Found Robot 36 in the recording: lines 98 to 240 of 240 (18:29Z).", [R36_NAME.replace("18:30Z", "18:29Z") + " (part)"]],
+       "Q12 Robot 36 caught a third into line 97: the recording's copy, lines 98 to 240, in the strip (one picture)");
+    check(e0.painted[e0.painted.length - 1] === 0 && e0.canvas.height === 240, "Q12 ... painted whole on the canvas");
+    check(e0.dots.length >= 2, "Q12 ... a dot on SSTV's key");
+    // Look back leaves the pictures in the strip out: nothing else here
+    e0.doc.getElementById("sstvLook").click();
+    check(/^No other SSTV picture in the last 0:\d\d of audio\.$/.test(e0.status()), "Q12 Look back, the one picture kept: " + e0.status());
+    eq(e0.items().length, 1, "Q12 ... still one picture");
+    // too weak to start: nothing live; the search while idle finds it once it has ended, and keeps it
+    const e = page();
+    const m = robot(e), weak = E.audio([...E.vis(m.vis), ...E.picture(m, E.pic(m.width, m.height))], { noise: 0.45, tail: 1 });
+    e.feed(weak.subarray(0, 20 * 16000));
+    eq([e.items().length, e.painted.length], [0, 0], "Q12 Robot 36 in heavy static: the live decoder shows nothing");
+    check(/^Robot 36 under way in the static: it is decoded from the recording when it ends\.$/.test(e.status()), "Q12 ... named under way: " + e.status());
+    e.doc.getElementById("sstvLook").click();
+    check(/^Robot 36 under way in the static, so far lines \d+ to \d+ of 240: it is kept when it ends\.$/.test(e.status()), "Q12 Look back while it is under way: " + e.status());
+    eq(e.items().length, 0, "Q12 ... not kept yet");
+    e.feed(weak.subarray(20 * 16000));
+    e.feed(noise(4, 0.45));
+    check(/^Found Robot 36 in the recording: (all 240 lines|lines \d to 240 of 240) \(18:29Z\)\.$/.test(e.status()), "Q12 ... after it, found and kept: " + e.status());
+    eq(e.items().length, 1, "Q12 ... one picture in the strip");
+    e.feed(noise(25, 0.45));
+    eq(e.items().length, 1, "Q12 ... and not again (the next search leaves it out)");
+    // Look back: nothing recorded yet; noise only
+    const f = page();
+    f.doc.getElementById("sstvLook").click();
+    eq(f.status(), "Nothing recorded yet: the recording runs while RX audio is on, the last 5 minutes.", "Q12 Look back before any audio");
+    f.feed(noise(30, 0.3));
+    f.doc.getElementById("sstvLook").click();
+    eq([f.status(), f.items().length], ["No SSTV picture in the last 0:30 of audio.", 0], "Q12 Look back over 30 s of noise: none (nor while idle)");
+    // a picture too short to keep (under a quarter) is not kept by the search either
+    const g = page();
+    g.feed(pictureAudio(g, "r36", 30, { tail: 25 }));
+    eq(g.items().length, 0, "Q12 30 lines of 240: the search while idle doesn't keep what the live decoder wouldn't");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

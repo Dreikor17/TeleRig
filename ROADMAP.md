@@ -277,6 +277,15 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   left to the page.
 - **SSTV's picture strip has no X.** A picture is deleted from its viewer (click it, then Delete), as
   the operator asked: the red X on each preview only repeated it.
+- **SSTV looks back through the last 5 minutes of audio.** The decoder records every tone it measures
+  (about 10 MB in the browser) and finds a picture in it by the rhythm of all its line syncs at once, so
+  a sync lost in the static on most lines still counts on the others, and a sender's clock up to 0.3 %
+  off is measured. A picture caught late goes into the strip with each line where it belongs (the last
+  at the bottom) and the lines from before the live decoder joined it; one lost in a fade comes back
+  with the lines after; one too weak for the live decoder to start (in tests: heavy static it never
+  starts on) is named while under way and kept when it ends. **Look back** searches the recording now.
+  Noise, voice-band noise and CW keying give no picture. In very heavy static the tuning reads a little
+  high, so the picture comes out darker.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
@@ -575,9 +584,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   recording log on top of the Recorder panel (Done above).
 - **SSTV receive, next steps** — the last 2 to 4 pixels of each line pick up what follows the scan (in
   Robot 36 the next line's sync, so the right edge turns green) and the first is a little dark: the scan
-  edges need to allow for the FM discriminator's filter. Decoding a saved recording also needs the
-  decoder to work through a long buffer as it goes (today it keeps about 6 s and works after each
-  piece, which is right for the radio's 20 ms packets).
+  edges need to allow for the FM discriminator's filter. Decoding a saved recording can use the
+  look-back search (SSTV.find works on any recording of tones). In very heavy static the sync tone
+  reads high (the static pulls it toward the middle of the band), so the tuning taken off is too much
+  and the picture darker: levels from the sync and the porch together would fix it. The search runs
+  on the page's main thread (about 0.2 s for 5 minutes, every 20 s while nothing is received).
 - **SSTV transmit, next steps** — replying with a received picture, and decoding a saved recording.
   Scottie DX, PD-180, PD-240 and PD-290 (3:09 to 4:51 on the air) are longer than the 3-minute TX
   time-out each radio is set to on connect, the backstop if the control link fails, so TeleRig
