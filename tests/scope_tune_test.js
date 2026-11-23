@@ -21,6 +21,8 @@
  *      the radio's steps and shows its default; picking one sets the keys' step; it is kept per radio on
  *      this device and comes back after a reload; a kept value that isn't one of the radio's steps gives
  *      its default; another radio has its own
+ *  S7. the audio scope in FM / AM (its audio view: the sound, no frequency of the band): a tap, a click and
+ *      a drag tune nothing; back in USB a click tunes again
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -270,6 +272,22 @@ async function page(opts) {
     eq(g.vfoSel.value, "100", "S6 a kept value that isn't one of the radio's steps: its default");
     const h = await page({ storage: { "telerig.step.rig_a": "<b>" } });
     eq(h.vfoSel.value, "100", "S6 a kept value that isn't a number: its default");
+  }
+  // ---- S7: the audio scope in FM / AM shows the audio itself (AfMap.view audio): nothing there to tune to ----
+  {
+    const e = await page({ radio: "rig_b" });
+    const sc = e.ctx.RadioScope;
+    sc.meta = { mode: 1, audio: true, lower: 0, upper: 3600, span: 3600, tuned: 0, retune: 0, dial: 146520000 };
+    e.ev(e.wrap, "pointerdown", { pointerType: "touch", clientX: 250 }); e.clock.advance(80);
+    e.ev(e.wrap, "pointerup", { pointerType: "touch", clientX: 250 });
+    e.ev(e.wrap, "pointerdown", { clientX: 600 }); e.ev(e.wrap, "pointerup", { clientX: 600 });
+    e.ev(e.wrap, "pointerdown", { clientX: 500 });
+    e.ev(e.wrap, "pointermove", { clientX: 400 }); e.ev(e.wrap, "pointerup", { clientX: 400 });
+    e.settle(500);
+    eq(e.sent, [], "S7 FM's audio on the scope: a tap, a click and a drag tune nothing (a tone is no frequency of the band)");
+    sc.meta = { mode: 1, lower: LO, upper: HI, span: HI - LO, tuned: 0, retune: 0 };   // back to USB
+    e.ev(e.wrap, "pointerdown", { clientX: 600 }); e.ev(e.wrap, "pointerup", { clientX: 600 });
+    eq(e.freqs(), [14060000], "S7 ... and in USB a click tunes again");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

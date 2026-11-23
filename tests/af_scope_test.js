@@ -18,6 +18,9 @@
  *  B. CW: both sides x both display settings x five pitches x four dials, with taps across the passband;
  *     plus the reported case.
  *  C. SSB / data: unchanged (the dial is an edge, no marker, a tap makes the tapped point the carrier).
+ *  J. FM / AM (and FM-N, AM-N, DATA-FM, C4FM): the audio is no copy of the band (the reported picture: FM
+ *     on 467.550 MHz labelled 467.550.000 .. 467.553.600 as if USB), so the view is the audio itself, 0..3600
+ *     Hz, no marker, no retune, the dial carried; the band plan names the dial's segment across the strip.
  *  D. drawOverlay draws the CW marker line at the pitch and labels it with the dial to 10 Hz.
  *  E. The CW zoom (AfMap.frame): with a CW filter (up to 1.2 kHz, centred on the pitch), 2.5 widths centred
  *     on the pitch (400 Hz at the least, inside 0..3600 Hz); the other modes, CW with a wider filter (it may
@@ -136,7 +139,7 @@ test("B the reported case: a tapped CW-LSB signal is heard at the pitch, not mov
 
 test("C SSB / data: the dial is an edge, no marker, a tap makes the tapped point the carrier (unchanged)", () => {
   for (const [mode, lsb] of [["USB", false], ["LSB", true], ["DATA-USB", false], ["DATA-LSB", true],
-                             ["RTTY-LSB", true], ["RTTY-USB", false], ["AM", false]]) {
+                             ["RTTY-LSB", true], ["RTTY-USB", false]]) {
     const dial = 7074000, view = AfMap.view(dial, SPAN, mode, null), sc = scopeFor(view);
     eq([view.lsb, view.tuned, view.retune], [lsb, 0, 0], "C " + mode + ": side, no marker, no retune");
     eq([view.lower, view.upper], lsb ? [dial - SPAN, dial] : [dial, dial + SPAN], "C " + mode + ": edges as before");
@@ -144,6 +147,45 @@ test("C SSB / data: the dial is an edge, no marker, a tap makes the tapped point
     near(sc.freqAtX(xOfTone(a, view)), f, 1e-6, "C " + mode + ": a tone reads back its RF");
     eq(tap(sc, xOfTone(a, view)), f, "C " + mode + ": a tap tunes the dial to the tapped point");
   }
+});
+
+test("J FM / AM: the audio as audio (Hz), no frequency of the band, no marker, nothing to tap; the band plan names the dial's segment", () => {
+  // the reported picture: an FT-991A in FM on 467.550 MHz, the scope labelled 467.550.000 .. 467.553.600 as if USB
+  for (const mode of ["FM", "FM-N", "AM", "AM-N", "DATA-FM", "C4FM"]) {
+    const dial = 467550000, view = AfMap.view(dial, SPAN, mode, null), sc = scopeFor(view);
+    check(AfMap.audio(mode), "J " + mode + " is an audio mode");
+    eq([view.audio, view.audioMode, view.lower, view.upper, view.tuned, view.retune, view.filterBw, view.lsb, view.dial],
+       [true, mode, 0, SPAN, 0, 0, 0, false, dial], "J " + mode + ": the edges are 0 and 3600 Hz of audio; no marker, no retune; the dial carried");
+    eq(AfMap.words(view), { edges: ["0 Hz", "3.6 kHz"], badge: "audio spectrum (" + mode + ": the sound, not the band)", tunes: false },
+       "J " + mode + ": the edge labels in Hz, the badge says it is the sound, and no tap tunes (no hint)");
+    eq(sc.visibleRange(), [0, SPAN], "J " + mode + ": the visible range is the audio's");
+    near(sc.freqAtX(xOfTone(1500, view)), 1500, 1e-6, "J " + mode + ": a 1500 Hz tone reads 1500 (Hz), not 467.5515 MHz");
+    near(sc.freqToX(900), xOfTone(900, view), 1e-6, "J " + mode + ": and a tone is drawn at its own pixel");
+  }
+  for (const mode of ["USB", "LSB", "CW-USB", "DATA-USB", "RTTY-LSB"]) check(!AfMap.audio(mode), "J " + mode + " is no audio mode");
+  const usbWords = { edges: null, badge: "audio spectrum (RX passband)", tunes: true };
+  eq([AfMap.words(AfMap.view(14074000, SPAN, "USB", null)), AfMap.words(AfMap.view(7020000, SPAN, "CW-LSB", { side: -1, pitch: 700, shown: true })),
+      AfMap.words(null)], [usbWords, usbWords, usbWords], "J USB, CW and the scope stopped: the band's frequencies, the RX passband, taps tune");
+  // the band plan: the segment the dial is in, across the whole strip (it has no frequency of the band to sit on)
+  const plan = [{ lo: 144000000, hi: 146400000, kind: "all", label: "All modes" }, { lo: 146400000, hi: 146600000, kind: "fm", label: "FM simplex" },
+                { lo: 146600000, hi: 148000000, kind: "rpt", label: "Repeaters" }];
+  const rects = [], texts = [];
+  const ctx2d = new Proxy({ fillRect: (x, y, w) => rects.push([x, w]), fillText: (t) => texts.push(String(t)), measureText: (t) => ({ width: String(t).length * 6 }) },
+                          { get: (t, k) => (k in t ? t[k] : () => {}), set: (t, k, v) => { t[k] = v; return true; } });
+  const fm = AfMap.view(146520000, SPAN, "FM", null);
+  const sc = Object.create(Scope.prototype);
+  Object.assign(sc, { stctx: ctx2d, W, meta: fm, showBandplan: true, bandplan: plan });
+  sc.drawBandplan();
+  eq([rects, texts], [[[0, W]], ["FM simplex"]], "J FM on 146.520: the strip names its segment, FM simplex, edge to edge");
+  eq(sc.visibleKinds(), ["fm"], "J ... and the legend keys that segment");
+  eq(sc.bandplanSegAt(W / 3, 5) && sc.bandplanSegAt(W / 3, 5).label, "FM simplex", "J ... and its tooltip shows anywhere on the strip");
+  Object.assign(sc, { meta: AfMap.view(467550000, SPAN, "FM", null) });
+  rects.length = 0; texts.length = 0;
+  sc.drawBandplan();
+  eq([rects, texts, sc.visibleKinds()], [[], [], []], "J FM on 467.550 (no segment there): an empty strip, as before");
+  // a sweep with fixed edges reads as before; the audio view (its 0 Hz edge) goes by its centre and span
+  const sweep = scopeFor({ mode: 1, lower: 14000000, upper: 14350000 });
+  eq(sweep.visibleRange(), [14000000, 14350000], "J a fixed-edge sweep: its edges");
 });
 
 test("D drawOverlay: the CW marker line at the pitch, labelled with the dial to 10 Hz", () => {

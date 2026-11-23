@@ -216,10 +216,20 @@
       return (idx < 0 || idx >= n) ? -1 : data[idx | 0];
     }
 
+    // What of the band plan shows: the visible range, or on the AF scope's audio view (FM, AM: no frequency
+    // of the band on it) the segment(s) the dial is in, drawn across the whole strip (full).
+    _bpView() {
+      const m = this.meta;
+      if (m && m.audio) return { lo: m.dial || 0, hi: (m.dial || 0) + 1, full: true };
+      const [lo, hi] = this.visibleRange();
+      return { lo, hi, full: false };
+    }
+    _bpX(seg, v) { return v.full ? [0, this.W] : [Math.max(0, this.freqToX(seg.lo)), Math.min(this.W, this.freqToX(seg.hi))]; }
+
     // distinct band-plan kinds currently visible (for the color-key legend), in display order
     visibleKinds() {
       if (!this.bandplan) return [];
-      const [lo, hi] = this.visibleRange();
+      const { lo, hi } = this._bpView();
       const seen = [];
       for (const seg of this.bandplan) {
         if (seg.hi <= lo || seg.lo >= hi) continue;
@@ -237,10 +247,11 @@
         const sy = this.specH - STRIP_H - 3;
         if (py < sy - 2 || py > sy + STRIP_H + 2) return null;
       }
-      const [lo, hi] = this.visibleRange();
+      const v = this._bpView();
       for (const seg of this.bandplan) {
-        if (seg.hi <= lo || seg.lo >= hi) continue;
-        if (px >= this.freqToX(seg.lo) && px <= this.freqToX(seg.hi)) return seg;
+        if (seg.hi <= v.lo || seg.lo >= v.hi) continue;
+        const [x0, x1] = this._bpX(seg, v);
+        if (px >= x0 && px <= x1) return seg;
       }
       return null;
     }
@@ -399,7 +410,7 @@
       if (this.stctx) this.stctx.clearRect(0, 0, this.W, STRIP_PX);
       if (!this.showBandplan || !this.bandplan || !this.bandplan.length) return;
       const ctx = this.stctx || this.octx, w = this.W;
-      const [lo, hi] = this.visibleRange();
+      const v = this._bpView(), lo = v.lo, hi = v.hi;
       // its own strip above the scope; without one, 3 px clear of the spectrum/waterfall split
       const sy = this.stctx ? 1 : this.specH - STRIP_H - 3;
       const colors = global.BANDPLAN_COLORS || {};
@@ -407,8 +418,7 @@
       ctx.textBaseline = "middle";
       for (const seg of this.bandplan) {
         if (seg.hi <= lo || seg.lo >= hi) continue;
-        const x0 = Math.max(0, this.freqToX(seg.lo));
-        const x1 = Math.min(w, this.freqToX(seg.hi));
+        const [x0, x1] = this._bpX(seg, v);
         const bw = x1 - x0;
         if (bw <= 0.5) continue;
         const base = colors[seg.kind] || "rgba(150,160,180,";
@@ -447,6 +457,10 @@
   // it only (floor). A wider filter may be the radio's SSB filter, placed by its BFO rather than on the
   // pitch (the IC-728's CW: its 2.4 kHz filter), so that keeps the whole 0..3600 Hz and the mean floor.
   const AF_LSB_MODES = ["LSB", "CW-LSB", "RTTY-LSB", "DATA-LSB", "CW-R", "RTTY", "DATA-L"];
+  // Modes whose audio is no copy of the band: FM's is the deviation, AM's both sidebands folded onto one.
+  // In them the scope shows the audio as audio (0..span Hz): no frequency of the band, no marker, no tap
+  // tunes (a tone is no signal off the dial), and the band plan names the dial's segment (Scope).
+  const AF_AUDIO_MODES = ["FM", "FM-N", "AM", "AM-N", "DATA-FM", "DATA-FM-N", "C4FM", "DV", "DD", "WFM"];
   const AF_ZOOM = 2.5, AF_MIN_SPAN = 400;        // CW: 2.5 filter widths shown, never under 400 Hz
   const AF_CW_NARROW = 1200;                     // the widest filter taken as centred on the CW pitch
   const AF_MEDIAN_DB = 0.92;                     // a noise bin's dB: its median sits this far above its mean
@@ -470,8 +484,25 @@
     // marker — at the pitch in CW, as the radio itself would put it. The scope shows the audio from a0
     // to a0 + span Hz (frame); in CW, with a CW filter bw Hz wide, it shades the passband: bw Hz
     // centred on the marker, the pitch (Scope.drawOverlay).
+    // In a mode whose audio is no copy of the band (audio(mode): FM, AM, C4FM ...) the view is the audio
+    // itself: lower..upper = a0..a0 + span Hz, audio: true (audioMode: the mode), the dial carried for the
+    // band plan (no marker, no retune).
+    audio(mode) { return AF_AUDIO_MODES.includes(mode); },
+    // What app.js writes for a view (null: the AF scope stopped): the edge labels of an audio view, the audio's
+    // own ("0 Hz", "3.6 kHz"; null for a view of the band: its frequencies, as ever), the badge's words, and
+    // whether a tap tunes (the hint under the waterfall shows only then).
+    words(view) {
+      if (!(view && view.audio)) return { edges: null, badge: "audio spectrum (RX passband)", tunes: true };
+      const P = global.Passband;
+      return { edges: [P.label(view.lower || 0), P.label(view.upper || 0)],
+               badge: "audio spectrum (" + (view.audioMode || "FM") + ": the sound, not the band)", tunes: false };
+    },
     view(dial, span, mode, cw, a0, bw) {
       a0 = a0 || 0;
+      if (!cw && AF_AUDIO_MODES.includes(mode)) {
+        return { mode: 1, center: a0 + span / 2, span, lower: a0, upper: a0 + span, tuned: 0, filterBw: 0, retune: 0, lsb: false,
+                 audio: true, audioMode: mode, dial: dial || 0 };
+      }
       const lsb = cw ? cw.side < 0 : AF_LSB_MODES.includes(mode);
       let carrier = dial, marker = 0;
       if (cw) {

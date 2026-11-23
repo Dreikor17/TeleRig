@@ -215,6 +215,12 @@ this list whenever a radio turns up something new.
   what SSTV, FT8 or RTTY needs, or the dial is off the carrier, with a key that mends it
   (`waterfall.js` `Passband.dataFix`). On a new radio, find where each data mode's filter sits in audio,
   and what each menu that moves it does to the dial.
+- **Only a sideband mode's audio is a copy of the band.** The audio scope (radios with no scope over CAT)
+  maps a tone to the dial plus or minus its pitch, and every mode it didn't know fell through to USB, so
+  FM on 467.550 MHz was labelled 467.550.000 to 467.553.600 and a tap would have retuned by a tone's
+  pitch (2026‑11‑22). FM's audio is the deviation and AM's both sidebands folded onto one: in them the
+  scope now shows the sound, 0–3.6 kHz in Hz, with nothing to tap (`waterfall.js` `AF_AUDIO_MODES`,
+  `AfMap.words`). Add every mode of a new radio that is no sideband to that list.
 
 ## The profile is the declarative source of truth
 

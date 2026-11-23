@@ -266,6 +266,10 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   to 3 kHz where that alone does it, else the center to 1.5 kHz as well. OTHER SHIFT is the carrier
   point, so it moves the dial too: the key sets OTHER DISP to match it (both 1500, the digital-mode
   setup), and a radio left with SHIFT +1500 and DISP 0 (the picture 1.5 kHz high) is told to.
+- **The audio scope shows FM and AM as sound, not as the band.** Every mode but LSB's was drawn as USB,
+  so FM on 467.550 MHz read 467.550.000 to 467.553.600 and a tap would have retuned by a tone's pitch.
+  In FM, AM, C4FM and the like the scope now reads 0 Hz to 3.6 kHz, its badge says it is the sound,
+  nothing on it tunes, and the band-plan strip names the dial's segment.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

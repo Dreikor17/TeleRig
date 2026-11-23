@@ -403,6 +403,8 @@
   }
 
   function updateScopeLabels(m) {
+    const edges = m.audio && window.AfMap ? AfMap.words(m).edges : null;   // the AF scope in FM / AM: the audio, in Hz
+    if (edges) { $("lblLeft").textContent = edges[0]; $("lblRight").textContent = edges[1]; return; }
     let lo, hi;
     if (m.mode === 1) { lo = m.lower; hi = m.upper; }
     else { const vc = m.tuned || m.center; lo = vc - m.span / 2; hi = vc + m.span / 2; }
@@ -1538,6 +1540,7 @@
     scMoved += Math.abs(p.css - scLastCss);
     scLastPx = p.px; scLastCss = p.css;
     if (scMoved > 6 && scType === "mouse") {          // a mouse drag -> pan the frequency
+      if (scope.meta.audio) return;                   // not over FM / AM's audio: no frequency of the band there
       const [lo, hi] = scope.visibleRange();
       scAccum += -(dx / scope.W) * (hi - lo);         // drag right -> tune down (content follows finger)
       const n = (scAccum / step) | 0;
@@ -1550,6 +1553,8 @@
     if (scMoved > 6) { flushTune(); return; }         // moved: not a tap (a mouse drag's trailing delta goes out)
     // A touch tap must be short (a long press is not a tap); mouse and pen keep any duration (AR-59).
     if (scType === "touch" && performance.now() - scDownAt >= 600) return;
+    // The AF scope in FM / AM shows the audio, no frequency of the band: a tone there is nowhere to tune to
+    if (scope.meta.audio) return;
     // Fine snap (10 Hz on a narrow view): lands where you tapped. On the AF scope in CW, `retune`
     // puts the tapped signal ON the marker (heard at the pitch), not at the carrier point (AfMap).
     const [vlo, vhi] = scope.visibleRange(), q = vhi - vlo <= 10000 ? 10 : 100;
@@ -1820,7 +1825,8 @@
       if (hf) {
         const f = scope.freqAtX(px), [vlo, vhi] = scope.visibleRange();
         if (f > 0) {
-          hf.textContent = (f / 1e6).toFixed(vhi - vlo <= 10000 ? 5 : 4) + " MHz";   // 10 Hz on a narrow view
+          hf.textContent = scope.meta.audio ? Math.round(f) + " Hz"                    // FM / AM: the audio's tone
+            : (f / 1e6).toFixed(vhi - vlo <= 10000 ? 5 : 4) + " MHz";                  // 10 Hz on a narrow view
           hf.hidden = false;
           let x = e.clientX + 12, y = e.clientY - 28;
           if (x + hf.offsetWidth > window.innerWidth - 8) x = e.clientX - hf.offsetWidth - 12;
@@ -2764,7 +2770,8 @@
   // FFT the RX audio and feed the existing spectrum + waterfall. Audio Hz is mapped
   // to RF by the mode's sideband (USB: dial+af, LSB: dial-af) and, in CW, the radio's
   // pitch (AfMap, waterfall.js), so the labels, cursor readout, taps, tuned marker and
-  // band plan all read real frequencies — a mini panadapter of the passband.
+  // band plan all read real frequencies — a mini panadapter of the passband. In FM and AM the
+  // audio is no copy of the band: the scope shows it as audio (Hz), with nothing to tap.
   let afTimer = 0, afAnalyser = null;
   const AF_MAX = 3600;                          // Hz of the RX audio passband to show (SSB/CW/data occupied width)
   const AF_RANGE_DB = 30;                       // dB above the LOCAL noise floor mapped to full brightness
@@ -2814,15 +2821,26 @@
         data[i] = r <= 0 ? 0 : r >= 160 ? 160 : r | 0;
       }
       // Fixed edges. In CW the dial is the tuned marker, at the pitch; in the other modes the dial
-      // sits at an edge, so tuned:0 (no marker). The labels read the edges.
+      // sits at an edge, so tuned:0 (no marker). The labels read the edges. In FM / AM (view.audio) the
+      // scope shows the audio as audio: its labels in Hz, the badge says so, and no tap tunes (no hint).
       scope.opMode = mode;
       scope.pushSweep(view, data);
       updateScopeLabels(scope.meta);
+      afAudioView(view);
     }, 40);                                       // ~25 fps
+  }
+  // The badge's words and the tune hint for the AF scope's view (AfMap.words; null: stopped): a sideband
+  // mode's audio is the band beside the dial (the RX passband, tapped to tune); FM's or AM's only the sound.
+  function afAudioView(view) {
+    if (!window.AfMap) return;
+    const w = AfMap.words(view), t = $("afBadgeText");
+    if (t && t.textContent !== w.badge) t.textContent = w.badge;
+    const hint = $("scopeTuneHint"); if (hint) hint.hidden = !w.tunes;
   }
   function stopAfScope() {
     if (afTimer) { clearInterval(afTimer); afTimer = 0; }
     if (afAnalyser) { try { afAnalyser.disconnect(); } catch (_) {} afAnalyser = null; }
+    afAudioView(null);
     const badge = $("afBadge"); if (badge) badge.hidden = true;
     if (afEligible()) { const ns = $("noScope"); if (ns) ns.hidden = false; placeNoScope(); }
   }
