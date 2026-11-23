@@ -36,6 +36,12 @@
  *      shift in FM, with the offset the radio reports), none for split, an unknown offset or another mode;
  *      only the operating band's, nothing while disconnected; text stays text; the same line is not built
  *      again
+ *  T9. the wheel over a digit steps it once a notch, whatever the wheel: a plain notch one step, a quick
+ *      turn a step a notch; a high-resolution notch (many small events) one step, not one an event; a
+ *      touchpad swipe a step at once, then one a notch's travel; Firefox's lines and pixels the same; a
+ *      tiny slow notch still steps (a turn's first event); a turn back starts a new turn at once; a
+ *      free-spinning wheel at most a step an event, its extra notches not carried; a sideways scroll is
+ *      the page's; a viewer's wheel tunes nothing
  */
 "use strict";
 const { makeEnv } = require("./fakedom");
@@ -347,6 +353,55 @@ async function main() {
     for (let i = 0; i < 12; i++) await e.flush();
     eq(e.text("mainBw"), "500 Hz", "T7 " + tag + ": once the profiles are in, the FT-991A's own: its WIDTH in CW (500 Hz)");
     eq(e.inds("mainInd"), ["AGC-M", "AMP1", "DNR"], "T7 " + tag + ": ... and its own names (AMP1, DNR)");
+  }
+  // T9: the wheel over a digit steps it once a notch, whatever the wheel ("way too sensitive": a smooth or
+  // high-resolution wheel, or a touchpad, sends many small events a notch, and each one used to step it)
+  {
+    const e = await page();
+    e.state({ freq: 14230000 });
+    for (let i = 0; i < 4; i++) await e.flush();
+    const digit = () => e.$("mainFreq").querySelectorAll(".fd").find((d) => d.dataset.place === "1000");   // the 1 kHz digit
+    const wheel = (o) => { const ev = new e.Event("wheel", Object.assign({ bubbles: true, cancelable: true, deltaMode: 0 }, o)); digit().dispatchEvent(ev); return ev; };
+    const notch = (dir, o) => wheel(Object.assign({ deltaY: 100 * dir, wheelDeltaY: -120 * dir }, o));   // Chromium, a plain wheel
+    let base = 14230000;
+    const steps = () => { e.clock.advance(400); const s = e.sent("set_freq"); const hz = s.length ? s[s.length - 1].hz : base; return Math.round((hz - base) / 1000); };
+    const turn = (fn) => { e.clock.advance(1000); base = (e.sent("set_freq").slice(-1)[0] || { hz: base }).hz; fn(); return steps(); };
+    eq(turn(() => notch(1)), -1, "T9 one notch toward you: down one step of that digit (1 kHz)");
+    eq(turn(() => notch(-1)), 1, "T9 one notch away: up one step");
+    eq(turn(() => { for (let i = 0; i < 5; i++) { notch(1); e.clock.advance(40); } }), -5, "T9 five notches in a quick turn: five steps");
+    eq(turn(() => { for (let i = 0; i < 8; i++) { wheel({ deltaY: 12.5, wheelDeltaY: -15 }); e.clock.advance(8); } }), -1,
+       "T9 a high-resolution notch (eight events of 15 / 120): one step, not eight");
+    eq(turn(() => { for (let n = 0; n < 3; n++) for (let i = 0; i < 8; i++) { wheel({ deltaY: 12.5, wheelDeltaY: -15 }); e.clock.advance(10); } }), -3,
+       "T9 three high-resolution notches in a turn: three steps");
+    eq(turn(() => { for (let i = 0; i < 40; i++) { wheel({ deltaY: 5, wheelDeltaY: -6 }); e.clock.advance(10); } }), -2,
+       "T9 a touchpad swipe of 200 px (40 events): its first step at once, then one a notch's travel (2, not 40)");
+    eq(turn(() => { for (let i = 0; i < 3; i++) { wheel({ deltaY: 3, deltaMode: 1 }); e.clock.advance(40); } }), -3,
+       "T9 Firefox in lines (3 a notch, no wheelDeltaY): a step a notch");
+    eq(turn(() => { for (let i = 0; i < 3; i++) { wheel({ deltaY: 57 }); e.clock.advance(40); } }), -3,
+       "T9 Firefox in pixels (57 a notch): a step a notch, never two");
+    eq(turn(() => { wheel({ deltaY: 2, wheelDeltaY: -2 }); e.clock.advance(300); wheel({ deltaY: 2, wheelDeltaY: -2 }); }), -2,
+       "T9 a slow wheel whose notch is tiny (2 / 120), notch by notch: a step each (a turn's first event steps)");
+    eq(turn(() => { notch(1); e.clock.advance(30); notch(-1); e.clock.advance(30); notch(-1); }), 1,
+       "T9 a turn the other way starts a new turn: down one, up two");
+    eq(turn(() => { for (let i = 0; i < 6; i++) { wheel({ deltaY: 400, wheelDeltaY: -480 }); e.clock.advance(20); } }), -6,
+       "T9 a free-spinning wheel (four notches an event): one step an event at most");
+    eq(turn(() => { wheel({ deltaY: 12.5, wheelDeltaY: -15 }); e.clock.advance(10); wheel({ deltaY: 400, wheelDeltaY: -480 });
+                    for (let i = 0; i < 4; i++) { e.clock.advance(10); wheel({ deltaY: 12.5, wheelDeltaY: -15 }); } }), -3,
+       "T9 ... a spin mid-turn: its extra notches don't carry (a step at the turn's start, one for the spin, one more for four small events, not four)");
+    eq(turn(() => { for (let i = 0; i < 7; i++) { wheel({ deltaY: 12.5, wheelDeltaY: -15 }); e.clock.advance(8); } wheel({ deltaY: -12.5, wheelDeltaY: 15 }); }), 0,
+       "T9 a high-resolution notch turned back at once: down one, and the turn back steps up at once (no sevenths to undo first)");
+    eq(turn(() => { for (let i = 0; i < 40; i++) { wheel({ deltaY: 5 }); e.clock.advance(10); } }), -5,
+       "T9 a Firefox touchpad swipe (5 px events, no wheelDeltaY): a step at once, then one a notch's travel (48 px), not one an event");
+    let side = null;
+    const sideSteps = turn(() => { side = wheel({ deltaY: 0, deltaX: 100, wheelDeltaY: 0 }); });
+    eq([sideSteps, side.defaultPrevented], [0, false], "T9 a sideways scroll: no step, and left to the page (it stepped the digit down)");
+    const v = await page({ role: "viewer" });
+    v.state({ freq: 14230000 });
+    for (let i = 0; i < 4; i++) await v.flush();
+    const vd = v.$("mainFreq").querySelectorAll(".fd").find((d) => d.dataset.place === "1000");
+    vd.dispatchEvent(new v.Event("wheel", { bubbles: true, cancelable: true, deltaY: 100, wheelDeltaY: -120, deltaMode: 0 }));
+    v.clock.advance(400);
+    eq(v.sent("set_freq"), [], "T9 a viewer's wheel tunes nothing");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);
   process.exit(failures ? 1 : 0);

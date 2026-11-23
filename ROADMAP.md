@@ -270,6 +270,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   so FM on 467.550 MHz read 467.550.000 to 467.553.600 and a tap would have retuned by a tone's pitch.
   In FM, AM, C4FM and the like the scope now reads 0 Hz to 3.6 kHz, its badge says it is the sound,
   nothing on it tunes, and the band-plan strip names the dial's segment.
+- **The wheel steps a VFO digit once a notch.** A smooth-scrolling or high-resolution wheel, or a
+  touchpad, sends many small wheel events for one notch, and each one stepped the digit, so a notch
+  jumped it several places. Now a turn's first event steps at once and the rest are added up, a step a
+  whole notch (at most one an event); a pause or a turn back starts a new turn, and a sideways scroll is
+  left to the page.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

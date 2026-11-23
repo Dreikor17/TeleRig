@@ -1647,8 +1647,22 @@
     if (TR.can("operate") && !Layout().arranging() && window.FreqEntry) FreqEntry.open(row);
     return true;
   }
+  // How far a wheel event turned, in notches (+ toward you, as deltaY): Chromium and Safari give the legacy
+  // wheelDeltaY, 120 a notch whatever the wheel or the line setting; Firefox only deltaY, 3 lines or about
+  // 48-57 px a notch. 0: no vertical turn.
+  function wheelNotches(e) {
+    if (typeof e.wheelDeltaY === "number" && e.wheelDeltaY) return -e.wheelDeltaY / 120;
+    const dy = +e.deltaY || 0;
+    return e.deltaMode === 1 ? dy / 3 : e.deltaMode === 2 ? dy : dy / 48;
+  }
+  // The wheel over a digit steps it once a notch. A plain wheel sends one event a notch, but a smooth-scrolling
+  // or high-resolution wheel and a touchpad send many small ones, and each of those used to step the digit:
+  // one notch jumped it several places (the operator: "way too sensitive"). Now a turn's first event steps at
+  // once (a slow notch on any wheel), and within the turn the notches are added up, a step a whole notch, at
+  // most one an event; a pause of WHEEL_GAP_MS or a turn the other way starts a new turn.
+  const WHEEL_GAP_MS = 120;
   if (bandsEl) {
-    let digitWheelEnd = 0;
+    let digitWheelEnd = 0, wheelAcc = 0, wheelAt = 0, wheelDir = 0;
     bandsEl.addEventListener("click", (e) => {
       if (e.target.closest(".vfo-entry,.ve-hint")) { e.stopPropagation(); return; }   // typing: not a band-select
       typeAt(e);
@@ -1659,8 +1673,15 @@
     bandsEl.addEventListener("wheel", (e) => {
       const d = e.target.closest(".fd"); if (!d) return;
       if (!TR.can("operate") || Layout().arranging() || !hoverIntent(bandsEl)) return;
+      const n = wheelNotches(e), dir = Math.sign(n), now = performance.now();
+      if (!dir) return;                               // sideways only: the page's (it stepped the digit down)
       e.preventDefault();
-      digitDelta(d, e.deltaY < 0);
+      const fresh = now - wheelAt > WHEEL_GAP_MS || dir !== wheelDir;
+      wheelAt = now; wheelDir = dir;
+      wheelAcc = fresh ? dir : wheelAcc + n;
+      if (Math.abs(wheelAcc) < 1) return;
+      wheelAcc = Math.max(-0.99, Math.min(0.99, wheelAcc - dir));   // a notch used; under one carries on
+      digitDelta(d, dir < 0);
       clearTimeout(digitWheelEnd);
       digitWheelEnd = setTimeout(() => flushKey("freq"), 150);
     }, { passive: false });
