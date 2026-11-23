@@ -16,8 +16,8 @@
  *      closing the viewer on one that leaves)
  *  Q7. a header with no picture after it shows nothing at all: no blank canvas, no "receiving", no dot
  *  Q8. a picture that ended early is kept only if a quarter of it arrived; the status says when it isn't
- *  Q9. the X deletes one picture (its PNG freed, the summary updated), the focus goes to its neighbour;
- *      the X that slides under the pointer ignores the second click of a double click
+ *  Q9. no X on the strip's pictures (2026-11-23: Delete is in the viewer); the viewer's Delete deletes one
+ *      (its PNG freed, the summary updated), the focus goes to its neighbour
  *  Q10. clicking a picture opens the viewer: the picture, when it came, Export PNG (the PNG's own name),
  *      Delete; Esc closes it and the focus goes back; no viewer while this tab transmits; without the
  *      dialog kit a click saves the PNG
@@ -128,7 +128,8 @@ function page(opts) {
   e.feed = (pcm) => { for (let i = 0; i < pcm.length; i += 320) for (const fn of e.taps) fn(pcm.subarray(i, i + 320), 16000); };
   e.items = () => e.doc.getElementById("sstvGallery").querySelectorAll(".sstv-item");
   e.thumb = (i) => e.items()[i].querySelector("button.sstv-pic");
-  e.x = (i) => e.items()[i].querySelector("button.sstv-del");
+  e.x = (i) => e.items()[i].querySelector("button.sstv-del");     // none: the strip has no X (Delete is in the viewer)
+  e.del = (i) => { e.thumb(i).click(); e.doc.getElementById("sstvViewDelete").click(); };
   e.alts = () => e.items().map((it) => it.querySelector("img").alt);
   e.dialog = () => e.doc.querySelector(".tr-modal-overlay:not([hidden]) .tr-modal");
   e.key = (key) => e.doc.dispatchEvent(new e.Event("keydown", { key }));
@@ -176,7 +177,7 @@ function noise(sec, rms) {
     eq(e.items().length, 1, "Q2 the picture goes into the strip");
     eq([e.items()[0].getAttribute("role"), e.thumb(0).getAttribute("title"), e.alts()[0]], ["listitem", R36_NAME, R36_NAME],
        "Q2 ... a thumbnail named after the mode, frequency and UTC start");
-    eq([e.x(0).getAttribute("aria-label"), e.x(0).getAttribute("title")], ["Delete " + R36_NAME, "Delete"], "Q2 ... with its delete X");
+    eq(e.x(0), null, "Q2 ... with no delete X on it (Delete is in its viewer)");
     eq(e.status(), "Received Robot 36 (240 lines) at 18:30Z.", "Q2 the status says it was received");
     eq(e.ctx.SstvPanel.summary(), "1 picture", "Q3 the summary after");
     // Q10: the viewer
@@ -272,23 +273,20 @@ function noise(sec, rms) {
     check(/^Received 2026-11-19 18:30:\d\d UTC · 320 × 240 · \d+ of 240 lines$/.test(e.dialog().querySelector(".sstv-view-cap").textContent),
           "Q8 ... the viewer says how much of it came: " + e.dialog().querySelector(".sstv-view-cap").textContent);
   }
-  // Q9: the delete X
+  // Q9: Delete, in the viewer (the strip has no X of its own)
   {
     const e = page();
     for (let k = 0; k < 3; k++) { e.feed(pictureAudio(e, "r36", 70, { tail: 2.5 })); e.clock.advance(60000); }
     eq(e.items().length, 3, "Q9 three pictures");
     const names = e.alts();
-    e.x(1).focus();
-    e.x(1).click();                                    // a keyboard press (no click count)
+    eq([0, 1, 2].map((i) => e.x(i)), [null, null, null], "Q9 no X on any picture");
+    e.del(1);
     eq([e.alts(), e.urls.revoked, e.ctx.SstvPanel.summary()], [[names[0], names[2]], ["blob:sstv/2"], "2 pictures"],
-       "Q9 the X deletes that picture, frees its PNG, and the summary follows");
+       "Q9 the viewer's Delete deletes that picture, frees its PNG, and the summary follows");
     check(e.doc.activeElement === e.thumb(1), "Q9 ... the focus goes to the next one");
     check(e.said.includes("Deleted " + names[1].replace(" (part)", "")), "Q9 ... and it is announced");
-    e.x(0).dispatchEvent(new e.Event("click", { detail: 1 }));
-    eq(e.alts(), [names[0], names[2]], "Q9 the X that slid under the pointer ignores a double click's second click");
-    e.clock.advance(500);
-    e.x(0).dispatchEvent(new e.Event("click", { detail: 1 }));
-    eq(e.alts(), [names[2]], "Q9 ... a click after that deletes");
+    e.del(0);
+    eq(e.alts(), [names[2]], "Q9 ... and another");
     e.thumb(0).click();
     e.doc.getElementById("sstvViewDelete").click();
     const gal = e.doc.getElementById("sstvGallery");
@@ -348,10 +346,10 @@ function noise(sec, rms) {
     eq(f.alts()[0], "Robot 36 · 14.230 MHz USB · 19:30Z", "Q11 a picture received after the reload goes on top");
     f.clock.advance(1);
     eq([...db.recs.keys()], [FILE, FILE_PART, FILE_LATER], "Q11 ... and into the store");
-    // the X takes a picture out of the store too
-    f.x(1).click();
+    // Delete (in the viewer) takes a picture out of the store too
+    f.del(1);
     f.clock.advance(1);
-    eq([f.alts(), [...db.recs.keys()]], [["Robot 36 · 14.230 MHz USB · 19:30Z", R36_NAME], [FILE, FILE_LATER]], "Q11 the X deletes it from the strip and from the store");
+    eq([f.alts(), [...db.recs.keys()]], [["Robot 36 · 14.230 MHz USB · 19:30Z", R36_NAME], [FILE, FILE_LATER]], "Q11 Delete takes it out of the strip and of the store");
     const g = page({ idb: db, now: START + 7200000 });
     g.clock.advance(1);
     eq(g.alts(), ["Robot 36 · 14.230 MHz USB · 19:30Z", R36_NAME], "Q11 ... so it stays deleted after the next reload");
@@ -372,7 +370,7 @@ function noise(sec, rms) {
     const e = page({ idb: db });
     e.feed(pictureAudio(e, "r36"));                          // before the first tick: the store is not open
     eq([e.items().length, db.recs.size], [1, 0], "Q11 received while the store was opening: in the strip, the store still to come");
-    e.x(0).click();
+    e.del(0);
     e.clock.advance(1);
     eq([e.items().length, db.recs.size], [0, 0], "Q11 ... and deleted before it opened: not kept");
     // a picture received while the store is still opening: on top of the kept ones
@@ -389,7 +387,7 @@ function noise(sec, rms) {
     a.feed(pictureAudio(a, "r36")); b.feed(pictureAudio(b, "r36"));
     a.clock.advance(1); b.clock.advance(1);
     eq([[...db4.recs.keys()], a.items().length, b.items().length], [[FILE], 1, 1], "Q11 two tabs of this browser receive the same picture: one record");
-    a.x(0).click();
+    a.del(0);
     a.clock.advance(1);
     const c = page({ idb: db4 });
     c.clock.advance(1);
@@ -414,7 +412,7 @@ function noise(sec, rms) {
     e.feed(pictureAudio(e, "r36"));
     e.clock.advance(1);
     eq([e.items().length, db.recs.size, e.status()], [1, 0, "Received Robot 36 (240 lines) at 18:30Z."], "Q11 the store can't be opened (" + fail + "): the picture is in the strip all the same");
-    e.x(0).click();
+    e.del(0);
     eq(e.items().length, 0, "Q11 ... and can be deleted");
   }
   console.log(failures ? `${failures} of ${checks} checks FAILED` : `ALL PASS (${checks} checks)`);

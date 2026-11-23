@@ -275,6 +275,8 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   jumped it several places. Now a turn's first event steps at once and the rest are added up, a step a
   whole notch (at most one an event); a pause or a turn back starts a new turn, and a sideways scroll is
   left to the page.
+- **SSTV's picture strip has no X.** A picture is deleted from its viewer (click it, then Delete), as
+  the operator asked: the red X on each preview only repeated it.
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to

@@ -20,7 +20,7 @@
  *
  * window.SSTV = { MODES, Decoder } (tests, and the TX side later);
  * window.SstvPanel = { summary(), feed(pcm, rate) }. The pictures received go into a strip: click one to
- * view it large (Export PNG saves it); its red X (on hover) deletes it.
+ * view it large (Export PNG saves it, Delete deletes it: the strip has no X of its own, 2026-11-23).
  *
  * The strip is kept by this browser (IndexedDB "telerig-sstv": each picture's PNG with its name, time and
  * size, under its file name), so a reload, a closed tab or a restart doesn't lose it: the pictures come
@@ -525,23 +525,18 @@
     }
   });
 
-  // ---- the strip: each picture opens the viewer; its red X (shown on hover or focus) deletes it ----
+  // ---- the strip: each picture opens the viewer (its Delete deletes it; no X on the strip) ----
   const T = () => window.TR || null;
   const icon = (n) => { const t = T(); return t && typeof t.icon === "function" ? t.icon(n) : null; };
-  let delGuard = 0;                                       // the next X slides under the pointer: a double click deletes one
   function add(p, older) {                                // older: one this browser kept, after the ones already shown
-    const item = document.createElement("div"), open = document.createElement("button"), x = document.createElement("button");
+    const item = document.createElement("div"), open = document.createElement("button");
     const img = document.createElement("img");
     item.className = "sstv-item"; item.setAttribute("role", "listitem");
     open.className = "sstv-pic"; open.setAttribute("type", "button"); open.setAttribute("title", p.name);
     img.src = p.url; img.alt = p.name + (p.part ? " (part)" : "");
     open.appendChild(img);
-    x.className = "sstv-del"; x.setAttribute("type", "button"); x.setAttribute("title", "Delete");
-    x.setAttribute("aria-label", "Delete " + p.name);
-    x.appendChild(icon("x") || document.createTextNode("×"));
-    item.appendChild(open); item.appendChild(x);
+    item.appendChild(open);
     open.addEventListener("click", () => view(p));
-    x.addEventListener("click", (e) => { if (!(e && e.detail > 0 && Date.now() < delGuard)) remove(p); });
     p.el = item; p.open = open;
     if (gallery) gallery.insertBefore(item, older ? null : gallery.firstChild);
     if (older) pics.push(p); else pics.unshift(p);
@@ -556,13 +551,12 @@
     try { URL.revokeObjectURL(p.url); } catch (_) {}
     store.del(p.file);
   }
-  function remove(p) {                                    // the X, or Delete in the viewer
+  function remove(p) {                                    // Delete in the viewer
     const i = pics.indexOf(p);
     if (i < 0) return;
     const next = pics[i + 1] || pics[i - 1] || null;      // the neighbour that takes the focus
     const focused = p.el.contains(document.activeElement) || viewing === p;
     forget(p);
-    delGuard = Date.now() + 400;
     if (focused) {
       const to = next ? next.open : gallery;
       if (to === gallery && gallery && !gallery.hasAttribute("tabindex")) gallery.setAttribute("tabindex", "-1");
