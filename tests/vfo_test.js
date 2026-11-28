@@ -16,7 +16,7 @@
  *      Icom's DUP, a Yaesu's shift in FM; no value while the radio hasn't said it), the FM tone with its
  *      CTCSS tone or DCS code (TONE, TSQL, DCS, DCS-ENC), the dial lock; the lit strip: the radio's own
  *      preamp name, AN / DNF, COMP, VOX, MON, NAR; none of it on the other band
- *  T4. typing: a click on the digits (or Enter on them) opens the entry with a hint; Enter tunes (set_freq)
+ *  T4. typing: a click on the digits (or Enter on them) opens the entry with a hint; Enter or its Tune key tunes (set_freq)
  *      and closes it; Esc cancels; a frequency the radio can't receive is refused, the entry stays; the
  *      other band's row still selects that band; a viewer can't type
  *  T5. (the Controls panel's frequency box, gone 2026-11-22: a frequency is typed on the VFO's digits)
@@ -244,6 +244,22 @@ async function main() {
           "T4 a frequency the radio can't receive: refused with the reason, nothing sent, the entry stays: " + hint().textContent);
     e.key(entry(), "Escape");
     check(!entry() && f.hidden === false && e.sent("set_freq").length === 1, "T4 Esc cancels");
+    // a phone: no Enter on its number pad (an iPhone's), and a tap outside cancels, so the entry has a Tune key
+    e.click(f);
+    const go = () => e.$("rowMain").querySelector(".vfo-entry .ve-go");
+    eq([!!go(), go() && go().textContent, entry().getAttribute("enterkeyhint")], [true, "Tune", "go"], "T4 the entry has a Tune key; a phone keyboard's key says Go");
+    const pd = new e.Event("mousedown", { bubbles: true, cancelable: true });
+    go().dispatchEvent(pd);
+    check(pd.defaultPrevented, "T4 ... pressing Tune doesn't take the focus from the entry (its blur would cancel)");
+    entry().value = "14.230";
+    e.click(go());
+    eq(e.sent("set_freq").slice(1), [{ action: "set_freq", hz: 14230000 }], "T4 ... and tapping it tunes");
+    check(!entry() && f.hidden === false, "T4 ... and closes the entry");
+    e.click(f);
+    entry().value = "144.2";
+    e.click(go());
+    check(e.sent("set_freq").length === 2 && !!entry() && hint().classList.contains("err"), "T4 ... a frequency the radio can't receive: Tune refuses it too");
+    e.key(entry(), "Escape");
     e.state({ radio: "ic9700", freq: 144200000, dual_watch: true, subFreq: 432100000 });
     for (let i = 0; i < 4; i++) await e.flush();
     e.click(e.$("subFreq"));

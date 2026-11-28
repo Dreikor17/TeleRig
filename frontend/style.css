@@ -347,6 +347,7 @@ select:disabled,input:disabled{opacity:.6;cursor:not-allowed}
   font:800 1em/1 var(--font-ui);letter-spacing:-.01em;color:var(--tft-digit);caret-color:var(--accent-hi);font-variant-numeric:tabular-nums}
 .vfo-entry input::placeholder{color:var(--tft-digit-dim);opacity:.55}
 .vfo-entry .ve-unit{font:700 max(11px,.28em)/1 var(--font-ui);color:var(--tft-digit-dim)}
+.vfo-entry .ve-go{align-self:center;flex:none;font-size:13px;line-height:1;margin-left:.15em;min-height:30px;padding:0 10px}
 .ve-hint{grid-area:ind;margin:0;font-size:11px;line-height:15px;color:var(--tft-digit-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ve-hint.err{color:var(--danger-hi)}
 .bandrow.typing .ind-strip{display:none}
@@ -697,6 +698,12 @@ button.spot:hover{background:var(--key-hi);border-color:var(--border-strong)}
 #dmPaneSstv:not([hidden]),#sstvRx:not([hidden]),#sstvTx:not([hidden]){display:flex;flex-direction:column;flex:1 1 auto;min-height:0}
 #dmPaneSstv>.sstv-tabs,#sstvRx>*,#sstvTx>*{flex:none}
 #sstvRx>.sstv-canvas,#sstvTx>.sstv-canvas{flex:1 1 0;min-height:72px;height:0;object-fit:contain}
+/* phone: the Modem window is as tall as its content (layout.js PHONE_FIT) and the page scrolls, not the window
+   (2026-11-28, the operator: its view was very short, and an SSTV picture had wide black bars beside it): the
+   text areas get a share of the screen, the SSTV picture the window's width at its own shape */
+body[data-device=phone] .tile-digital>.tile-fit{height:auto}
+body[data-device=phone] .tile-digital .cw-out,body[data-device=phone] .tile-digital .dm-screen{flex:none;height:45vh;min-height:160px}
+body[data-device=phone] #sstvRx>.sstv-canvas,body[data-device=phone] #sstvTx>.sstv-canvas{flex:none;width:100%;height:auto;min-height:0}
 /* CW: the CW panel (cwtool.js) fills its pane, its chat taking the room left */
 #dmPaneCw>.tool-panel{flex:1 1 auto;height:auto;min-height:0}
 #dmPaneCw .tp-body{padding:0}

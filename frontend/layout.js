@@ -91,7 +91,8 @@
   };
   const GATEABLE = new Set();                              // no tile a gate parks now (the Transmit panel was the one)
   const PHONE_RESIZABLE = new Set(["scope", "spots", "sstv"]); // phone: user-sized (stored h, `s` handle)
-  const PHONE_FIT = new Set(["audio", "controls", "recorder"]); // phone: height follows the content
+  const PHONE_FIT = new Set(["audio", "controls", "recorder", "sstv"]); // phone: height follows the content
+  // (the Modem too, 2026-11-28: a short window cut its text areas and letterboxed the SSTV picture)
   const HEAD_ROWS = 2;                                     // collapsed slot, fixed (AR-58)
   const B = (boot.layout_bounds && boot.layout_bounds.desktop && boot.layout_bounds.phone) ? boot.layout_bounds
     : { desktop: { cols: 12, y_max: 199, h_max: 96, bottom_max: 200, dw_max: 11 },

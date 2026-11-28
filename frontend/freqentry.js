@@ -1,5 +1,7 @@
 /* TeleRig: type a frequency. In the VFO, click the operating band's digits (or focus them and press Enter or
- * Space): they become an entry. Enter tunes, Esc or a click elsewhere cancels. The Controls panel's frequency
+ * Space): they become an entry. Enter (or its Tune key) tunes, Esc or a click elsewhere cancels. A phone's
+ * keyboard may have no Enter at all (an iPhone's number pad), and a tap outside cancels, so the Tune key is
+ * there to tap. The Controls panel's frequency
  * box reads what it is given the same way (parse).
  *
  *   What a typed frequency can look like (after the radios' own keypads, the Icom F-INP and the Yaesu keys):
@@ -117,10 +119,20 @@
     input.setAttribute("inputmode", "decimal");
     input.setAttribute("autocomplete", "off");
     input.setAttribute("spellcheck", "false");
+    input.setAttribute("enterkeyhint", "go");             // a phone keyboard's action key says Go and sends Enter
     input.setAttribute("aria-label", "Frequency to tune to");
     input.setAttribute("aria-describedby", "vfoEntryHint");
     const hz = radioState().freq;
     if (hz > 0) input.setAttribute("placeholder", format(hz));
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "key sm ve-go";
+    go.textContent = "Tune";
+    go.setAttribute("aria-label", "Tune to the frequency typed");
+    // the tap must not take the focus from the entry first: its blur would cancel before the click
+    go.addEventListener("pointerdown", (e) => e.preventDefault());
+    go.addEventListener("mousedown", (e) => e.preventDefault());
+    go.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); tune(); });
     unit.className = "ve-unit";
     unit.textContent = "MHz";
     hint.className = "ve-hint";
@@ -129,14 +141,15 @@
     try { wrap.style.fontSize = getComputedStyle(freqEl).fontSize; } catch (_) {}   // the digits' own size
     wrap.appendChild(input);
     wrap.appendChild(unit);
+    wrap.appendChild(go);
     freqEl.hidden = true;
     center.appendChild(wrap);
     row.appendChild(hint);
     row.classList.add("typing");
-    cur = { row, freqEl, wrap, input, hint };
+    cur = { row, freqEl, wrap, input, hint, go };
     input.addEventListener("input", () => show(hintOf(input.value)));
     input.addEventListener("keydown", onKey);
-    input.addEventListener("blur", () => { if (cur && cur.input === input) setTimeout(() => { if (cur && cur.input === input) close(); }, 0); });
+    input.addEventListener("blur", (e) => { if (e && e.relatedTarget === go) return; if (cur && cur.input === input) setTimeout(() => { if (cur && cur.input === input) close(); }, 0); });
     show(hintOf(""));
     input.focus();
     return true;
@@ -147,6 +160,10 @@
     if (e.key !== "Enter") return;
     e.preventDefault();
     e.stopPropagation();
+    tune();
+  }
+  function tune() {
+    if (!cur) return;
     const r = parse(cur.input.value, radioState().freq, rangesOf(profile()));
     if (r.error) { show({ text: r.error, err: true }); return; }
     const c = ctl();

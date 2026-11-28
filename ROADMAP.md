@@ -286,6 +286,11 @@ Each radio is a **declarative `RadioProfile`** in `backend/profiles.py` — tran
   starts on) is named while under way and kept when it ends. **Look back** searches the recording now.
   Noise, voice-band noise and CW keying give no picture. In very heavy static the tuning reads a little
   high, so the picture comes out darker.
+- **On a phone: a typed frequency tunes, and the Modem window is as tall as its content.** The
+  frequency entry has a Tune key (a phone's number pad may have no Enter, and a tap outside cancelled it), and
+  the keyboard's action key says Go. The Modem window follows its content like Audio and Controls: the CW,
+  RTTY and FT8 text get a share of the screen, and an SSTV picture fills the window's width at its own shape,
+  with no black bars beside it (the operator, 2026-11-28).
 
 ### v0.4.0 — the Modem window (CW, RTTY, FT8, SSTV), Spots, Recorder, WSJT-X bridge, Update now
 - **WSJT-X bridge.** WSJT-X, JS8Call, Fldigi or a logger set to "Hamlib NET rigctl" connects to
